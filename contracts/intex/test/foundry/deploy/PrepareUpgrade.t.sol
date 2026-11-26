@@ -6,8 +6,8 @@ import {ERC1967Utils} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.s
 import {Create3Factory} from "@shared/Create3Factory.sol";
 import {UpgradeProposal} from "@shared/UpgradeProposal.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
-import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
-import {TargetRouter} from "@contracts/target/TargetRouter.sol";
+import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
+import {IntexAuctionTargetRouter} from "@contracts/target/IntexAuctionTargetRouter.sol";
 import {Create3Deploy} from "../../../deploy/Create3Deploy.sol";
 import {PrepareUpgrade} from "../../../deploy/PrepareUpgrade.s.sol";
 
@@ -40,8 +40,8 @@ contract PrepareUpgradeTest is Test {
     Create3Factory internal factory;
     address internal deployer;
     IntexNFT1155 internal nft;
-    IntexNFT1155Bridge internal nftBridge;
-    TargetRouter internal router;
+    IntexNFT1155Router internal nftRouter;
+    IntexAuctionTargetRouter internal router;
 
     function setUp() public {
         script = new PrepareUpgradeHarness();
@@ -55,18 +55,18 @@ contract PrepareUpgradeTest is Test {
         nft = IntexNFT1155(
             _deploy("IntexNFT1155", address(new IntexNFT1155()), abi.encodeCall(IntexNFT1155.initialize, (deployer)))
         );
-        nftBridge = IntexNFT1155Bridge(
+        nftRouter = IntexNFT1155Router(
             payable(_deploy(
-                    "IntexNFT1155Bridge",
-                    address(new IntexNFT1155Bridge(address(nft), HUB)),
-                    abi.encodeCall(IntexNFT1155Bridge.initialize, (deployer))
+                    "IntexNFT1155Router",
+                    address(new IntexNFT1155Router(address(nft), HUB)),
+                    abi.encodeCall(IntexNFT1155Router.initialize, (deployer))
                 ))
         );
-        router = TargetRouter(
+        router = IntexAuctionTargetRouter(
             payable(_deploy(
-                    "TargetRouter",
-                    address(new TargetRouter(HUB, OUTBE, WCOEN_BRIDGE)),
-                    abi.encodeCall(TargetRouter.initialize, (deployer))
+                    "IntexAuctionTargetRouter",
+                    address(new IntexAuctionTargetRouter(HUB, OUTBE, WCOEN_BRIDGE)),
+                    abi.encodeCall(IntexAuctionTargetRouter.initialize, (deployer))
                 ))
         );
         vm.stopPrank();
@@ -78,10 +78,12 @@ contract PrepareUpgradeTest is Test {
         script.prepareChain(PK);
 
         assertTrue(_implementation(address(router)) != oldImpl, "router upgraded");
-        assertEq(address(TargetRouter(payable(_implementation(address(router)))).BRIDGE()), HUB, "hub kept");
-        assertEq(TargetRouter(payable(_implementation(address(router)))).OUTBE_CHAIN_ID(), OUTBE, "outbe kept");
+        assertEq(address(IntexAuctionTargetRouter(payable(_implementation(address(router)))).BRIDGE()), HUB, "hub kept");
         assertEq(
-            address(TargetRouter(payable(_implementation(address(router)))).erc20Router()),
+            IntexAuctionTargetRouter(payable(_implementation(address(router)))).OUTBE_CHAIN_ID(), OUTBE, "outbe kept"
+        );
+        assertEq(
+            address(IntexAuctionTargetRouter(payable(_implementation(address(router)))).erc20Router()),
             WCOEN_BRIDGE,
             "erc20Router kept"
         );
@@ -101,7 +103,7 @@ contract PrepareUpgradeTest is Test {
         assertTrue(vm.keyExistsJson(payload, ".upgrades[2]"), "three upgrades");
         assertFalse(vm.keyExistsJson(payload, ".upgrades[3]"), "only the deployed proxies");
         assertEq(vm.parseJsonAddress(payload, ".upgrades[0].proxy"), address(nft));
-        assertEq(vm.parseJsonAddress(payload, ".upgrades[1].proxy"), address(nftBridge));
+        assertEq(vm.parseJsonAddress(payload, ".upgrades[1].proxy"), address(nftRouter));
         assertEq(vm.parseJsonAddress(payload, ".upgrades[2].proxy"), address(router));
         assertEq(vm.parseJsonUint(payload, ".upgrades[2].chainId"), block.chainid);
         assertEq(vm.parseJsonBytes(payload, ".upgrades[2].callData"), "");
@@ -109,10 +111,10 @@ contract PrepareUpgradeTest is Test {
             vm.parseJsonAddress(payload, ".upgrades[1].implementation"),
             vm.parseJsonAddress(payload, ".upgrades[2].implementation")
         ];
-        IntexNFT1155Bridge bridgeImpl = IntexNFT1155Bridge(payable(impls[0]));
+        IntexNFT1155Router bridgeImpl = IntexNFT1155Router(payable(impls[0]));
         assertEq(address(bridgeImpl.token()), address(nft), "bridged token kept");
         assertEq(address(bridgeImpl.BRIDGE()), HUB, "bridge hub kept");
-        TargetRouter routerImpl = TargetRouter(payable(impls[1]));
+        IntexAuctionTargetRouter routerImpl = IntexAuctionTargetRouter(payable(impls[1]));
         assertEq(address(routerImpl.BRIDGE()), HUB, "router hub kept");
         assertEq(routerImpl.OUTBE_CHAIN_ID(), OUTBE, "outbe kept");
         assertEq(address(routerImpl.erc20Router()), WCOEN_BRIDGE, "erc20Router kept");
@@ -139,7 +141,7 @@ contract PrepareUpgradeTest is Test {
     }
 
     function _handOver() internal {
-        address[3] memory proxies = [address(nft), address(nftBridge), address(router)];
+        address[3] memory proxies = [address(nft), address(nftRouter), address(router)];
         vm.startPrank(deployer);
         for (uint256 i = 0; i < proxies.length; i++) {
             IntexNFT1155(proxies[i]).grantRole(bytes32(0), GOVERNANCE);

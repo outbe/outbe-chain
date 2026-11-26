@@ -102,11 +102,11 @@ fn credit_job_entries(
             .filter(|value| *value <= job.pool_minor)
             .ok_or(AgentRewardError::InvalidJob)?;
         if !share.is_zero() {
-            contract.add_claimable_reward(pool, address, share)?;
-            contract.emit(IAgentReward::RewardAccrued {
+            contract.add_agent_reward(pool, address, share)?;
+            contract.emit(IAgentReward::AgentRewardAdded {
                 account: address,
                 pool: job.pool,
-                utcDay: job.day,
+                emissionDay: job.day,
                 promisLoadMinor: share,
             })?;
         }
@@ -141,7 +141,7 @@ fn finish_job(
         residue,
     )?;
     AgentRewardContract::new(ctx.storage.clone()).emit(
-        crate::precompile::IAgentReward::RewardLimitReturned {
+        crate::precompile::IAgentReward::AgentRewardLimitReturned {
             emissionDay: job.day,
             pool: pool as u8,
             amountMinor: residue,

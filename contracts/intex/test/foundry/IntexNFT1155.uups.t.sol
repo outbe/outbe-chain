@@ -9,7 +9,7 @@ import {ERC1967Utils} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.s
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
-import {CreateSeriesLib} from "./helpers/CreateSeriesLib.sol";
+import {OpenSeriesLib} from "./helpers/OpenSeriesLib.sol";
 
 contract IntexNFT1155UupsTest is Test {
     address internal admin = makeAddr("admin");
@@ -55,9 +55,9 @@ contract IntexNFT1155UupsTest is Test {
 
     function test_Upgrade_PreservesStateAndSwapsImplementation() public {
         vm.prank(bridger);
-        nft.createSeries(CreateSeriesLib.params(7, 100, 0));
+        nft.openSeries(OpenSeriesLib.params(7, 100, 0));
         vm.prank(bridger);
-        nft.issueIntex(stranger, 3, CreateSeriesLib.seriesId(7));
+        nft.issueIntex(stranger, 3, OpenSeriesLib.seriesId(7));
 
         IntexNFT1155 newImpl = new IntexNFT1155();
         vm.prank(admin);
@@ -65,9 +65,9 @@ contract IntexNFT1155UupsTest is Test {
 
         bytes32 implSlot = vm.load(address(nft), ERC1967Utils.IMPLEMENTATION_SLOT);
         assertEq(address(uint160(uint256(implSlot))), address(newImpl));
-        uint256 tokenId = nft.issuedTokenId(CreateSeriesLib.seriesId(7));
-        assertEq(nft.balanceOf(stranger, tokenId), 3);
-        assertEq(nft.totalSupply(tokenId), 3);
+        uint256 intexId = nft.issuedIntexId(OpenSeriesLib.seriesId(7));
+        assertEq(nft.balanceOf(stranger, intexId), 3);
+        assertEq(nft.totalSupply(intexId), 3);
         assertTrue(nft.hasRole(nft.ROUTER_ROLE(), bridger));
     }
 }

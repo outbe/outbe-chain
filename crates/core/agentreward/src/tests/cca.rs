@@ -63,22 +63,18 @@ fn cca_that_left_gets_its_share() {
         outbe_ccaregistry::runtime::unbond(storage.clone(), alice).unwrap();
         let context = ctx(storage.clone(), 0);
         allocate_fixture(&context, DAY, &[(PoolKind::Cca, U256::from(100))]).unwrap();
-        assert_eq!(contract.get_claimable_reward(alice).unwrap(), U256::ZERO);
+        assert_eq!(contract.agent_reward_total(alice).unwrap(), U256::ZERO);
         crate::api::process_agent_rewards(&context).unwrap();
         assert_eq!(
-            contract
-                .get_pool_claimable_reward(RewardPool::Cca, alice)
-                .unwrap(),
+            contract.get_agent_reward(RewardPool::Cca, alice).unwrap(),
             U256::from(80)
         );
         assert_eq!(
-            contract
-                .get_pool_claimable_reward(RewardPool::Cca, bob)
-                .unwrap(),
+            contract.get_agent_reward(RewardPool::Cca, bob).unwrap(),
             U256::from(20)
         );
         contract
-            .claim_reward(RewardPool::Cca, alice, U256::ZERO, (USD, USD))
+            .redeem_agent_reward(RewardPool::Cca, alice, U256::ZERO, (USD, USD))
             .unwrap();
         assert_eq!(
             gem_of(&storage, alice).item.promis_load_minor,
@@ -122,42 +118,42 @@ fn reward_jobs_pay_256_receivers_per_block() {
         assert_eq!(contract.accrual_tail.read().unwrap(), 4);
         assert_eq!(
             contract
-                .get_claimable_reward(numbered_address(1_000))
+                .agent_reward_total(numbered_address(1_000))
                 .unwrap(),
             U256::ZERO
         );
         crate::api::process_agent_rewards(&context).unwrap();
         assert_eq!(
             contract
-                .pool_claimable_total(RewardPool::Validator)
+                .pool_agent_reward_total(RewardPool::Validator)
                 .unwrap(),
             pool
         );
         assert_eq!(
-            contract.pool_claimable_total(RewardPool::Waa).unwrap(),
+            contract.pool_agent_reward_total(RewardPool::Waa).unwrap(),
             pool
         );
         assert_eq!(
-            contract.pool_claimable_total(RewardPool::Sra).unwrap(),
+            contract.pool_agent_reward_total(RewardPool::Sra).unwrap(),
             U256::from(56)
         );
         assert_eq!(
-            contract.pool_claimable_total(RewardPool::Cca).unwrap(),
+            contract.pool_agent_reward_total(RewardPool::Cca).unwrap(),
             U256::ZERO
         );
         crate::api::process_agent_rewards(&context).unwrap();
         assert_eq!(
-            contract.pool_claimable_total(RewardPool::Sra).unwrap(),
+            contract.pool_agent_reward_total(RewardPool::Sra).unwrap(),
             U256::from(56)
         );
         assert!(crate::distribution::has_pending_accruals_for_day(&storage, DAY.value()).unwrap());
         crate::api::process_agent_rewards(&ctx(storage.clone(), 1)).unwrap();
         assert_eq!(
-            contract.pool_claimable_total(RewardPool::Sra).unwrap(),
+            contract.pool_agent_reward_total(RewardPool::Sra).unwrap(),
             pool
         );
         assert_eq!(
-            contract.pool_claimable_total(RewardPool::Cca).unwrap(),
+            contract.pool_agent_reward_total(RewardPool::Cca).unwrap(),
             pool
         );
         assert!(!crate::distribution::has_pending_accruals_for_day(&storage, DAY.value()).unwrap());
@@ -175,7 +171,7 @@ fn a_thousand_positive_ccas_finish_in_four_blocks_and_survive_exit_during_proces
         for height in 0..4 {
             crate::api::process_agent_rewards(&ctx(storage.clone(), height)).unwrap();
             assert_eq!(
-                contract.pool_claimable_total(RewardPool::Cca).unwrap(),
+                contract.pool_agent_reward_total(RewardPool::Cca).unwrap(),
                 U256::from(((height + 1) * 256).min(1_000))
             );
             if height == 0 {
@@ -202,7 +198,7 @@ fn a_thousand_positive_ccas_finish_in_four_blocks_and_survive_exit_during_proces
         }
         assert_eq!(
             contract
-                .get_pool_claimable_reward(RewardPool::Cca, numbered_address(900))
+                .get_agent_reward(RewardPool::Cca, numbered_address(900))
                 .unwrap(),
             U256::ONE
         );
@@ -338,7 +334,7 @@ fn each_pool_job_reports_its_rest_and_only_a_nonzero_rest_reaches_the_promis_lim
             .get_events(AGENT_REWARD_ADDRESS)
             .iter()
             .filter_map(|log| {
-                crate::precompile::IAgentReward::RewardLimitReturned::decode_log_data(log).ok()
+                crate::precompile::IAgentReward::AgentRewardLimitReturned::decode_log_data(log).ok()
             })
             .map(|event| {
                 assert_eq!(event.emissionDay, DAY.value());
@@ -523,7 +519,7 @@ fn standalone_cleanup_and_worker_share_one_cleanup_budget_and_retry_failed_slice
         crate::api::process_agent_rewards(&context).unwrap();
         assert_eq!(
             contract
-                .get_pool_claimable_reward(RewardPool::Waa, numbered_address(999))
+                .get_agent_reward(RewardPool::Waa, numbered_address(999))
                 .unwrap(),
             U256::ONE
         );
@@ -689,7 +685,7 @@ fn missing_ledger_rolls_back_credits_and_worker_height_and_is_retryable() {
         emission.emission_days.delete(DAY.value()).unwrap();
         assert!(crate::api::process_agent_rewards(&context).is_err());
         assert_eq!(
-            contract.get_claimable_reward(numbered_address(1)).unwrap(),
+            contract.agent_reward_total(numbered_address(1)).unwrap(),
             U256::ZERO
         );
         assert!(!contract.worker_initialized.read().unwrap());
@@ -697,7 +693,7 @@ fn missing_ledger_rolls_back_credits_and_worker_height_and_is_retryable() {
         emission.emission_days.create(&ledger).unwrap();
         crate::api::process_agent_rewards(&context).unwrap();
         assert_eq!(
-            contract.get_claimable_reward(numbered_address(1)).unwrap(),
+            contract.agent_reward_total(numbered_address(1)).unwrap(),
             U256::from(10)
         );
     });
@@ -761,7 +757,7 @@ fn metered_accrual_and_three_owner_cleanup_fit_the_existing_block_envelope() {
         crate::api::process_agent_rewards(&ctx(storage.clone(), 0)).unwrap();
         let contract = AgentRewardContract::new(storage.clone());
         assert_eq!(
-            contract.pool_claimable_total(RewardPool::Cca).unwrap(),
+            contract.pool_agent_reward_total(RewardPool::Cca).unwrap(),
             U256::from(256)
         );
         assert_eq!(contract.waa_address_count.read(&DAY).unwrap(), 0);
@@ -891,7 +887,7 @@ fn missing_offer_index_or_positive_count_never_becomes_residue() {
                 assert!(crate::api::process_agent_rewards(&context).is_err());
                 assert_eq!(contract.accrual_head.read().unwrap(), 0);
                 assert_eq!(contract.pending_jobs_by_day.read(&DAY.value()).unwrap(), 4);
-                assert_eq!(contract.get_claimable_reward(address).unwrap(), U256::ZERO);
+                assert_eq!(contract.agent_reward_total(address).unwrap(), U256::ZERO);
                 assert_eq!(
                     outbe_promislimit::PromisLimitContract::new(storage.clone())
                         .promis_limit()
@@ -903,7 +899,7 @@ fn missing_offer_index_or_positive_count_never_becomes_residue() {
                 index.counts.write(&count_key, 1).unwrap();
                 crate::api::process_agent_rewards(&context).unwrap();
                 assert_eq!(
-                    contract.get_pool_claimable_reward(pool, address).unwrap(),
+                    contract.get_agent_reward(pool, address).unwrap(),
                     U256::from(if clear_address { 5 } else { 10 })
                 );
             });
@@ -932,21 +928,21 @@ fn exact_256_entry_boundary_does_not_credit_the_next_pool_in_the_same_block() {
         crate::api::process_agent_rewards(&context).unwrap();
         assert_eq!(contract.accrual_head.read().unwrap(), 2);
         assert_eq!(
-            contract.pool_claimable_total(RewardPool::Waa).unwrap(),
+            contract.pool_agent_reward_total(RewardPool::Waa).unwrap(),
             U256::from(256)
         );
         assert_eq!(
-            contract.pool_claimable_total(RewardPool::Sra).unwrap(),
+            contract.pool_agent_reward_total(RewardPool::Sra).unwrap(),
             U256::ZERO
         );
         crate::api::process_agent_rewards(&context).unwrap();
         assert_eq!(
-            contract.pool_claimable_total(RewardPool::Sra).unwrap(),
+            contract.pool_agent_reward_total(RewardPool::Sra).unwrap(),
             U256::ZERO
         );
         crate::api::process_agent_rewards(&ctx(storage.clone(), 1)).unwrap();
         assert_eq!(
-            contract.pool_claimable_total(RewardPool::Sra).unwrap(),
+            contract.pool_agent_reward_total(RewardPool::Sra).unwrap(),
             U256::ONE
         );
         assert_eq!(contract.accrual_head.read().unwrap(), 4);

@@ -726,10 +726,7 @@ fn stale_oracle_cycle_credits_validator_reward_and_allows_later_feeder_vote() {
                         || r.state == outbe_emission::schema::emission_day_state::COMPLETED
                 }),
                 voter_claimable: outbe_agentreward::AgentRewardContract::new(storage.clone())
-                    .get_pool_claimable_reward(
-                        outbe_agentreward::schema::RewardPool::Validator,
-                        voter,
-                    )
+                    .get_agent_reward(outbe_agentreward::schema::RewardPool::Validator, voter)
                     .unwrap(),
                 voter_gems: outbe_gem::api::balance_of(&storage, voter).unwrap(),
                 feeder_vote_exists: oracle.vote_exists.read(&proposer).unwrap(),

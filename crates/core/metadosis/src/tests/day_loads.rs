@@ -438,7 +438,7 @@ fn a_day_with_no_limit_carries_its_loads() {
         .collect();
     assert_eq!(canceled.len(), 1);
     let record = record(&mut provider);
-    assert_eq!(record.metadosis_state, metadosis_state::CANCELLED);
+    assert_eq!(record.metadosis_state, metadosis_state::CANCELED);
     assert_eq!(record.state, emission_day_state::COMPLETED);
     assert_eq!(record.nods, 0);
 }

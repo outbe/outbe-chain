@@ -6,7 +6,7 @@ import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Ini
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 import {ERC1967Utils} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
-import {TargetRouter} from "@contracts/target/TargetRouter.sol";
+import {IntexAuctionTargetRouter} from "@contracts/target/IntexAuctionTargetRouter.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 
 contract RoutersUupsTest is CrossChainTest {
@@ -15,7 +15,7 @@ contract RoutersUupsTest is CrossChainTest {
     address internal stranger = makeAddr("stranger");
     address internal erc20Router = makeAddr("erc20Router");
 
-    TargetRouter internal target;
+    IntexAuctionTargetRouter internal target;
 
     function setUp() public {
         _setUpBridge();
@@ -33,20 +33,20 @@ contract RoutersUupsTest is CrossChainTest {
     }
 
     function test_RevertWhen_ImplementationInitialized() public {
-        TargetRouter timpl = new TargetRouter(address(bridge), OUTBE_CHAIN_ID, erc20Router);
+        IntexAuctionTargetRouter timpl = new IntexAuctionTargetRouter(address(bridge), OUTBE_CHAIN_ID, erc20Router);
         vm.expectRevert(Initializable.InvalidInitialization.selector);
         timpl.initialize(address(this));
     }
 
     function test_RevertWhen_InitializeZeroDelegate() public {
-        TargetRouter impl = new TargetRouter(address(bridge), OUTBE_CHAIN_ID, erc20Router);
-        bytes memory initData = abi.encodeCall(TargetRouter.initialize, (address(0)));
+        IntexAuctionTargetRouter impl = new IntexAuctionTargetRouter(address(bridge), OUTBE_CHAIN_ID, erc20Router);
+        bytes memory initData = abi.encodeCall(IntexAuctionTargetRouter.initialize, (address(0)));
         vm.expectRevert(abi.encodeWithSignature("ZeroAddress(string)", "delegate"));
         new ERC1967Proxy(address(impl), initData);
     }
 
     function test_RevertWhen_UpgradeByNonAdmin() public {
-        TargetRouter newImpl = new TargetRouter(address(bridge), OUTBE_CHAIN_ID, erc20Router);
+        IntexAuctionTargetRouter newImpl = new IntexAuctionTargetRouter(address(bridge), OUTBE_CHAIN_ID, erc20Router);
         vm.prank(stranger);
         vm.expectRevert(
             abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, stranger, bytes32(0))
@@ -62,7 +62,7 @@ contract RoutersUupsTest is CrossChainTest {
         target.setDependencies(auction, intex, escrow);
         target.grantRole(target.OUTBE_ICA_ROLE(), ica);
 
-        TargetRouter newImpl = new TargetRouter(address(bridge), OUTBE_CHAIN_ID, erc20Router);
+        IntexAuctionTargetRouter newImpl = new IntexAuctionTargetRouter(address(bridge), OUTBE_CHAIN_ID, erc20Router);
         target.upgradeToAndCall(address(newImpl), "");
 
         bytes32 implSlot = vm.load(address(target), ERC1967Utils.IMPLEMENTATION_SLOT);

@@ -21,6 +21,7 @@ use super::elf::{self, ReleaseIdentity};
 
 const COMMON_BINARIES: &[&str] = &[
     "outbe-up",
+    "outbe-vm-agent",
     "outbe-chain",
     "outbe-cli",
     "outbe-keygen",
@@ -31,7 +32,7 @@ const COMMON_BINARIES: &[&str] = &[
 const OPERATOR_TOOL: &str = "outbe-genesis-cli";
 const GENESIS_ASSETS: &str = "share/outbe-genesis";
 const CRS_BUNDLE_PATH: &str = ".bb-crs/bn254_g1.dat";
-const CRS_URL: &str = "https://crs.aztec.network/g1.dat";
+const CRS_REPO_PATH: &str = "release/crs/bn254_g1.dat";
 const CRS_SIZE: usize = 4_194_368;
 const CRS_SHA256: &str = "9fd9fad54cfdc61ec309e818fe7bbddad1ca7dde72cc9b1afd126b744f887078";
 
@@ -178,7 +179,7 @@ fn build_inside_container(options: &BuildOptions<'_>) -> Result<PathBuf> {
     }
     stage_joining_units(&staging_systemd)?;
     stage_genesis_assets(options.repo_root, &staging.path().join(GENESIS_ASSETS))?;
-    stage_crs(staging.path())?;
+    stage_crs(options.repo_root, staging.path())?;
     fs::create_dir_all(options.output_dir)?;
     let output = options
         .output_dir
@@ -212,31 +213,24 @@ fn stage_genesis_assets(repo_root: &Path, output: &Path) -> Result<()> {
     )
 }
 
-fn stage_crs(output: &Path) -> Result<()> {
+fn stage_crs(repo_root: &Path, output: &Path) -> Result<()> {
+    let source = repo_root.join(CRS_REPO_PATH);
     let destination = output.join(CRS_BUNDLE_PATH);
     fs::create_dir_all(destination.parent().expect("CRS path has a parent"))?;
-    let status = Command::new("curl")
-        .args([
-            "--fail",
-            "--location",
-            "--silent",
-            "--show-error",
-            "--range",
-            &format!("0-{}", CRS_SIZE - 1),
-            "--output",
-            destination.to_str().expect("UTF-8 CRS path"),
-            CRS_URL,
-        ])
-        .status()
-        .wrap_err("download pinned CRS")?;
-    ensure!(status.success(), "failed to download pinned CRS");
-    let bytes = fs::read(&destination)?;
-    ensure!(bytes.len() == CRS_SIZE, "downloaded CRS has the wrong size");
+    let bytes =
+        fs::read(&source).wrap_err_with(|| format!("read vendored CRS: {}", source.display()))?;
     ensure!(
-        hex::encode(Sha256::digest(&bytes)) == CRS_SHA256,
-        "downloaded CRS checksum mismatch"
+        bytes.len() == CRS_SIZE,
+        "vendored CRS has the wrong size: expected {CRS_SIZE}, got {}",
+        bytes.len()
     );
-    fs::write(destination, bytes)?;
+    let actual_sha256 = hex::encode(Sha256::digest(&bytes));
+    ensure!(
+        actual_sha256 == CRS_SHA256,
+        "vendored CRS checksum mismatch: expected {CRS_SHA256}, got {actual_sha256}"
+    );
+    fs::write(&destination, bytes)
+        .wrap_err_with(|| format!("stage vendored CRS: {}", destination.display()))?;
     Ok(())
 }
 
@@ -274,9 +268,10 @@ fn cargo_build_command(repo_root: &Path, target: &str) -> Command {
     command
 }
 
-fn binary_targets() -> [(&'static str, &'static str); 8] {
+fn binary_targets() -> [(&'static str, &'static str); 9] {
     [
         ("outbe-up", "outbe-up"),
+        ("outbe-vm-agent", "outbe-vm-agent"),
         ("outbe-chain", "outbe-chain"),
         ("outbe-cli", "outbe-cli"),
         ("outbe-keygen", "outbe-keygen"),
@@ -583,6 +578,7 @@ mod tests {
                 "outbe-keygen",
                 "outbe-radicle",
                 "outbe-up",
+                "outbe-vm-agent",
             ]
         );
         assert!(manifest
@@ -640,5 +636,33 @@ mod tests {
         assert!(output.join("profiles/testnet.yaml").is_file());
         assert!(output.join("profiles/devnet/pairs.toml").is_file());
         assert!(output.join("contracts/predeploys").is_dir());
+    }
+
+    #[test]
+    fn stages_vendored_crs_and_rejects_corrupted_input() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let temp = tempfile::tempdir().unwrap();
+        stage_crs(repo_root, temp.path()).unwrap();
+
+        let staged = temp.path().join(CRS_BUNDLE_PATH);
+        let bytes = fs::read(&staged).unwrap();
+        assert_eq!(bytes.len(), CRS_SIZE);
+        assert_eq!(hex::encode(Sha256::digest(&bytes)), CRS_SHA256);
+
+        // Wrong size fails closed.
+        let bad_size_repo = tempfile::tempdir().unwrap();
+        let bad_src = bad_size_repo.path().join(CRS_REPO_PATH);
+        fs::create_dir_all(bad_src.parent().unwrap()).unwrap();
+        fs::write(&bad_src, b"too short").unwrap();
+        let err = stage_crs(bad_size_repo.path(), temp.path()).unwrap_err();
+        assert!(err.to_string().contains("wrong size"), "{err}");
+
+        // Wrong checksum with exact size fails closed.
+        let bad_hash_repo = tempfile::tempdir().unwrap();
+        let bad_src = bad_hash_repo.path().join(CRS_REPO_PATH);
+        fs::create_dir_all(bad_src.parent().unwrap()).unwrap();
+        fs::write(&bad_src, vec![0_u8; CRS_SIZE]).unwrap();
+        let err = stage_crs(bad_hash_repo.path(), temp.path()).unwrap_err();
+        assert!(err.to_string().contains("checksum mismatch"), "{err}");
     }
 }

@@ -221,6 +221,7 @@ fn validate_validator_runtime(
     }
     let allowed: BTreeSet<&str> = [
         "rpc_bind_ip",
+        "rpc_port",
         "reth_p2p_port",
         "reth_discv5_port",
         "radicle_port",

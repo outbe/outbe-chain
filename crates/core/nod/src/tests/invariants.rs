@@ -147,19 +147,6 @@ fn group_record_survives_membership_changes_until_last_removal() {
 }
 
 #[test]
-fn entry_price_day_is_the_last_closed_utc_day() {
-    let new_year = date_key_to_utc_timestamp(20_260_101).unwrap();
-    assert_eq!(
-        crate::openings::entry_price_day(new_year).expect("date step"),
-        20_251_231
-    );
-    assert_eq!(
-        crate::openings::entry_price_day(new_year - 1).expect("date step"),
-        20_251_230
-    );
-}
-
-#[test]
 fn issuance_rejects_legacy_and_mismatched_digests_without_writes() {
     let body = item(Address::repeat_byte(0x42));
     let mut provider = HashMapStorageProvider::new(1);

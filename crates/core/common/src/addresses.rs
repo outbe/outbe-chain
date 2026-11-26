@@ -16,12 +16,14 @@ pub const ERC7786_HUB_ADDRESS: Address = address!("0x1925D1af9dEd78172EF305Ff46A
 #[cfg(feature = "e2e-test")]
 pub const ERC7786_HUB_ADDRESS: Address = address!("0x2cFdf7b8b56300d97F90f51Dc489dbc77dC15555");
 
-/// Intex TargetRouter, the same address on every target chain and on Outbe. CREATE3 proxy under salt
-/// "outbe-intex:TargetRouter:v7.0.0", same deployer and factory.
+/// IntexAuctionTargetRouter, the same address on every target chain and on Outbe. CREATE3 proxy
+/// under salt "outbe-intex:IntexAuctionTargetRouter:v7.0.0", same deployer and factory.
 #[cfg(not(feature = "e2e-test"))]
-pub const TARGET_ROUTER_ADDRESS: Address = address!("0x426F62D1F01930FEbfd760B10c294dae0eDbd468");
+pub const INTEX_AUCTION_TARGET_ROUTER_ADDRESS: Address =
+    address!("0x27a9DABEe8ea2d624E85d0034d92bD1daf0D54B3");
 #[cfg(feature = "e2e-test")]
-pub const TARGET_ROUTER_ADDRESS: Address = address!("0xab400214c9Ec6441951d316e431C25ec39f1dBb0");
+pub const INTEX_AUCTION_TARGET_ROUTER_ADDRESS: Address =
+    address!("0x7420664797Fe83229224B617aEC0Ba2924F2465e");
 
 /// WCOEN on Outbe. CREATE3 proxy under salt "WCOENv7.0.0", same deployer and factory.
 #[cfg(not(feature = "e2e-test"))]

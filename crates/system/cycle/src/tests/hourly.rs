@@ -180,7 +180,7 @@ fn step_error_takes_its_fallback() {
     );
     let failed_allocation = outbe_emission::schema::EmissionDay {
         state: emission_day_state::COMPLETED,
-        metadosis_state: metadosis_state::CANCELLED,
+        metadosis_state: metadosis_state::CANCELED,
         ..failed_allocation
     };
 

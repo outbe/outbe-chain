@@ -14,7 +14,7 @@ pub mod emission_day_state {
 pub mod metadosis_state {
     pub const PENDING: u8 = 0;
     pub const COMPLETED: u8 = 1;
-    pub const CANCELLED: u8 = 2;
+    pub const CANCELED: u8 = 2;
     pub const FAILED: u8 = 3;
 }
 

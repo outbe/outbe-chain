@@ -4,11 +4,11 @@ use outbe_protocol_benchmarks::{
 
 #[test]
 fn confidential_creation_paths_use_real_in_process_crypto_and_validate_balances() {
-    for scenario in [
-        ConfidentialScenario::promis(),
-        ConfidentialScenario::gratis(),
-        ConfidentialScenario::gratis_with_fidelity(),
-        ConfidentialScenario::gratisfactory(),
+    for (scenario, emits_events) in [
+        (ConfidentialScenario::promis(), true),
+        (ConfidentialScenario::gratis(), false),
+        (ConfidentialScenario::gratis_with_fidelity(), false),
+        (ConfidentialScenario::gratisfactory(), false),
     ] {
         let report = run_scenario(
             &scenario,
@@ -26,6 +26,6 @@ fn confidential_creation_paths_use_real_in_process_crypto_and_validate_balances(
         );
         assert!(report.gas_totals[&GasLedger::SystemInternal] > 0);
         assert!(!report.storage.is_empty());
-        assert!(!report.events.is_empty());
+        assert_eq!(!report.events.is_empty(), emits_events);
     }
 }

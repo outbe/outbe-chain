@@ -3,27 +3,27 @@ pragma solidity 0.8.30;
 
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 
-import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
-import {IIntexNFT1155Bridge} from "@contracts/shared/interfaces/IIntexNFT1155Bridge.sol";
-import {IntexNFT1155BridgeCodec} from "@contracts/shared/libs/IntexNFT1155BridgeCodec.sol";
+import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
+import {IIntexNFT1155Router} from "@contracts/shared/interfaces/IIntexNFT1155Router.sol";
+import {IntexNFT1155RouterCodec} from "@contracts/shared/libs/IntexNFT1155RouterCodec.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
-import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
+import {OpenSeriesLib} from "../helpers/OpenSeriesLib.sol";
 
 /// @title InboundFailureIsolationTest
-/// @notice Behavioural coverage Pattern B on `IntexNFT1155Bridge`: a per-item
+/// @notice Behavioural coverage Pattern B on `IntexNFT1155Router`: a per-item
 ///         `token.crosschainMint` revert no longer reverts the whole batch. Instead:
-///         - the bridge records the failure as a `FailedCrosschainMint` snapshot,
+///         - the bridge records the failure as a `FailedCrosschainReceive` snapshot,
 ///         - the bridge emits `IntexCrosschainReceiveFailed`,
-///         - `retryCrosschainMint` re-attempts the crosschainMint after the upstream issue is
+///         - `retryIntexCrosschainReceive` re-attempts the crosschainMint after the upstream issue is
 ///           fixed.
 ///         This is the Critical funds-lock fix from the contract review (R-04).
 contract InboundFailureIsolationTest is CrossChainTest {
     uint32 internal constant BNB_CHAIN_ID = 1;
     uint32 internal constant OUTBE_CHAIN_ID = 2;
 
-    IntexNFT1155Bridge internal nftBridgeBnb;
-    IntexNFT1155Bridge internal nftBridgeOutbe;
+    IntexNFT1155Router internal nftRouterBnb;
+    IntexNFT1155Router internal nftRouterOutbe;
     IntexNFT1155 internal intex;
 
     address internal admin = address(this);
@@ -39,42 +39,42 @@ contract InboundFailureIsolationTest is CrossChainTest {
         _setUpBridge();
 
         intex = DeployProxy.intexNFT1155(admin, admin);
-        nftBridgeBnb = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
-        nftBridgeOutbe = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
+        nftRouterBnb = DeployProxy.intexNFT1155Router(address(intex), address(bridge), admin);
+        nftRouterOutbe = DeployProxy.intexNFT1155Router(address(intex), address(bridge), admin);
 
-        nftBridgeBnb.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(nftBridgeOutbe)));
-        nftBridgeOutbe.registerRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(nftBridgeBnb)));
+        nftRouterBnb.setRemoteRouter(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(nftRouterOutbe)));
+        nftRouterOutbe.setRemoteRouter(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(nftRouterBnb)));
 
         // Two series: one Issued (crosschainMint succeeds), one not (crosschainMint reverts on state check).
-        intex.createSeries(CreateSeriesLib.params(SERIES_GOOD_DAY, 10_000, 0));
+        intex.openSeries(OpenSeriesLib.params(SERIES_GOOD_DAY, 10_000, 0));
         // SERIES_BAD intentionally not created - `intex.crosschainMint` will revert on lookup.
 
-        intex.grantRole(intex.BRIDGE_ROLE(), address(nftBridgeBnb));
+        intex.grantRole(intex.BRIDGE_ROLE(), address(nftRouterBnb));
     }
 
     /// @dev Deliver `message` from the OUTBE peer to the BNB adapter through the bridge.
     function _deliverInbound(bytes memory message) internal {
-        _deliver(OUTBE_CHAIN_ID, address(nftBridgeOutbe), address(nftBridgeBnb), message);
+        _deliver(OUTBE_CHAIN_ID, address(nftRouterOutbe), address(nftRouterBnb), message);
     }
 
     /// @dev Recompute the bridge's `receiveId` for a message delivered from the OUTBE peer, matching
     ///      `MockERC7786Bridge._deliver`: `keccak256(abi.encode(sender, payload))`.
     function _receiveId(bytes memory message) internal view returns (bytes32) {
-        bytes memory sender = _interop(OUTBE_CHAIN_ID, address(nftBridgeOutbe));
+        bytes memory sender = _interop(OUTBE_CHAIN_ID, address(nftRouterOutbe));
         return keccak256(abi.encode(sender, message));
     }
 
     /// @dev SEND_BATCH (V2 abi.encode): 2 items. Item 0 targets SERIES_GOOD, item 1 SERIES_BAD.
     function _batchPacket(address recipient) internal pure returns (bytes memory) {
-        uint256[] memory tokenIds = new uint256[](2);
-        tokenIds[0] = TOKEN_GOOD;
-        tokenIds[1] = TOKEN_BAD;
+        uint256[] memory intexIds = new uint256[](2);
+        intexIds[0] = TOKEN_GOOD;
+        intexIds[1] = TOKEN_BAD;
         uint256[] memory amounts = new uint256[](2);
         amounts[0] = 50;
         amounts[1] = 75;
-        return IntexNFT1155BridgeCodec.encodeBatch(
-            IntexNFT1155BridgeCodec.BatchPayload({
-                to: bytes32(uint256(uint160(recipient))), tokenIds: tokenIds, units: amounts
+        return IntexNFT1155RouterCodec.encodeBatch(
+            IntexNFT1155RouterCodec.BatchPayload({
+                to: bytes32(uint256(uint160(recipient))), intexIds: intexIds, units: amounts
             })
         );
     }
@@ -84,14 +84,14 @@ contract InboundFailureIsolationTest is CrossChainTest {
         bytes32[] memory recipients = new bytes32[](2);
         recipients[0] = bytes32(uint256(uint160(goodRecipient)));
         recipients[1] = bytes32(uint256(uint160(badRecipient)));
-        uint256[] memory tokenIds = new uint256[](2);
-        tokenIds[0] = TOKEN_GOOD;
-        tokenIds[1] = TOKEN_BAD;
+        uint256[] memory intexIds = new uint256[](2);
+        intexIds[0] = TOKEN_GOOD;
+        intexIds[1] = TOKEN_BAD;
         uint256[] memory amounts = new uint256[](2);
         amounts[0] = 50;
         amounts[1] = 75;
-        return IntexNFT1155BridgeCodec.encodeMulti(
-            IntexNFT1155BridgeCodec.MultiPayload({recipients: recipients, tokenIds: tokenIds, units: amounts})
+        return IntexNFT1155RouterCodec.encodeMulti(
+            IntexNFT1155RouterCodec.MultiPayload({recipients: recipients, intexIds: intexIds, units: amounts})
         );
     }
 
@@ -109,19 +109,20 @@ contract InboundFailureIsolationTest is CrossChainTest {
         // Good item minted.
         assertEq(intex.balanceOf(recipient, TOKEN_GOOD), 50, "good item must be minted");
 
-        // Bad item recorded in failedCrosschainMints, NOT minted.
-        (address to, uint256 tokenId, uint256 amount, bool exists) = nftBridgeBnb.failedCrosschainMints(receiveId, 1);
+        // Bad item recorded in failedCrosschainReceives, NOT minted.
+        (address to, uint256 intexId, uint256 amount, bool exists) =
+            nftRouterBnb.getFailedCrosschainReceive(receiveId, 1);
         assertEq(to, recipient, "failed entry.to");
-        assertEq(tokenId, TOKEN_BAD, "failed entry.tokenId");
+        assertEq(intexId, TOKEN_BAD, "failed entry.intexId");
         assertEq(amount, 75, "failed entry.amount");
         assertTrue(exists, "failed entry must exist");
 
         // Item 0 did NOT fail - no entry for idx=0.
-        (,,, bool existsZero) = nftBridgeBnb.failedCrosschainMints(receiveId, 0);
+        (,,, bool existsZero) = nftRouterBnb.getFailedCrosschainReceive(receiveId, 0);
         assertFalse(existsZero, "good item idx must have no failed entry");
     }
 
-    function test_BatchReceive_RetryCrosschainMintSucceedsAfterUpstreamFix() public {
+    function test_BatchReceive_RetryIntexCrosschainReceiveSucceedsAfterUpstreamFix() public {
         address recipient = address(0xCAFE);
         bytes memory packet = _batchPacket(recipient);
         bytes32 receiveId = _receiveId(packet);
@@ -129,25 +130,25 @@ contract InboundFailureIsolationTest is CrossChainTest {
         _deliverInbound(packet);
 
         // Initially the bad item is parked.
-        (,,, bool existsBefore) = nftBridgeBnb.failedCrosschainMints(receiveId, 1);
+        (,,, bool existsBefore) = nftRouterBnb.getFailedCrosschainReceive(receiveId, 1);
         assertTrue(existsBefore, "bad item parked");
 
         // Fix upstream: create SERIES_BAD now so crosschainMint can succeed.
-        intex.createSeries(CreateSeriesLib.params(SERIES_BAD_DAY, 10_000, 0));
+        intex.openSeries(OpenSeriesLib.params(SERIES_BAD_DAY, 10_000, 0));
 
         // Anyone can retry - no auth gate.
         vm.prank(address(0xDEAD));
-        nftBridgeBnb.retryCrosschainMint(receiveId, 1);
+        nftRouterBnb.retryIntexCrosschainReceive(receiveId, 1);
 
         // Now minted.
         assertEq(intex.balanceOf(recipient, TOKEN_BAD), 75, "retried item must be minted");
 
         // Entry deleted.
-        (,,, bool existsAfter) = nftBridgeBnb.failedCrosschainMints(receiveId, 1);
+        (,,, bool existsAfter) = nftRouterBnb.getFailedCrosschainReceive(receiveId, 1);
         assertFalse(existsAfter, "entry deleted after retry");
     }
 
-    function test_BatchReceive_RetryCrosschainMintTwiceRevertsNoSuchFailedCrosschainMint() public {
+    function test_BatchReceive_RetryIntexCrosschainReceiveTwiceRevertsNoSuchFailedCrosschainReceive() public {
         address recipient = address(0xCAFE);
         bytes memory packet = _batchPacket(recipient);
         bytes32 receiveId = _receiveId(packet);
@@ -155,43 +156,49 @@ contract InboundFailureIsolationTest is CrossChainTest {
         _deliverInbound(packet);
 
         // Fix upstream + retry once.
-        intex.createSeries(CreateSeriesLib.params(SERIES_BAD_DAY, 10_000, 0));
-        nftBridgeBnb.retryCrosschainMint(receiveId, 1);
+        intex.openSeries(OpenSeriesLib.params(SERIES_BAD_DAY, 10_000, 0));
+        nftRouterBnb.retryIntexCrosschainReceive(receiveId, 1);
 
         // Second retry must revert, because the slot has been deleted.
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155Bridge.NoSuchFailedCrosschainMint.selector, receiveId, 1));
-        nftBridgeBnb.retryCrosschainMint(receiveId, 1);
+        vm.expectRevert(
+            abi.encodeWithSelector(IIntexNFT1155Router.NoSuchFailedCrosschainReceive.selector, receiveId, 1)
+        );
+        nftRouterBnb.retryIntexCrosschainReceive(receiveId, 1);
     }
 
-    function test_BatchReceive_ReclaimToSourceConsumesEntryAndSendsReverse() public {
+    function test_BatchReceive_SendBackToSourceConsumesEntryAndSendsReverse() public {
         address recipient = address(0xCAFE);
         bytes memory packet = _batchPacket(recipient);
         bytes32 receiveId = _receiveId(packet);
 
         _deliverInbound(packet);
 
-        (,,, bool exists) = nftBridgeBnb.failedCrosschainMints(receiveId, 1);
+        (,,, bool exists) = nftRouterBnb.getFailedCrosschainReceive(receiveId, 1);
         assertTrue(exists, "bad item parked at idx 1");
 
         // Reclaim routes the stranded item back to its origin peer and consumes the entry.
-        nftBridgeBnb.reclaimToSource(receiveId, 1);
+        nftRouterBnb.sendBackToSource(receiveId, 1);
 
-        (,,, bool existsAfter) = nftBridgeBnb.failedCrosschainMints(receiveId, 1);
+        (,,, bool existsAfter) = nftRouterBnb.getFailedCrosschainReceive(receiveId, 1);
         assertFalse(existsAfter, "entry consumed on reclaim");
 
         // The reverse packet is a one-item SEND_MULTI recorded on the bridge.
         bytes memory reverse = bridge.lastPayload();
-        assertEq(uint8(reverse[1]), IntexNFT1155BridgeCodec.SEND_MULTI, "reverse is SEND_MULTI");
+        assertEq(uint8(reverse[1]), IntexNFT1155RouterCodec.SEND_MULTI, "reverse is SEND_MULTI");
 
         // A second reclaim reverts - the entry is gone.
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155Bridge.NoSuchFailedCrosschainMint.selector, receiveId, 1));
-        nftBridgeBnb.reclaimToSource(receiveId, 1);
+        vm.expectRevert(
+            abi.encodeWithSelector(IIntexNFT1155Router.NoSuchFailedCrosschainReceive.selector, receiveId, 1)
+        );
+        nftRouterBnb.sendBackToSource(receiveId, 1);
     }
 
-    function test_BatchReceive_RetryCrosschainMintUnknownIdxRevertsNoSuchFailedCrosschainMint() public {
+    function test_BatchReceive_RetryIntexCrosschainReceiveUnknownIdxRevertsNoSuchFailedCrosschainReceive() public {
         bytes32 receiveId = bytes32(uint256(0xAAEE));
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155Bridge.NoSuchFailedCrosschainMint.selector, receiveId, 0));
-        nftBridgeBnb.retryCrosschainMint(receiveId, 0);
+        vm.expectRevert(
+            abi.encodeWithSelector(IIntexNFT1155Router.NoSuchFailedCrosschainReceive.selector, receiveId, 0)
+        );
+        nftRouterBnb.retryIntexCrosschainReceive(receiveId, 0);
     }
 
     // ---------------------------------------------------------------
@@ -210,7 +217,7 @@ contract InboundFailureIsolationTest is CrossChainTest {
         assertEq(intex.balanceOf(goodRecipient, TOKEN_GOOD), 50, "good recipient minted");
 
         // Bad recipient parked.
-        (address to,, uint256 amount, bool exists) = nftBridgeBnb.failedCrosschainMints(receiveId, 1);
+        (address to,, uint256 amount, bool exists) = nftRouterBnb.getFailedCrosschainReceive(receiveId, 1);
         assertEq(to, badRecipient);
         assertEq(amount, 75);
         assertTrue(exists);
@@ -223,9 +230,9 @@ contract InboundFailureIsolationTest is CrossChainTest {
     // Self-call shim guard
     // ---------------------------------------------------------------
 
-    function test_CrosschainMintOne_ExternalCallerRevertsNotSelf() public {
-        vm.expectRevert(IIntexNFT1155Bridge.NotSelf.selector);
-        nftBridgeBnb.crosschainMintOne(address(0xCAFE), TOKEN_GOOD, 1);
+    function test_CrosschainReceiveOne_ExternalCallerRevertsNotSelf() public {
+        vm.expectRevert(IIntexNFT1155Router.NotSelf.selector);
+        nftRouterBnb.crosschainReceiveOne(address(0xCAFE), TOKEN_GOOD, 1);
     }
 
     // ---------------------------------------------------------------
@@ -239,13 +246,13 @@ contract InboundFailureIsolationTest is CrossChainTest {
         _deliverInbound(_batchPacket(recipient));
 
         // Second batch: same recipient, distinct payload (single good item) -> distinct receiveId.
-        uint256[] memory tokenIds = new uint256[](1);
-        tokenIds[0] = TOKEN_GOOD;
+        uint256[] memory intexIds = new uint256[](1);
+        intexIds[0] = TOKEN_GOOD;
         uint256[] memory amounts = new uint256[](1);
         amounts[0] = 100;
-        bytes memory packet = IntexNFT1155BridgeCodec.encodeBatch(
-            IntexNFT1155BridgeCodec.BatchPayload({
-                to: bytes32(uint256(uint160(recipient))), tokenIds: tokenIds, units: amounts
+        bytes memory packet = IntexNFT1155RouterCodec.encodeBatch(
+            IntexNFT1155RouterCodec.BatchPayload({
+                to: bytes32(uint256(uint160(recipient))), intexIds: intexIds, units: amounts
             })
         );
         _deliverInbound(packet);

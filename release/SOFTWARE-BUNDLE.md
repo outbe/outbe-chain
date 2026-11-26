@@ -16,8 +16,8 @@ cargo xtask release build --output /tmp/outbe-release
 TEE logic runs inside `outbe-chain`; the bundle does not ship an enclave executable or a separate
 enclave service. The node uses the explicit no-attestation policy supported by devnet and testnet;
 mainnet remains unavailable until confidential-VM attestation is implemented. The build runs inside
-the pinned project-toolchain container and requires a clean Git checkout. The builder downloads the
-canonical CRS prefix and verifies its pinned SHA-256.
+the pinned project-toolchain container and requires a clean Git checkout. The builder stages the
+vendored CRS from `release/crs/bn254_g1.dat` and verifies its pinned size and SHA-256.
 
 Output names include the full source commit. The shared `software-manifest.json` is the first archive
 entry and records the release identity, target, mode, size, and SHA-256 of every file. The build

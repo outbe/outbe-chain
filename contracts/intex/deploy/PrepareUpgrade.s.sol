@@ -8,8 +8,8 @@ import {BaseScript} from "./BaseScript.s.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
-import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
-import {TargetRouter} from "@contracts/target/TargetRouter.sol";
+import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
+import {IntexAuctionTargetRouter} from "@contracts/target/IntexAuctionTargetRouter.sol";
 
 /// @title PrepareUpgrade
 /// @author Outbe
@@ -33,12 +33,15 @@ contract PrepareUpgrade is BaseScript, UpgradeProposal {
         if (index == 1) return address(new EscrowAdapter());
         if (index == 2) return address(new IntexAuction());
         if (index == 3) {
-            IntexNFT1155Bridge bridge = IntexNFT1155Bridge(payable(proxy));
-            return address(new IntexNFT1155Bridge(address(bridge.token()), address(bridge.BRIDGE())));
+            IntexNFT1155Router bridge = IntexNFT1155Router(payable(proxy));
+            return address(new IntexNFT1155Router(address(bridge.token()), address(bridge.BRIDGE())));
         }
-        TargetRouter router = TargetRouter(payable(proxy));
-        return
-            address(new TargetRouter(address(router.BRIDGE()), router.OUTBE_CHAIN_ID(), address(router.erc20Router())));
+        IntexAuctionTargetRouter router = IntexAuctionTargetRouter(payable(proxy));
+        return address(
+            new IntexAuctionTargetRouter(
+                address(router.BRIDGE()), router.OUTBE_CHAIN_ID(), address(router.erc20Router())
+            )
+        );
     }
 
     function _deployerOwns(address proxy, address deployer) internal view override returns (bool) {

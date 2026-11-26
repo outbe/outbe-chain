@@ -458,7 +458,7 @@ fn wwd_without_price_runs_as_empty_day() {
 }
 
 #[test]
-fn zero_metadosis_limit_cancels_day_with_reason_one_and_preserves_cancelled_state() {
+fn zero_metadosis_limit_cancels_day_with_reason_one_and_preserves_canceled_state() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     provider.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 64);
     install_test_enclaves();
@@ -501,7 +501,7 @@ fn zero_metadosis_limit_cancels_day_with_reason_one_and_preserves_cancelled_stat
             .unwrap();
         assert_eq!(
             record.metadosis_state,
-            outbe_emission::schema::metadosis_state::CANCELLED
+            outbe_emission::schema::metadosis_state::CANCELED
         );
         assert_eq!(
             record.state,

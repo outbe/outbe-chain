@@ -18,24 +18,20 @@ interface ICycle {
     error ScheduleArithmeticOverflow(uint64 period, uint64 offset, uint64 timestamp);
     error DateStep(uint8 kind, uint32 dateKey);
 
-    /// Emitted exactly once per slot when a task handler completes
-    /// successfully. Indexed by the task's stable u32 id.
-    event CycleTaskExecuted(uint32 indexed id, uint64 scheduledAt, uint64 blockTimestamp, uint64 blockNumber);
+    /// The tasks of the Cycle, in the order of their stable ids.
+    enum CycleTask {
+        ProcessEmissionDay,
+        ScheduleIntexCallPass,
+        AdvanceAuctions,
+        ScheduleGemCallPass,
+        CompleteAuctions,
+        ScheduleCredisCallPass,
+        ScheduleNodCallPass
+    }
 
-    /// Emitted when a due handler reverts. `scheduledAt` is the recorded slot.
-    /// The event carries no error text. A skipped dependency does not emit it.
-    event CycleTaskFailed(uint32 indexed id, uint64 scheduledAt, uint64 blockTimestamp, uint64 blockNumber);
-
-    /// Emitted after an over-budget handler has rolled back. The slot stays pending.
-    event CycleTaskOverBudget(uint32 indexed id, uint64 consumedGas, uint64 budgetGas, uint64 blockNumber);
-
-    /// Unattempted pending work: reason 1 is capacity, reason 2 is a deferred dependency.
-    /// `scheduledAt` is the slot that a successful attempt would have recorded.
-    event CycleTaskDeferred(uint32 indexed id, uint64 scheduledAt, uint64 blockNumber, uint8 reason);
-
-    /// Emitted when a Cycle tail worker fails. Carries no error text.
-    /// `workerId`: 1 = AgentRewards, 2 = DesisCleanup.
-    event CycleWorkerFailed(uint8 indexed workerId, uint64 blockNumber);
+    /// Emitted once per slot when a task handler completes. A failed, over-budget or
+    /// deferred task emits nothing: the task runs again later and the node log gives the cause.
+    event CycleTaskCompleted(CycleTask indexed task);
 
     /// Emitted when daily emission limit allocation reverts and the emission limit
     /// goes to the Promis Limit once.

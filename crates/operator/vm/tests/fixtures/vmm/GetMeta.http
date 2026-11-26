@@ -1,0 +1,13 @@
+HTTP/1.1 200 OK
+content-type: application/json
+server: dstack VMM
+x-frame-options: SAMEORIGIN
+permissions-policy: interest-cohort=()
+x-content-type-options: nosniff
+x-app-version: v0.6.3 (git:c88f60e781a62d542e08)
+x-accel-buffering: no
+content-length: 346
+connection: close
+date: Wed, 25 Nov 2026 09:55:58 GMT
+
+{"kms":{"url":"","urls":[]},"gateway":{"url":"","base_domain":"localhost","port":8082,"agent_port":8090,"urls":[]},"resources":{"max_cvm_number":1000,"max_allocable_vcpu":40,"max_allocable_memory_in_mb":100000},"networking":{"supported_modes":["user","bridge"],"default_mode":"user","default_bridge":"obr0","max_queues":16,"default_vhost":false}}

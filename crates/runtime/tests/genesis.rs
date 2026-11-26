@@ -818,3 +818,43 @@ fn seeded_scurve_matches_a_curve_that_the_oracle_starts() {
         assert_eq!(seeded_value, value(&mut started), "{days}");
     }
 }
+
+/// Round-trips an `outbe-genesis-cli` seeded genesis through
+/// `DcapSeededChainSpecBindingV1::from_genesis_path` and `from_chain_spec`,
+/// catching any ValidatorSet storage slot drift between the seeder and `outbe-tee`.
+#[test]
+fn seeded_genesis_round_trips_through_tee_attestation_activation_binding() {
+    use outbe_primitives::OutbeHeader;
+    use outbe_tee::tee_attestation_activation::DcapSeededChainSpecBindingV1;
+    use reth_chainspec::ChainSpec;
+
+    let mut expected_keys = Vec::new();
+    let mut validators = Vec::new();
+    for i in 1u8..=4 {
+        let ikm = [i; 32];
+        let sk = blst::min_pk::SecretKey::key_gen(&ikm, &[]).expect("valid BLS keygen");
+        let pk_bytes = sk.sk_to_pk().to_bytes();
+        expected_keys.push(pk_bytes);
+        validators.push(serde_json::json!({
+            "address": format!("0x{}", hex::encode([i; 20])),
+            "feeder_address": format!("0x{}", hex::encode([i + 0x40; 20])),
+            "public_key": hex::encode(pk_bytes),
+            "radicle_node_id": hex::encode([i + 0x80; 32]),
+        }));
+    }
+    expected_keys.sort_unstable();
+
+    let validators_json = serde_json::to_string(&validators).unwrap();
+    let (tmp, _genesis, raw) = run_seed_genesis(FIXTURE_GENESIS, FIXTURE_SEED, &validators_json);
+    let genesis_path = tmp.path().join("seeded-for-tee.json");
+    std::fs::write(&genesis_path, &raw).unwrap();
+
+    let from_path = DcapSeededChainSpecBindingV1::from_genesis_path(&genesis_path).unwrap();
+    assert_eq!(from_path.genesis_consensus_keys, expected_keys);
+
+    let alloy_genesis: alloy_genesis::Genesis = serde_json::from_str(&raw).unwrap();
+    let spec: ChainSpec<OutbeHeader> = ChainSpec::from(alloy_genesis).map_header(OutbeHeader::new);
+    let from_spec = DcapSeededChainSpecBindingV1::from_chain_spec(&spec).unwrap();
+    assert_eq!(from_spec.genesis_consensus_keys, expected_keys);
+    assert_eq!(from_spec.genesis_hash, from_path.genesis_hash);
+}

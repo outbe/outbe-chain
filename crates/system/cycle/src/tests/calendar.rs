@@ -492,7 +492,7 @@ fn isolated_step_checkpoints_route_failed_allocation_and_failed_metadosis_to_pro
     );
     assert_eq!(
         failed_allocation.metadosis_state,
-        outbe_emission::schema::metadosis_state::CANCELLED
+        outbe_emission::schema::metadosis_state::CANCELED
     );
     let metadosis_canceled: Vec<_> = storage
         .get_ordered_events()

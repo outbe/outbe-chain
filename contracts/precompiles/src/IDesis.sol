@@ -49,7 +49,7 @@ interface IDesis {
     /// @notice ERC-165 interface support check.
     function supportsInterface(bytes4 interfaceId) external view returns (bool);
 
-    /// @notice Takes BIDS_PAGE, BIDS_TOTALS and BIDS_PAUSE of TargetRouter from the ERC-7786 hub.
+    /// @notice Takes BIDS_PAGE, BIDS_TOTALS and BIDS_PAUSE of IntexAuctionTargetRouter from the ERC-7786 hub.
     ///         Reverts only for a caller other than the hub and for a day before its reveal.
     function receiveMessage(bytes32 receiveId, bytes calldata sender, bytes calldata payload) external returns (bytes4);
 

@@ -5,14 +5,14 @@ import {console} from "forge-std/console.sol";
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 import {Create3Factory} from "@shared/Create3Factory.sol";
 import {CROSSCHAIN_BRIDGE, ICrosschainBridge} from "@precompiles/ICrosschainBridge.sol";
-import {TargetRouter} from "@contracts/target/TargetRouter.sol";
+import {IntexAuctionTargetRouter} from "@contracts/target/IntexAuctionTargetRouter.sol";
 import {BaseScript} from "./BaseScript.s.sol";
 
 /// @title HandOver
 /// @author Outbe
 /// @notice Gives `DEFAULT_ADMIN_ROLE` of every intex proxy on this chain to governance,
 ///         removes it from the deployer, and reads the roles back. Before that it gives
-///         `OUTBE_ICA_ROLE` of TargetRouter to the Interchain Account of Outbe on this chain.
+///         `OUTBE_ICA_ROLE` of IntexAuctionTargetRouter to the Interchain Account of Outbe on this chain.
 /// @dev Governance is CrosschainBridge on Outbe and its Interchain Account on any other chain. Run it
 ///      last: after DeployTarget and ConfigureOrigin or ConfigureTarget. After it,
 ///      an upgrade or a configuration change is an `upgradeContracts` vote of Update.
@@ -31,7 +31,7 @@ contract HandOver is BaseScript {
         Create3Factory factory = create3Factory();
         // Read before the broadcast: on a chain other than Outbe this asks the Outbe node.
         address governance = governanceOwner();
-        address targetRouter = predictProxy(factory, deployer, "TargetRouter");
+        address targetRouter = predictProxy(factory, deployer, "IntexAuctionTargetRouter");
         address outbeIca = targetRouter.code.length == 0 ? address(0) : outbeIcaAccount();
 
         string[5] memory prefixes = intexProxyPrefixes();
@@ -65,7 +65,7 @@ contract HandOver is BaseScript {
 
     /// @dev Requires an active broadcast from the admin of `router`.
     function grantOutbeIca(address router, address outbeIca) public {
-        bytes32 role = TargetRouter(payable(router)).OUTBE_ICA_ROLE();
+        bytes32 role = IntexAuctionTargetRouter(payable(router)).OUTBE_ICA_ROLE();
         IAccessControl c = IAccessControl(router);
         if (!c.hasRole(role, outbeIca)) c.grantRole(role, outbeIca);
         if (!c.hasRole(role, outbeIca)) revert OutbeIcaNotGranted(router);
