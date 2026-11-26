@@ -13,26 +13,8 @@ import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
 uint256 constant UPGRADE_PROBE = 42;
 
 contract IntexNFT1155V2 is IntexNFT1155 {
-    function upgradeProbe() external pure returns (uint256) {
-        return UPGRADE_PROBE;
-    }
-}
-
-contract IntexAuctionV2 is IntexAuction {
-    function upgradeProbe() external pure returns (uint256) {
-        return UPGRADE_PROBE;
-    }
-}
-
-contract EscrowAdapterV2 is EscrowAdapter {
-    function upgradeProbe() external pure returns (uint256) {
-        return UPGRADE_PROBE;
-    }
-}
-
-contract IntexAuctionTargetRouterV2 is IntexAuctionTargetRouter {
-    constructor(address lzEndpoint, uint32 outbeEid, address wcoenBridge)
-        IntexAuctionTargetRouter(lzEndpoint, outbeEid, wcoenBridge)
+    constructor(address targetRouter, address nftRouter, address auction, address intexFactory, address gemFactory)
+        IntexNFT1155(targetRouter, nftRouter, auction, intexFactory, gemFactory)
     {}
 
     function upgradeProbe() external pure returns (uint256) {
@@ -40,8 +22,40 @@ contract IntexAuctionTargetRouterV2 is IntexAuctionTargetRouter {
     }
 }
 
+contract IntexAuctionV2 is IntexAuction {
+    constructor(address targetRouter, address escrow, address nft) IntexAuction(targetRouter, escrow, nft) {}
+
+    function upgradeProbe() external pure returns (uint256) {
+        return UPGRADE_PROBE;
+    }
+}
+
+contract EscrowAdapterV2 is EscrowAdapter {
+    constructor(address auction, address targetRouter) EscrowAdapter(auction, targetRouter) {}
+
+    function upgradeProbe() external pure returns (uint256) {
+        return UPGRADE_PROBE;
+    }
+}
+
+contract IntexAuctionTargetRouterV2 is IntexAuctionTargetRouter {
+    constructor(
+        address bridge,
+        uint32 outbeChainId,
+        address wcoenBridge,
+        address auction,
+        address nft,
+        address escrow,
+        address outbeIca
+    ) IntexAuctionTargetRouter(bridge, outbeChainId, wcoenBridge, auction, nft, escrow, outbeIca) {}
+
+    function upgradeProbe() external pure returns (uint256) {
+        return UPGRADE_PROBE;
+    }
+}
+
 contract IntexNFT1155RouterV2 is IntexNFT1155Router {
-    constructor(address tokenAddr, address lzEndpoint) IntexNFT1155Router(tokenAddr, lzEndpoint) {}
+    constructor(address token, address bridge) IntexNFT1155Router(token, bridge) {}
 
     function upgradeProbe() external pure returns (uint256) {
         return UPGRADE_PROBE;
@@ -51,6 +65,10 @@ contract IntexNFT1155RouterV2 is IntexNFT1155Router {
 /// @dev v1.1 stub that exercises the `upgradeToAndCall` init-data path. It appends a field in a
 ///      fresh ERC-7201 namespace and sets it from a `reinitializer(2)` migration entrypoint.
 contract IntexNFT1155V2Reinit is IntexNFT1155 {
+    constructor(address targetRouter, address nftRouter, address auction, address intexFactory, address gemFactory)
+        IntexNFT1155(targetRouter, nftRouter, auction, intexFactory, gemFactory)
+    {}
+
     /// @custom:storage-location erc7201:outbe.intex.IntexNFT1155V2Reinit
     struct V2Storage {
         uint256 migratedFlag;

@@ -31,19 +31,26 @@ contract CallNoticeBatchWireTest is CrossChainTest {
     function setUp() public {
         _setUpBridge();
 
-        auction = DeployProxy.intexAuction(admin, admin);
-        intex = DeployProxy.intexNFT1155(admin, admin);
-        bnbRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
+        address routerProxy = DeployProxy.reserve();
+        auction = DeployProxy.intexAuction(admin, routerProxy, admin, admin);
+        intex = DeployProxy.intexNFT1155(admin, DeployProxy.NftLinks(routerProxy, admin, admin, admin, admin));
+        bnbRouter = DeployProxy.targetRouterAt(
+            routerProxy,
+            address(bridge),
+            admin,
+            DeployProxy.TargetRouterLinks(
+                OUTBE_CHAIN_ID, DeployProxy.WCOEN_BRIDGE, address(auction), address(intex), admin, outbeIca
+            )
+        );
         _wireOutbeIca(bnbRouter, outbeIca);
-
-        bnbRouter.setDependencies(address(auction), address(intex), admin);
-        intex.grantRole(intex.ROUTER_ROLE(), address(bnbRouter));
     }
 
     function _createBoth() internal {
+        vm.prank(address(bnbRouter));
         intex.openSeries(OpenSeriesLib.params(EMISSION_DAY, 10_000, 0));
         IIntexNFT1155.OpenSeriesParams memory eur = OpenSeriesLib.params(EMISSION_DAY, 10_000, 0);
         eur.seriesId = EUR_SERIES;
+        vm.prank(address(bnbRouter));
         intex.openSeries(eur);
     }
 
@@ -68,6 +75,7 @@ contract CallNoticeBatchWireTest is CrossChainTest {
 
     /// @notice One series missing on the target must not cost the rest of its batch.
     function test_aMissingSeriesParksAloneWhileTheRestApply() public {
+        vm.prank(address(bnbRouter));
         intex.openSeries(OpenSeriesLib.params(EMISSION_DAY, 10_000, 0));
 
         _deliver(

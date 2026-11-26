@@ -10,6 +10,7 @@ import {IIntexAuctionTargetRouter} from "@contracts/target/interfaces/IIntexAuct
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
+import {RemoteRouter} from "@contracts/shared/interfaces/IIntexNFT1155Router.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {OpenSeriesLib} from "../helpers/OpenSeriesLib.sol";
 
@@ -118,25 +119,33 @@ contract PatternADeferTest is CrossChainTest {
         // A positive fee with an unfunded relay float is what forces the inbound-triggered relays to defer.
         bridge.setFee(BRIDGE_FEE);
 
-        intex = DeployProxy.intexNFT1155(admin, admin);
+        address nftRouterProxy = DeployProxy.reserve();
+        address bnbRouterProxy = DeployProxy.reserve();
+        intex =
+            DeployProxy.intexNFT1155(admin, DeployProxy.NftLinks(bnbRouterProxy, nftRouterProxy, admin, admin, admin));
         intexOutbe = DeployProxy.intexNFT1155(admin, admin);
 
-        bnbRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
-        nftRouter = DeployProxy.intexNFT1155Router(address(intex), address(bridge), admin);
+        nftRouter = DeployProxy.intexNFT1155RouterAt(
+            nftRouterProxy, address(intex), address(bridge), admin, new RemoteRouter[](0)
+        );
         nftRouterOutbe = DeployProxy.intexNFT1155Router(address(intexOutbe), address(bridge), admin);
 
-        // Wire the inbound source of the router and the remote router of the NFT bridge.
-        _wireOutbeIca(bnbRouter, outbeIca);
+        // Wire the remote router of the NFT router.
         nftRouter.setRemoteRouter(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(nftRouterOutbe)));
 
         stubAuction = new StubAuctionWithBids();
-        bnbRouter.setDependencies(address(stubAuction), address(intex), admin);
-
-        // The bridge burns on the local Intex.
-        intex.grantRole(intex.BRIDGE_ROLE(), address(nftRouter));
-        intex.grantRole(intex.ROUTER_ROLE(), address(bnbRouter));
+        bnbRouter = DeployProxy.targetRouterAt(
+            bnbRouterProxy,
+            address(bridge),
+            admin,
+            DeployProxy.TargetRouterLinks(
+                OUTBE_CHAIN_ID, DeployProxy.WCOEN_BRIDGE, address(stubAuction), address(intex), admin, outbeIca
+            )
+        );
+        _wireOutbeIca(bnbRouter, outbeIca);
 
         // Series so callSeries + owner enumeration work.
+        vm.prank(address(bnbRouter));
         intex.openSeries(OpenSeriesLib.params(SERIES_ID_DAY, 10_000, 0));
     }
 

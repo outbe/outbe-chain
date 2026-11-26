@@ -27,9 +27,6 @@ contract IntexNFT1155Erc4906Test is Test {
 
     function setUp() public {
         nft = DeployProxy.intexNFT1155(admin, bridger);
-        vm.startPrank(admin);
-        nft.grantRole(nft.BURNER_ROLE(), bridger);
-        vm.stopPrank();
         intexId = nft.issuedIntexId(SERIES_ID);
     }
 

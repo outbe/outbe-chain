@@ -37,17 +37,22 @@ contract IntexAuctionTargetRouterInboundIdempotencyTest is CrossChainTest {
 
     function setUp() public {
         _setUpBridge();
-        intex = DeployProxy.intexNFT1155(address(this), address(this));
-        auction = DeployProxy.intexAuction(address(this), address(this));
-        router = DeployProxy.targetRouter(address(bridge), address(this), OUTBE_CHAIN_ID);
-
+        address routerProxy = DeployProxy.reserve();
+        intex = DeployProxy.intexNFT1155(
+            address(this), DeployProxy.NftLinks(routerProxy, address(this), address(this), address(this), address(this))
+        );
+        auction = DeployProxy.intexAuction(address(this), routerProxy, makeAddr("escrow"), address(intex));
+        router = DeployProxy.targetRouterAt(routerProxy, address(bridge), address(this), _links());
         _wireOutbeIca(router, outbeIca);
-        router.setDependencies(address(auction), address(intex), makeAddr("escrow"));
-        auction.grantRole(auction.RELAYER_ROLE(), address(router));
-        intex.grantRole(intex.ROUTER_ROLE(), address(router));
     }
 
     // --- helpers ---
+
+    function _links() internal returns (DeployProxy.TargetRouterLinks memory) {
+        return DeployProxy.TargetRouterLinks(
+            OUTBE_CHAIN_ID, DeployProxy.WCOEN_BRIDGE, address(auction), address(intex), makeAddr("escrow"), outbeIca
+        );
+    }
 
     function _deliver(bytes memory packet) internal {
         _deliver(OUTBE_CHAIN_ID, outbeIca, address(router), packet);
@@ -104,6 +109,7 @@ contract IntexAuctionTargetRouterInboundIdempotencyTest is CrossChainTest {
 
     function test_ARepeatedStartOfACanceledDayIsADuplicate() public {
         uint32 commitEnd = _openLiveDay();
+        vm.prank(address(router));
         auction.cancelAuction(DAY, 1);
         _expectIgnored(BridgeMsgCodec.MSG_INTEX_AUCTION_START, InboundReason.DUPLICATE);
         _deliver(_liveStart(commitEnd));
@@ -164,6 +170,7 @@ contract IntexAuctionTargetRouterInboundIdempotencyTest is CrossChainTest {
 
     function test_AClearingForACancelledDayIsObsolete() public {
         _openLiveDay();
+        vm.prank(address(router));
         auction.cancelAuction(DAY, 1);
         _expectIgnored(BridgeMsgCodec.MSG_INTEX_AUCTION_CLEARING_START, InboundReason.OBSOLETE);
         _deliver(BridgeMsgCodec.encodeIntexAuctionClearingStart(DAY));
@@ -229,6 +236,7 @@ contract IntexAuctionTargetRouterInboundIdempotencyTest is CrossChainTest {
 
     function test_AResultForACancelledDayIsObsolete() public {
         _openLiveDay();
+        vm.prank(address(router));
         auction.cancelAuction(DAY, 1);
         _expectIgnored(BridgeMsgCodec.MSG_INTEX_AUCTION_RESULT, InboundReason.OBSOLETE);
         _deliver(BridgeMsgCodec.encodeIntexAuctionResult(DAY, AuctionResultLib.day(0, 0, 0)));
@@ -267,9 +275,11 @@ contract IntexAuctionTargetRouterInboundIdempotencyTest is CrossChainTest {
         _deliver(BridgeMsgCodec.encodeIntexAuctionResult(DAY, AuctionResultLib.day(0, 0, 0)));
     }
 
+    /// @dev The auction takes calls only from `router`, so `miswired` cannot drive it.
     function test_AWiringErrorStillRevertsSoItCanBeFixedAndRedelivered() public {
-        auction.revokeRole(auction.RELAYER_ROLE(), address(router));
-        vm.expectRevert();
-        _deliver(_liveStart(uint32(block.timestamp + 1 days)));
+        IntexAuctionTargetRouter miswired = DeployProxy.targetRouter(address(bridge), address(this), _links());
+        _wireOutbeIca(miswired, outbeIca);
+        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.UnauthorizedCaller.selector, address(miswired)));
+        _deliver(OUTBE_CHAIN_ID, outbeIca, address(miswired), _liveStart(uint32(block.timestamp + 1 days)));
     }
 }

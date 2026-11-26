@@ -35,10 +35,6 @@ contract SummingEscrowAdapter {
     function auctionStatus(uint32) external pure returns (bool, bool, uint128) {
         return (false, false, 0);
     }
-
-    function hasOutstandingLocks() external pure returns (bool) {
-        return false;
-    }
 }
 
 /// @dev Counts proceeds transfers and remembers the last amount.
@@ -80,9 +76,16 @@ contract IntexAuctionTargetRouterRefundChunksTest is CrossChainTest {
         SummingEscrowAdapter escrow = new SummingEscrowAdapter(IERC20(address(wcoen)));
         tokenBridge = new CountingTokenBridge(IERC20(address(wcoen)));
 
-        target = DeployProxy.targetRouter(address(bridge), address(this), OUTBE_CHAIN_ID, address(tokenBridge));
+        target = IntexAuctionTargetRouter(payable(DeployProxy.reserve()));
         vm.deal(address(target), 10 ether);
-        target.setDependencies(makeAddr("auction"), makeAddr("intex"), address(escrow));
+        DeployProxy.targetRouterAt(
+            address(target),
+            address(bridge),
+            address(this),
+            DeployProxy.TargetRouterLinks(
+                OUTBE_CHAIN_ID, address(tokenBridge), makeAddr("auction"), makeAddr("intex"), address(escrow), outbeIca
+            )
+        );
         _wireOutbeIca(target, outbeIca);
     }
 
@@ -156,13 +159,21 @@ contract IntexAuctionTargetRouterRefundChunksTest is CrossChainTest {
     function test_TheRealEscrowSettlesEveryChunkOfADay() public {
         MockWCOEN token = new MockWCOEN();
         MockTheCompact compact = new MockTheCompact();
-        EscrowAdapter escrow = DeployProxy.escrowAdapter(address(this), address(this));
-        escrow.setDependencies(address(this), address(compact), address(token));
+        address targetProxy = DeployProxy.reserve();
+        // The test locks the bids itself, so it is the auction of the escrow.
+        EscrowAdapter escrow =
+            DeployProxy.escrowAdapter(address(this), address(this), targetProxy, address(compact), address(token));
         compact.setResetPeriodSeconds(0);
-        escrow.grantRole(escrow.RELAYER_ROLE(), address(target));
-        escrow.grantRole(escrow.AUCTION_ROLE(), address(this));
-        escrow.setProceedsRecipient(address(target));
-        target.setDependencies(makeAddr("auction"), makeAddr("intex"), address(escrow));
+        target = DeployProxy.targetRouterAt(
+            targetProxy,
+            address(bridge),
+            address(this),
+            DeployProxy.TargetRouterLinks(
+                OUTBE_CHAIN_ID, address(tokenBridge), makeAddr("auction"), makeAddr("intex"), address(escrow), outbeIca
+            )
+        );
+        vm.deal(address(target), 10 ether);
+        _wireOutbeIca(target, outbeIca);
 
         address[2] memory bidders = [makeAddr("early"), makeAddr("late")];
         for (uint256 i = 0; i < bidders.length; i++) {

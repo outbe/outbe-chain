@@ -137,14 +137,11 @@ interface IEscrowAdapter {
     ///         the lock.
     event IntexAuctionWinNoteCreateFailed(uint32 indexed emissionDay, address indexed bidder, bytes errorData);
 
-    /// @notice Emitted when an admin sets the auction, The Compact and the asset. Only the new values.
-    event EscrowDependenciesSet(address intexAuction, address compact, address asset, uint8 assetDecimals);
+    /// @notice Emitted when the owner sets The Compact and the asset, `initialize` included.
+    event IntexAuctionAssetSet(address compact, address asset, uint8 assetDecimals);
 
-    /// @notice Emitted when an admin changes the asset or The Compact. Open locks and bonds keep the old version.
+    /// @notice Emitted when the owner changes the asset or The Compact. Open locks and bonds keep the old version.
     event IntexAuctionAssetVersionRetired(uint8 indexed version, address compact, address asset, uint256 lockId);
-
-    /// @notice Emitted when an admin sets the address that gets the charge of each page.
-    event EscrowProceedsRecipientSet(address recipient);
 
     // --- Errors ---
 
@@ -197,12 +194,8 @@ interface IEscrowAdapter {
     /// @param emissionDay Emission day (yyyymmdd).
     /// @param assetVersion Asset version the day is bound to.
     error DayIntexAuctionAssetRetired(uint32 emissionDay, uint8 assetVersion);
-    /// @notice Finalization produced proceeds but no recipient is configured.
-    error ProceedsRecipientNotSet();
     /// @notice A winner's lock holds no change to refund.
     error NothingToReturn();
-    /// @notice The auction cannot change while bidders still have something to claim through it.
-    error LocksOutstanding();
     /// @notice A refund was claimed before the safety window elapsed.
     /// @param returnableAt Earliest unix-seconds timestamp the refund can be claimed at.
     /// @param nowTs Current block timestamp.
@@ -215,17 +208,17 @@ interface IEscrowAdapter {
     /// @param unlockableAt Earliest unix-seconds timestamp the bond can be claimed at.
     /// @param nowTs Current block timestamp.
     error IntexAuctionBidBondEscrowTimeoutNotOver(uint32 unlockableAt, uint32 nowTs);
+    /// @notice `caller` is not the contract this entry point belongs to.
+    error UnauthorizedCaller(address caller);
 
     // --- Admin ---
 
-    /// @notice Wire contract dependencies.
+    /// @notice Set The Compact and the payment token of the locks to come.
     /// @dev Rotating `_asset` or `_compact` retires the active asset under its version.
-    ///      Locks and bonds taken under it keep withdrawing from it. The auction changes only once
-    ///      `hasOutstandingLocks` is false: its bidders claim through it.
-    /// @param _intexAuction IntexAuction contract address.
+    ///      Locks and bonds taken under it keep withdrawing from it.
     /// @param _compact The Compact contract address.
     /// @param _asset Active payment-token address.
-    function setDependencies(address _intexAuction, address _compact, address _asset) external;
+    function setIntexAuctionAsset(address _compact, address _asset) external;
 
     // --- Auction Integration ---
 
@@ -269,11 +262,9 @@ interface IEscrowAdapter {
     /// @param emissionDay Emission day (yyyymmdd).
     function dayIntexAuctionAsset(uint32 emissionDay) external view returns (IERC20);
 
-    /// @notice Recipient of finalized auction proceeds (the router routing them cross-chain).
-    function proceedsRecipient() external view returns (address);
-
-    /// @notice Set the recipient of finalized auction proceeds.
-    function setProceedsRecipient(address recipient) external;
+    /// @notice IntexAuctionTargetRouter: the only caller of `chargeIntexAuctionAsset` and the
+    ///         recipient of the proceeds it charges.
+    function targetRouter() external view returns (address);
 
     // --- Bridge Finalization ---
 
@@ -377,10 +368,6 @@ interface IEscrowAdapter {
         external
         view
         returns (bool hasLocks, bool isFinalized, uint128 totalLocked);
-
-    /// @notice True while any WinNote is still open or any asset version still holds money in The Compact:
-    ///         a lock, a change or a commit bond someone can still claim.
-    function hasOutstandingLocks() external view returns (bool outstanding);
 
     /// @notice Version number of the active asset.
     function currentIntexAuctionAssetVersion() external view returns (uint8 version);

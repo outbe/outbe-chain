@@ -2,7 +2,6 @@
 pragma solidity 0.8.30;
 
 import {Vm} from "forge-std/Vm.sol";
-import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {CallNoticeBatchLib} from "../helpers/CallNoticeBatchLib.sol";
@@ -30,17 +29,28 @@ contract IntexAuctionTargetRouterCallNoticeSlotTest is CrossChainTest {
 
     function setUp() public {
         _setUpBridge();
-        intex = DeployProxy.intexNFT1155(address(this), address(this));
+        address routerProxy = DeployProxy.reserve();
+        intex = DeployProxy.intexNFT1155(
+            address(this), DeployProxy.NftLinks(routerProxy, address(this), address(this), address(this), address(this))
+        );
         // The origin-as-target shape: a call notice is a pure state flip here as anywhere.
-        router = DeployProxy.targetRouter(address(bridge), address(this), uint32(block.chainid));
-
+        router = DeployProxy.targetRouterAt(routerProxy, address(bridge), address(this), _links());
         _wireOutbeIca(router, outbeIca);
-        router.setDependencies(makeAddr("auction"), address(intex), makeAddr("escrow"));
-        intex.grantRole(intex.ROUTER_ROLE(), address(router));
         series = OpenSeriesLib.seriesId(DAY);
     }
 
     // --- helpers ---
+
+    function _links() internal returns (DeployProxy.TargetRouterLinks memory) {
+        return DeployProxy.TargetRouterLinks(
+            uint32(block.chainid),
+            DeployProxy.WCOEN_BRIDGE,
+            makeAddr("auction"),
+            address(intex),
+            makeAddr("escrow"),
+            outbeIca
+        );
+    }
 
     function _deliver(bytes memory packet) internal {
         _deliver(uint32(block.chainid), outbeIca, address(router), packet);
@@ -89,20 +99,21 @@ contract IntexAuctionTargetRouterCallNoticeSlotTest is CrossChainTest {
         assertEq(router.failedIntexSeriesCallNoticeApply(series), uint32(block.timestamp), "slotted with its call time");
     }
 
+    /// @dev The token takes calls only from `router`, so it refuses every call of `refused`.
     function test_ACallNoticeTheTokenRefusesWaitsWithTheRefusal() public {
+        vm.prank(address(router));
         intex.openSeries(OpenSeriesLib.params(DAY, 10, 0));
-        intex.revokeRole(intex.ROUTER_ROLE(), address(router));
+        IntexAuctionTargetRouter refused = DeployProxy.targetRouter(address(bridge), address(this), _links());
+        _wireOutbeIca(refused, outbeIca);
 
-        vm.expectEmit(true, true, true, true, address(router));
+        vm.expectEmit(true, true, true, true, address(refused));
         emit IIntexAuctionTargetRouter.IntexSeriesCallNoticeApplyFailed(
             series,
             uint32(block.chainid),
-            abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector, address(router), intex.ROUTER_ROLE()
-            )
+            abi.encodeWithSelector(IIntexNFT1155.UnauthorizedCaller.selector, address(refused))
         );
-        _deliver(_called());
-        assertEq(router.failedIntexSeriesCallNoticeApply(series), uint32(block.timestamp), "the notice waits");
+        _deliver(uint32(block.chainid), outbeIca, address(refused), _called());
+        assertEq(refused.failedIntexSeriesCallNoticeApply(series), uint32(block.timestamp), "the notice waits");
     }
 
     /// @dev A call notice moves no balances, so a waiting Called lands with the issuance that creates the series
@@ -155,6 +166,7 @@ contract IntexAuctionTargetRouterCallNoticeSlotTest is CrossChainTest {
 
         vm.warp(block.timestamp + 1);
         bytes14 other = OpenSeriesLib.seriesId(DAY + 1);
+        vm.prank(address(router));
         intex.openSeries(OpenSeriesLib.params(DAY + 1, 10, 0));
         vm.recordLogs();
         _deliver(
@@ -191,6 +203,7 @@ contract IntexAuctionTargetRouterCallNoticeSlotTest is CrossChainTest {
 
     function test_RetryIntexSeriesCallNoticeApplyIsPermissionless() public {
         _deliver(_called());
+        vm.prank(address(router));
         intex.openSeries(OpenSeriesLib.params(DAY, 10, 0)); // the series appears by another path
 
         vm.prank(makeAddr("anyone"));
@@ -224,6 +237,7 @@ contract IntexAuctionTargetRouterCallNoticeSlotTest is CrossChainTest {
     }
 
     function test_AZeroCallTimeForAnExistingSeriesIsInvalidAndLeavesItIssued() public {
+        vm.prank(address(router));
         intex.openSeries(OpenSeriesLib.params(DAY, 10, 0));
         _expectZeroCallTimeIgnored();
         _deliver(BridgeMsgCodec.encodeIntexSeriesCallNotice(DAY, 0, CallNoticeBatchLib.one(series)));
@@ -234,6 +248,7 @@ contract IntexAuctionTargetRouterCallNoticeSlotTest is CrossChainTest {
     // --- already there ---
 
     function test_ARepeatedCalledIsADuplicate() public {
+        vm.prank(address(router));
         intex.openSeries(OpenSeriesLib.params(DAY, 10, 0));
         _deliver(_called());
         // A series that is already called gets no event.

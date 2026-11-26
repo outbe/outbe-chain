@@ -35,16 +35,23 @@ contract InboundRevertAndRedeliverTest is CrossChainTest {
     function setUp() public {
         _setUpBridge();
 
-        auction = DeployProxy.intexAuction(admin, admin);
-        intex = DeployProxy.intexNFT1155(admin, admin);
-
-        bnbRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
-        _wireOutbeIca(bnbRouter, outbeIca);
+        address routerProxy = DeployProxy.reserve();
+        address intexProxy = DeployProxy.reserve();
+        auction = DeployProxy.intexAuction(admin, routerProxy, admin, intexProxy);
+        intex = DeployProxy.intexNFT1155At(
+            intexProxy, admin, DeployProxy.NftLinks(routerProxy, admin, address(auction), admin, admin)
+        );
 
         // TM drives the local Intex on callSeries.
-        bnbRouter.setDependencies(address(auction), address(intex), admin);
-        auction.grantRole(auction.RELAYER_ROLE(), address(bnbRouter));
-        intex.grantRole(intex.ROUTER_ROLE(), address(bnbRouter));
+        bnbRouter = DeployProxy.targetRouterAt(
+            routerProxy,
+            address(bridge),
+            admin,
+            DeployProxy.TargetRouterLinks(
+                OUTBE_CHAIN_ID, DeployProxy.WCOEN_BRIDGE, address(auction), address(intex), admin, outbeIca
+            )
+        );
+        _wireOutbeIca(bnbRouter, outbeIca);
     }
 
     function _deliverToTM(bytes memory packet) internal {
@@ -82,6 +89,7 @@ contract InboundRevertAndRedeliverTest is CrossChainTest {
         _deliverToTM(packet);
 
         // Prerequisite lands (the ISSUANCE that would have created the series).
+        vm.prank(address(bnbRouter));
         intex.openSeries(OpenSeriesLib.params(SERIES_ID_DAY, 10_000, 0));
 
         bnbRouter.retryIntexSeriesCallNoticeApply(SERIES_ID);

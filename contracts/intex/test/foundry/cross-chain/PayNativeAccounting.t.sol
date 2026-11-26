@@ -7,7 +7,7 @@ import {IntexAuctionTargetRouter} from "@contracts/target/IntexAuctionTargetRout
 import {IIntexAuctionTargetRouter} from "@contracts/target/interfaces/IIntexAuctionTargetRouter.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
 import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
-import {SendParam} from "@contracts/shared/interfaces/IIntexNFT1155Router.sol";
+import {SendParam, RemoteRouter} from "@contracts/shared/interfaces/IIntexNFT1155Router.sol";
 import {ERC7786Sender} from "@contracts/shared/ERC7786Sender.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 
@@ -57,24 +57,32 @@ contract PayNativeAccountingTest is CrossChainTest {
         // covered and refunded. Relay sends must draw a non-zero amount from the float.
         bridge.setFee(BRIDGE_FEE);
 
-        intex = DeployProxy.intexNFT1155(admin, admin);
+        address nftRouterProxy = DeployProxy.reserve();
+        address bnbRouterProxy = DeployProxy.reserve();
+        intex =
+            DeployProxy.intexNFT1155(admin, DeployProxy.NftLinks(bnbRouterProxy, nftRouterProxy, admin, admin, admin));
 
-        bnbRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
-        nftRouter = DeployProxy.intexNFT1155Router(address(intex), address(bridge), admin);
+        nftRouter = DeployProxy.intexNFT1155RouterAt(
+            nftRouterProxy, address(intex), address(bridge), admin, new RemoteRouter[](0)
+        );
 
-        // Wire the inbound source of TM and the remote router the batch adapter sends to.
-        _wireOutbeIca(bnbRouter, outbeIca);
+        // Wire the remote router the batch adapter sends to.
         nftRouter.setRemoteRouter(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(nftRouter)));
 
         // Wire TM with a stub auction and the batch adapter.
         StubAuction stubAuction = new StubAuction();
-        bnbRouter.setDependencies(address(stubAuction), address(intex), admin);
-
-        // `crosschainBurn` is `BRIDGE_ROLE`-gated, so the adapter needs it on the token.
-        intex.grantRole(intex.BRIDGE_ROLE(), address(nftRouter));
-        intex.grantRole(intex.ROUTER_ROLE(), address(bnbRouter));
+        bnbRouter = DeployProxy.targetRouterAt(
+            bnbRouterProxy,
+            address(bridge),
+            admin,
+            DeployProxy.TargetRouterLinks(
+                OUTBE_CHAIN_ID, DeployProxy.WCOEN_BRIDGE, address(stubAuction), address(intex), admin, outbeIca
+            )
+        );
+        _wireOutbeIca(bnbRouter, outbeIca);
 
         // Series + owner balance so callSeries/owner enumeration and the entry-path bridge sends have tokens.
+        vm.prank(address(bnbRouter));
         intex.openSeries(OpenSeriesLib.params(SERIES_ID_DAY, 10_000, 0));
         intex.issueIntex(owner, 5, SERIES_ID);
     }
@@ -270,7 +278,7 @@ contract StubAuction {
 }
 
 /// @dev Holds a bridgeable token (accepts the ERC-1155 mint), but its `receive()` reverts.
-///      Tests use it to pin `_sendTo`'s ReturnFailed guard on the entry path via the NFT bridge.
+///      Tests use it to pin `_sendTo`'s ReturnFailed guard on the entry path via the NFT router.
 contract NftRefundRejector {
     IntexNFT1155Router private immutable bridge;
 

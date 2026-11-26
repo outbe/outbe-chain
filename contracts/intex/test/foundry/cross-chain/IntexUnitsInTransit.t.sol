@@ -6,7 +6,7 @@ import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {OpenSeriesLib} from "../helpers/OpenSeriesLib.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
-import {BatchSendParam} from "@contracts/shared/interfaces/IIntexNFT1155Router.sol";
+import {BatchSendParam, RemoteRouter} from "@contracts/shared/interfaces/IIntexNFT1155Router.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 
 /// @dev Intex units between two chains when their mint fails or their series forfeits. Chain A
@@ -36,13 +36,22 @@ contract IntexUnitsInTransitTest is CrossChainTest {
         vm.deal(user, 1000 ether);
         vm.deal(address(this), 1000 ether);
         _setUpBridge();
-        tokenA = DeployProxy.intexNFT1155(address(this), address(this));
-        tokenB = DeployProxy.intexNFT1155(address(this), address(this));
-        routerA = DeployProxy.intexNFT1155Router(address(tokenA), address(bridge), address(this));
-        routerB = DeployProxy.intexNFT1155Router(address(tokenB), address(bridge), address(this));
-        tokenA.grantRole(tokenA.BRIDGE_ROLE(), address(routerA));
-        tokenB.grantRole(tokenB.BRIDGE_ROLE(), address(routerB));
-        tokenA.grantRole(tokenA.BURNER_ROLE(), address(this));
+        address routerAProxy = DeployProxy.reserve();
+        tokenA = DeployProxy.intexNFT1155(
+            address(this),
+            DeployProxy.NftLinks(address(this), routerAProxy, address(this), address(this), address(this))
+        );
+        address routerBProxy = DeployProxy.reserve();
+        tokenB = DeployProxy.intexNFT1155(
+            address(this),
+            DeployProxy.NftLinks(address(this), routerBProxy, address(this), address(this), address(this))
+        );
+        routerA = DeployProxy.intexNFT1155RouterAt(
+            routerAProxy, address(tokenA), address(bridge), address(this), new RemoteRouter[](0)
+        );
+        routerB = DeployProxy.intexNFT1155RouterAt(
+            routerBProxy, address(tokenB), address(bridge), address(this), new RemoteRouter[](0)
+        );
         routerA.setRemoteRouter(B_CHAIN_ID, _interop(B_CHAIN_ID, address(routerB)));
         routerB.setRemoteRouter(A_CHAIN_ID, _interop(A_CHAIN_ID, address(routerA)));
         tokenA.openSeries(OpenSeriesLib.params(DAY, uint32(ISSUED), NOTICE));

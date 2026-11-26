@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
-import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC6909} from "@openzeppelin/contracts/interfaces/IERC6909.sol";
+import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {IEscrowAdapter, EscrowTimes} from "./interfaces/IEscrowAdapter.sol";
 import {ITheCompact} from "../vendor/the-compact/interfaces/ITheCompact.sol";
 import {IAllocator} from "../vendor/the-compact/interfaces/IAllocator.sol";
@@ -19,26 +20,15 @@ import {ResetPeriod} from "../vendor/the-compact/types/ResetPeriod.sol";
  * @title EscrowAdapter
  * @author Outbe
  * @notice Adapter contract for managing auction bid escrow via The Compact protocol.
- * @dev UUPS upgradeable: deployed behind an ERC1967 proxy, configured via `initialize`.
+ * @dev UUPS upgradeable behind an ERC1967 proxy. The auction and the router are implementation
+ *      immutables, fixed at deploy; the asset and The Compact are set by `initialize`.
  *      Integrates with The Compact for fund locking and handles auction finalization.
  *      EscrowAdapter acts as SPONSOR (owns ERC6909 in Compact) and ALLOCATOR (attest).
  *      Both roles bind to the proxy address.
  *      All escrow state is keyed by `emissionDay` (uint32).
  */
-contract EscrowAdapter is
-    AccessControlUpgradeable,
-    ReentrancyGuardTransient,
-    UUPSUpgradeable,
-    IEscrowAdapter,
-    IAllocator
-{
+contract EscrowAdapter is OwnableUpgradeable, ReentrancyGuardTransient, UUPSUpgradeable, IEscrowAdapter, IAllocator {
     using SafeERC20 for IERC20;
-
-    // Roles
-    /// @notice Role identifier for bridge operations (finalization).
-    bytes32 public constant RELAYER_ROLE = keccak256("RELAYER_ROLE");
-    /// @notice Role identifier for auction contract integration.
-    bytes32 public constant AUCTION_ROLE = keccak256("AUCTION_ROLE");
 
     /// @notice See `EscrowTimes.UNFINALIZED_RETURN_DELAY`.
     uint32 public constant UNFINALIZED_RETURN_DELAY = EscrowTimes.UNFINALIZED_RETURN_DELAY;
@@ -62,10 +52,13 @@ contract EscrowAdapter is
     /// @dev `reason` of `IntexAuctionBidBondUnlocked` for the safety path; the auction gives the other two.
     uint8 private constant BOND_UNLOCK_ESCROW_TIMEOUT = 2;
 
+    /// @dev Locks, bonds and redeems for its bidders: IntexAuction.
+    address private immutable INTEX_AUCTION;
+    /// @dev Charges the winners and takes the proceeds: IntexAuctionTargetRouter.
+    address private immutable TARGET_ROUTER;
+
     /// @custom:storage-location erc7201:outbe.intex.EscrowAdapter
     struct EscrowAdapterStorage {
-        /// @dev IntexAuction contract address.
-        address intexAuction;
         /// @dev The Compact contract address.
         ITheCompact compact;
         /// @dev Active payment token used for bid escrow.
@@ -82,8 +75,6 @@ contract EscrowAdapter is
         mapping(uint32 emissionDay => AuctionEscrowState) auctionEscrowState;
         /// @dev Commit-entry bonds: emissionDay => bidder => IntexAuctionBidBond.
         mapping(uint32 emissionDay => mapping(address bidder => IntexAuctionBidBond)) bidBonds;
-        /// @dev Recipient of finalized auction proceeds (the router routing them cross-chain).
-        address proceedsRecipient;
         /// @dev Assets rotated away from, keyed by the version they were active under.
         mapping(uint8 version => IntexAuctionAssetVersion) assetVersions;
         /// @dev Version of the active asset held in `compact`, `asset` and `lockId`.
@@ -106,29 +97,43 @@ contract EscrowAdapter is
     }
 
     /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor() {
+    constructor(address intexAuction_, address targetRouter_) {
+        if (intexAuction_ == address(0)) revert ZeroAddress("intexAuction");
+        if (targetRouter_ == address(0)) revert ZeroAddress("targetRouter");
+        INTEX_AUCTION = intexAuction_;
+        TARGET_ROUTER = targetRouter_;
         _disableInitializers();
     }
 
-    /// @notice Initializes the proxy with its role holders.
-    /// @param defaultAdmin Receiver of `DEFAULT_ADMIN_ROLE`.
-    function initialize(address defaultAdmin) external initializer {
-        if (defaultAdmin == address(0)) revert ZeroAddress("defaultAdmin");
+    /// @notice Initializes the proxy with its owner and the first asset.
+    /// @param owner_ The owner, who upgrades the contract and changes the asset.
+    /// @param compact_ The Compact contract address.
+    /// @param asset_ Payment-token address.
+    function initialize(address owner_, address compact_, address asset_) external initializer {
+        if (owner_ == address(0)) revert ZeroAddress("owner");
 
-        __AccessControl_init();
-
-        _grantRole(DEFAULT_ADMIN_ROLE, defaultAdmin);
+        __Ownable_init(owner_);
+        _setIntexAuctionAsset(compact_, asset_);
     }
 
-    /// @dev Upgrades are gated by the admin role.
+    /// @dev The owner gates upgrades.
     /// @param newImplementation Address of the implementation the proxy switches to.
-    function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
+    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
+
+    modifier onlyFrom(address link) {
+        if (msg.sender != link) revert UnauthorizedCaller(msg.sender);
+        _;
+    }
 
     // --- Storage getters ---
-    /// @notice IntexAuction contract address.
-    /// @return The wired auction contract.
+    /// @notice IntexAuction, the only caller of the lock, bond and redeem entry points.
     function intexAuction() external view returns (address) {
-        return _s().intexAuction;
+        return INTEX_AUCTION;
+    }
+
+    /// @inheritdoc IEscrowAdapter
+    function targetRouter() external view override returns (address) {
+        return TARGET_ROUTER;
     }
 
     /// @notice The Compact contract address.
@@ -146,18 +151,6 @@ contract EscrowAdapter is
     /// @inheritdoc IEscrowAdapter
     function dayIntexAuctionAsset(uint32 emissionDay) external view override returns (IERC20) {
         return _tokenOf(_s().auctionEscrowState[emissionDay].assetVersion);
-    }
-
-    /// @inheritdoc IEscrowAdapter
-    function proceedsRecipient() external view override returns (address) {
-        return _s().proceedsRecipient;
-    }
-
-    /// @inheritdoc IEscrowAdapter
-    function setProceedsRecipient(address recipient) external override onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (recipient == address(0)) revert ZeroAddress("recipient");
-        _s().proceedsRecipient = recipient;
-        emit EscrowProceedsRecipientSet(recipient);
     }
 
     /// @notice The Compact resource lock ID for our deposits.
@@ -180,12 +173,11 @@ contract EscrowAdapter is
 
     // --- Admin ---
     /// @inheritdoc IEscrowAdapter
-    function setDependencies(address _intexAuction, address _compact, address _asset)
-        external
-        override
-        onlyRole(DEFAULT_ADMIN_ROLE)
-    {
-        if (_intexAuction == address(0)) revert ZeroAddress("intexAuction");
+    function setIntexAuctionAsset(address _compact, address _asset) external override onlyOwner {
+        _setIntexAuctionAsset(_compact, _asset);
+    }
+
+    function _setIntexAuctionAsset(address _compact, address _asset) private {
         if (_compact == address(0)) revert ZeroAddress("compact");
         if (_asset == address(0)) revert ZeroAddress("asset");
 
@@ -215,29 +207,21 @@ contract EscrowAdapter is
             }
         }
 
-        // The bidders of a previous auction claim through it, so it stays until nothing is left.
-        if ($.intexAuction != address(0) && _intexAuction != $.intexAuction) {
-            if (_hasOutstandingLocks()) revert LocksOutstanding();
-            _revokeRole(AUCTION_ROLE, $.intexAuction);
-        }
-
-        $.intexAuction = _intexAuction;
         $.compact = ITheCompact(_compact);
         $.asset = IERC20(_asset);
         $.assetScale = 10 ** (tokenDecimals - BridgeMsgCodec.PROTOCOL_DECIMALS);
 
-        _grantRole(AUCTION_ROLE, _intexAuction);
         $.asset.forceApprove(_compact, 0);
         $.asset.forceApprove(_compact, type(uint256).max);
 
-        // CEI deviation: allocatorId / lockTag depend on __registerAllocator's return. Admin-only.
-        // A re-entrant `compact` lacks DEFAULT_ADMIN_ROLE, so re-entry can't reach here.
+        // CEI deviation: allocatorId / lockTag depend on __registerAllocator's return. Owner-only,
+        // and a re-entrant `compact` is not the owner, so re-entry can't reach here.
         if ($.allocatorId == 0) {
             $.allocatorId = $.compact.__registerAllocator(address(this), "");
             $.lockTag = _buildLockTag($.allocatorId, Scope.ChainSpecific, ResetPeriod.OneMinute);
         }
 
-        emit EscrowDependenciesSet(_intexAuction, _compact, _asset, tokenDecimals);
+        emit IntexAuctionAssetSet(_compact, _asset, tokenDecimals);
     }
 
     // --- IAllocator Implementation ---
@@ -283,7 +267,7 @@ contract EscrowAdapter is
     function lockIntexAuctionAsset(uint32 emissionDay, address bidder, uint128 basis, uint32 bidRate, uint16 quantity)
         external
         override
-        onlyRole(AUCTION_ROLE)
+        onlyFrom(INTEX_AUCTION)
         nonReentrant
     {
         if (bidRate == 0) revert ZeroValue("bidRate");
@@ -296,11 +280,11 @@ contract EscrowAdapter is
     // --- Commit bonds ---
     /// @inheritdoc IEscrowAdapter
     /// @dev Trust boundary: `bidder` is the original `msg.sender` of `IntexAuction.commitIntexAuctionBid`,
-    ///      forwarded through the `AUCTION_ROLE`-gated entry point (mirrors `lockIntexAuctionAsset`).
+    ///      forwarded through the IntexAuction-only entry point (mirrors `lockIntexAuctionAsset`).
     function lockIntexAuctionBidBond(uint32 emissionDay, address bidder, uint128 amount)
         external
         override
-        onlyRole(AUCTION_ROLE)
+        onlyFrom(INTEX_AUCTION)
         nonReentrant
     {
         if (emissionDay == 0) revert ZeroValue("emissionDay");
@@ -326,7 +310,7 @@ contract EscrowAdapter is
     function unlockIntexAuctionBidBond(uint32 emissionDay, address bidder, uint8 reason)
         external
         override
-        onlyRole(AUCTION_ROLE)
+        onlyFrom(INTEX_AUCTION)
         nonReentrant
     {
         _unlockIntexAuctionBidBond(emissionDay, bidder, reason);
@@ -371,7 +355,7 @@ contract EscrowAdapter is
         uint64 clearingRate,
         uint128 basis,
         bool completesDay
-    ) external override onlyRole(RELAYER_ROLE) nonReentrant returns (uint128 totalPaid) {
+    ) external override onlyFrom(TARGET_ROUTER) nonReentrant returns (uint128 totalPaid) {
         EscrowAdapterStorage storage $ = _s();
         AuctionEscrowState storage state = $.auctionEscrowState[emissionDay];
         if (state.finalized) revert AlreadyFinalized();
@@ -429,11 +413,9 @@ contract EscrowAdapter is
         if (totalPaid > 0) state.totalLocked -= totalPaid;
 
         if (totalPaid > 0) {
-            address recipient = $.proceedsRecipient;
-            if (recipient == address(0)) revert ProceedsRecipientNotSet();
             uint8 version = state.assetVersion;
             _withdrawFromCompact(version, totalPaid);
-            _tokenOf(version).safeTransfer(recipient, totalPaid);
+            _tokenOf(version).safeTransfer(TARGET_ROUTER, totalPaid);
         }
     }
 
@@ -454,7 +436,7 @@ contract EscrowAdapter is
     function returnIntexAuctionAsset(uint32 emissionDay, address bidder)
         external
         override
-        onlyRole(AUCTION_ROLE)
+        onlyFrom(INTEX_AUCTION)
         nonReentrant
         returns (bool closed, bool finalized)
     {
@@ -515,7 +497,7 @@ contract EscrowAdapter is
     function redeemWinNote(uint32 emissionDay, address bidder)
         external
         override
-        onlyRole(AUCTION_ROLE)
+        onlyFrom(INTEX_AUCTION)
         nonReentrant
         returns (uint16 units)
     {
@@ -605,25 +587,6 @@ contract EscrowAdapter is
     }
 
     /// @inheritdoc IEscrowAdapter
-    function hasOutstandingLocks() external view override returns (bool) {
-        return _hasOutstandingLocks();
-    }
-
-    /// @dev Whether any WinNote is open or any asset version still holds money in its Compact.
-    function _hasOutstandingLocks() private view returns (bool) {
-        EscrowAdapterStorage storage $ = _s();
-        if ($.openWinNotes != 0) return true;
-        if ($.lockId != 0 && IERC6909(address($.compact)).balanceOf(address(this), $.lockId) != 0) return true;
-        for (uint8 v = 0; v < $.currentIntexAuctionAssetVersion; ++v) {
-            IntexAuctionAssetVersion storage retired = $.assetVersions[v];
-            if (retired.lockId != 0 && IERC6909(retired.compact).balanceOf(address(this), retired.lockId) != 0) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /// @inheritdoc IEscrowAdapter
     function currentIntexAuctionAssetVersion() external view override returns (uint8) {
         return _s().currentIntexAuctionAssetVersion;
     }
@@ -652,7 +615,7 @@ contract EscrowAdapter is
     /// @param bidder Bidder address.
     /// @param amount Amount to lock.
     function _validateLockInputs(uint32 emissionDay, address bidder, uint128 amount) internal view {
-        // Cheap sanity floor: the AUCTION_ROLE gate already guarantees a real, stage-gated series.
+        // Cheap sanity floor: the IntexAuction-only gate already guarantees a real, stage-gated series.
         // But a zero id is obviously bogus, so this check rejects it before any state write.
         if (emissionDay == 0) revert ZeroValue("emissionDay");
         if (bidder == address(0)) revert ZeroAddress("bidder");
@@ -669,8 +632,7 @@ contract EscrowAdapter is
     /// @param bidder Bidder address.
     /// @param amount Amount to lock.
     /// @dev Trust boundary: `bidder` is the original `msg.sender` of `IntexAuction.revealIntexAuctionBid`,
-    ///      forwarded through the `AUCTION_ROLE`-gated `lockIntexAuctionAsset` entry point. Safety relies
-    ///      on `AUCTION_ROLE` only ever being granted to the wired `IntexAuction` contract.
+    ///      forwarded through `lockIntexAuctionAsset`, which only IntexAuction may call.
     function _lockIntexAuctionAsset(uint32 emissionDay, address bidder, uint128 amount, uint32 bidRate, uint16 quantity)
         internal
     {
@@ -778,10 +740,10 @@ contract EscrowAdapter is
     }
 
     /// @notice Check if the contract supports a given interface.
-    /// @dev Returns true for `IAllocator` and any interface advertised by `AccessControl`.
+    /// @dev Returns true for `IAllocator` and ERC-165.
     /// @param interfaceId Interface ID to check.
     /// @return True if the interface is supported.
-    function supportsInterface(bytes4 interfaceId) public view override(AccessControlUpgradeable) returns (bool) {
-        return interfaceId == type(IAllocator).interfaceId || super.supportsInterface(interfaceId);
+    function supportsInterface(bytes4 interfaceId) public pure returns (bool) {
+        return interfaceId == type(IAllocator).interfaceId || interfaceId == type(IERC165).interfaceId;
     }
 }

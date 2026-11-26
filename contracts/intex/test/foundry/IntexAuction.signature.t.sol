@@ -47,13 +47,8 @@ contract AuctionSignatureTest is Test {
         iba1 = vm.addr(iba1Pk);
         iba2 = vm.addr(iba2Pk);
 
-        auction = DeployProxy.intexAuction(admin, bridger);
         escrow = new MockAuctionEscrow();
-
-        vm.startPrank(admin);
-        auction.grantRole(auction.RELAYER_ROLE(), bridger);
-        auction.setEscrow(address(escrow));
-        vm.stopPrank();
+        auction = DeployProxy.intexAuction(admin, bridger, address(escrow), address(0x1E7E));
     }
 
     // --- Helpers ---
@@ -206,12 +201,8 @@ contract AuctionSignatureTest is Test {
         uint32 emissionDay = 20260105;
 
         // Deploy a second IntexAuction on the same chain.
-        IntexAuction other = DeployProxy.intexAuction(admin, bridger);
         MockAuctionEscrow otherEscrow = new MockAuctionEscrow();
-        vm.startPrank(admin);
-        other.grantRole(other.RELAYER_ROLE(), bridger);
-        other.setEscrow(address(otherEscrow));
-        vm.stopPrank();
+        IntexAuction other = DeployProxy.intexAuction(admin, bridger, address(otherEscrow), address(0x1E7E));
 
         // Start an identical auction on both instances.
         IIntexAuction.AuctionSchedule memory schedule = IIntexAuction.AuctionSchedule({
@@ -365,14 +356,13 @@ contract AuctionSignatureTest is Test {
         uint32 emissionDay = 20260108;
         deployCodeTo(
             "ERC1967Proxy.sol:ERC1967Proxy",
-            abi.encode(address(new IntexAuction()), abi.encodeCall(IntexAuction.initialize, (admin))),
+            abi.encode(
+                address(new IntexAuction(bridger, address(escrow), address(0x1E7E))),
+                abi.encodeCall(IntexAuction.initialize, (admin))
+            ),
             verifyingContract
         );
         auction = IntexAuction(verifyingContract);
-        vm.startPrank(admin);
-        auction.grantRole(auction.RELAYER_ROLE(), bridger);
-        auction.setEscrow(address(escrow));
-        vm.stopPrank();
         bytes memory signature =
             hex"7437b13d15709b11ed69749f7cbe1a25eed7f7f8446648e7333f77425659f4a37ccc8d5b10792f253f3a14251ab8cb69b7f9648c987dfaf63f1053d43b0cb48a1c";
 

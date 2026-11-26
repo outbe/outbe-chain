@@ -26,6 +26,13 @@ struct SendParam {
     uint256 units;
 }
 
+/// @notice The matching IntexNFT1155Router on another chain, set by `initialize` and `setRemoteRouter`.
+/// @dev `interop` is the ERC-7930 address of that router and embeds `chainId`.
+struct RemoteRouter {
+    uint32 chainId;
+    bytes interop;
+}
+
 /// @title IIntexNFT1155Router
 /// @author Outbe
 /// @notice Interface for batch cross-chain ERC1155 transfers over the protocol-agnostic ERC-7786

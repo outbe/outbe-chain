@@ -2,7 +2,7 @@
 pragma solidity 0.8.30;
 
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
-import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
@@ -10,7 +10,8 @@ import {ERC7786Sender} from "@contracts/shared/ERC7786Sender.sol";
 import {
     IIntexNFT1155Router,
     BatchSendParam,
-    MultiRecipientSendParam
+    MultiRecipientSendParam,
+    RemoteRouter
 } from "@contracts/shared/interfaces/IIntexNFT1155Router.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
@@ -49,10 +50,16 @@ contract IntexNFT1155RouterTest is CrossChainTest {
         _setUpBridge();
         bridge.setFee(FEE);
 
-        srcToken = DeployProxy.intexNFT1155(admin, admin);
-        dstToken = DeployProxy.intexNFT1155(admin, admin);
-        srcBatch = DeployProxy.intexNFT1155Router(address(srcToken), address(bridge), admin);
-        dstBatch = DeployProxy.intexNFT1155Router(address(dstToken), address(bridge), admin);
+        address srcBatchProxy = DeployProxy.reserve();
+        srcToken = DeployProxy.intexNFT1155(admin, DeployProxy.NftLinks(admin, srcBatchProxy, admin, admin, admin));
+        address dstBatchProxy = DeployProxy.reserve();
+        dstToken = DeployProxy.intexNFT1155(admin, DeployProxy.NftLinks(admin, dstBatchProxy, admin, admin, admin));
+        srcBatch = DeployProxy.intexNFT1155RouterAt(
+            srcBatchProxy, address(srcToken), address(bridge), admin, new RemoteRouter[](0)
+        );
+        dstBatch = DeployProxy.intexNFT1155RouterAt(
+            dstBatchProxy, address(dstToken), address(bridge), admin, new RemoteRouter[](0)
+        );
 
         srcBatch.setRemoteRouter(DST_CHAIN_ID, _interop(DST_CHAIN_ID, address(dstBatch)));
         dstBatch.setRemoteRouter(SRC_CHAIN_ID, _interop(SRC_CHAIN_ID, address(srcBatch)));
@@ -63,9 +70,6 @@ contract IntexNFT1155RouterTest is CrossChainTest {
             srcToken.openSeries(OpenSeriesLib.params(day, 1_000_000, 0));
             dstToken.openSeries(OpenSeriesLib.params(day, 1_000_000, 0));
         }
-
-        srcToken.grantRole(srcToken.BRIDGE_ROLE(), address(srcBatch));
-        dstToken.grantRole(dstToken.BRIDGE_ROLE(), address(dstBatch));
 
         vm.deal(sender, 100 ether); // batchSend/multiSend are caller-funded
 
@@ -110,12 +114,40 @@ contract IntexNFT1155RouterTest is CrossChainTest {
         new IntexNFT1155Router(address(srcToken), address(0));
     }
 
-    /// @notice The explicit `ZeroAddress("delegate")` guard in `initialize` rejects a zero
-    ///         delegate/owner during proxy initialization.
-    function test_Initialize_RevertsZeroDelegate() public {
+    /// @notice The explicit `ZeroAddress("owner")` guard in `initialize` rejects a zero owner during
+    ///         proxy initialization.
+    function test_Initialize_RevertsZeroOwner() public {
         IntexNFT1155Router impl = new IntexNFT1155Router(address(srcToken), address(bridge));
-        vm.expectRevert(abi.encodeWithSignature("ZeroAddress(string)", "delegate"));
-        new ERC1967Proxy(address(impl), abi.encodeCall(IntexNFT1155Router.initialize, (address(0))));
+        vm.expectRevert(abi.encodeWithSignature("ZeroAddress(string)", "owner"));
+        new ERC1967Proxy(
+            address(impl), abi.encodeCall(IntexNFT1155Router.initialize, (address(0), new RemoteRouter[](0)))
+        );
+    }
+
+    function test_Initialize_SetsEachRemoteRouterWithItsEvent() public {
+        RemoteRouter[] memory remotes = new RemoteRouter[](2);
+        remotes[0] = RemoteRouter(7, _interop(7, address(0xBEEF)));
+        remotes[1] = RemoteRouter(8, _interop(8, address(0xCAFE)));
+        IntexNFT1155Router impl = new IntexNFT1155Router(address(srcToken), address(bridge));
+        address proxy = vm.computeCreateAddress(address(this), vm.getNonce(address(this)));
+
+        vm.expectEmit(true, false, false, true, proxy);
+        emit IIntexNFT1155Router.RemoteRouterSet(7, remotes[0].interop);
+        vm.expectEmit(true, false, false, true, proxy);
+        emit IIntexNFT1155Router.RemoteRouterSet(8, remotes[1].interop);
+        new ERC1967Proxy(address(impl), abi.encodeCall(IntexNFT1155Router.initialize, (admin, remotes)));
+
+        assertEq(IntexNFT1155Router(payable(proxy)).remoteRouter(7), remotes[0].interop);
+        assertEq(IntexNFT1155Router(payable(proxy)).remoteRouter(8), remotes[1].interop);
+        assertEq(IntexNFT1155Router(payable(proxy)).owner(), admin);
+    }
+
+    function test_Initialize_RejectsARemoteRouterOfAnotherChain() public {
+        RemoteRouter[] memory remotes = new RemoteRouter[](1);
+        remotes[0] = RemoteRouter(7, _interop(8, address(0xBEEF)));
+        IntexNFT1155Router impl = new IntexNFT1155Router(address(srcToken), address(bridge));
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155Router.RemoteRouterChainMismatch.selector, 7, 8));
+        new ERC1967Proxy(address(impl), abi.encodeCall(IntexNFT1155Router.initialize, (admin, remotes)));
     }
 
     // ---------------------------------------------------------------
@@ -369,13 +401,9 @@ contract IntexNFT1155RouterTest is CrossChainTest {
         srcBatch.setRemoteRouter(7, interop);
     }
 
-    function test_SetRemoteRouter_OnlyTheAdmin() public {
+    function test_SetRemoteRouter_OnlyTheOwner() public {
         bytes memory interop = _interop(7, address(0xBEEF));
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector, sender, srcBatch.DEFAULT_ADMIN_ROLE()
-            )
-        );
+        vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, sender));
         vm.prank(sender);
         srcBatch.setRemoteRouter(7, interop);
     }

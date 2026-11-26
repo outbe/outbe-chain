@@ -14,7 +14,7 @@ import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {OpenSeriesLib} from "../helpers/OpenSeriesLib.sol";
 import {CallNoticeBatchLib} from "../helpers/CallNoticeBatchLib.sol";
 import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
-import {MultiRecipientSendParam} from "@contracts/shared/interfaces/IIntexNFT1155Router.sol";
+import {MultiRecipientSendParam, RemoteRouter} from "@contracts/shared/interfaces/IIntexNFT1155Router.sol";
 import {IntexNFT1155RouterCodec} from "@contracts/shared/libs/IntexNFT1155RouterCodec.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
@@ -34,16 +34,28 @@ contract GasBudgetTest is CrossChainTest {
 
     IntexAuctionTargetRouter internal router;
     IntexNFT1155 internal intex;
+    address internal srcProxy;
     address internal admin = address(this);
     address internal outbeIca = address(0x0B1);
 
     function setUp() public {
         _setUpBridge();
-        intex = DeployProxy.intexNFT1155(admin, admin);
-        router = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
+        address routerProxy = DeployProxy.reserve();
+        srcProxy = DeployProxy.reserve();
+        intex = DeployProxy.intexNFT1155(admin, DeployProxy.NftLinks(routerProxy, srcProxy, admin, admin, admin));
+        router = DeployProxy.targetRouterAt(routerProxy, address(bridge), admin, _links(address(intex)));
         _wireOutbeIca(router, outbeIca);
-        router.setDependencies(makeAddr("auction"), address(intex), makeAddr("escrow"));
-        intex.grantRole(intex.ROUTER_ROLE(), address(router));
+    }
+
+    function _links(address nft) internal returns (DeployProxy.TargetRouterLinks memory) {
+        return DeployProxy.TargetRouterLinks(
+            OUTBE_CHAIN_ID, DeployProxy.WCOEN_BRIDGE, makeAddr("auction"), nft, makeAddr("escrow"), outbeIca
+        );
+    }
+
+    function _remote(address peer) internal pure returns (RemoteRouter[] memory remotes) {
+        remotes = new RemoteRouter[](1);
+        remotes[0] = RemoteRouter(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, peer));
     }
 
     function _measure(bytes14[] memory batch) internal returns (uint256 spent) {
@@ -57,6 +69,7 @@ contract GasBudgetTest is CrossChainTest {
         for (uint256 i = 0; i < batch.length; ++i) {
             IIntexNFT1155.OpenSeriesParams memory p = OpenSeriesLib.params(EMISSION_DAY, 10_000, 0);
             p.seriesId = batch[i];
+            vm.prank(address(router));
             intex.openSeries(p);
         }
     }
@@ -75,9 +88,8 @@ contract GasBudgetTest is CrossChainTest {
     ///      series runs away. A batch where most of them do is outside what the quote can carry.
     function test_TheQuoteSurvivesOneRunawaySeriesInAFullBatch() public {
         GasBurningIntex poisoned = new GasBurningIntex(POISON);
-        IntexAuctionTargetRouter mocked = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
+        IntexAuctionTargetRouter mocked = DeployProxy.targetRouter(address(bridge), admin, _links(address(poisoned)));
         _wireOutbeIca(mocked, outbeIca);
-        mocked.setDependencies(makeAddr("auction"), address(poisoned), makeAddr("escrow"));
 
         bytes14[] memory batch = CallNoticeBatchLib.sized(SERIES_PREFIX, BridgeMsgCodec.MAX_SERIES_PER_CALL_NOTICE);
         batch[0] = POISON;
@@ -111,21 +123,22 @@ contract GasBudgetTest is CrossChainTest {
     }
 
     /// @dev Existing series whose apply the token refuses: each failure event carries the revert data.
+    ///      The token takes calls only from `router`, so it refuses every one of `refused`.
     function test_TheQuoteCoversAFullBatchWhoseApplyIsRefused() public {
         bytes14[] memory batch = CallNoticeBatchLib.sized(SERIES_PREFIX, BridgeMsgCodec.MAX_SERIES_PER_CALL_NOTICE);
         _seed(batch);
-        intex.revokeRole(intex.ROUTER_ROLE(), address(router));
+        IntexAuctionTargetRouter refused = DeployProxy.targetRouter(address(bridge), admin, _links(address(intex)));
         bytes memory packet = BridgeMsgCodec.encodeIntexSeriesCallNotice(EMISSION_DAY, uint32(block.timestamp), batch);
         bytes memory call = abi.encodeCall(IntexAuctionTargetRouter.receiveFromOutbe, (packet));
 
         vm.prank(outbeIca);
         uint256 before = gasleft();
-        (bool ok,) = address(router).call{gas: IntexGas.intexSeriesCallNotice(batch.length)}(call);
+        (bool ok,) = address(refused).call{gas: IntexGas.intexSeriesCallNotice(batch.length)}(call);
         emit log_named_uint("refused_batch8", before - gasleft());
 
         assertTrue(ok, "the message must land inside the gas its quote buys");
         for (uint256 i = 0; i < batch.length; ++i) {
-            assertEq(router.failedIntexSeriesCallNoticeApply(batch[i]), uint32(block.timestamp), "every series waits");
+            assertEq(refused.failedIntexSeriesCallNoticeApply(batch[i]), uint32(block.timestamp), "every series waits");
         }
     }
 
@@ -176,13 +189,13 @@ contract GasBudgetTest is CrossChainTest {
 
     function test_TheQuoteCoversABridgeMintAtItsWidest() public {
         uint256 items = IntexNFT1155RouterCodec.MAX_BATCH_SIZE;
-        IntexNFT1155 dstToken = DeployProxy.intexNFT1155(admin, admin);
-        IntexNFT1155Router src = DeployProxy.intexNFT1155Router(address(intex), address(bridge), admin);
-        IntexNFT1155Router dst = DeployProxy.intexNFT1155Router(address(dstToken), address(bridge), admin);
-        src.setRemoteRouter(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(dst)));
-        dst.setRemoteRouter(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(src)));
-        intex.grantRole(intex.BRIDGE_ROLE(), address(src));
-        dstToken.grantRole(dstToken.BRIDGE_ROLE(), address(dst));
+        address dstProxy = DeployProxy.reserve();
+        IntexNFT1155 dstToken =
+            DeployProxy.intexNFT1155(admin, DeployProxy.NftLinks(admin, dstProxy, admin, admin, admin));
+        IntexNFT1155Router src =
+            DeployProxy.intexNFT1155RouterAt(srcProxy, address(intex), address(bridge), admin, _remote(dstProxy));
+        IntexNFT1155Router dst =
+            DeployProxy.intexNFT1155RouterAt(dstProxy, address(dstToken), address(bridge), admin, _remote(srcProxy));
 
         bytes14[] memory one = CallNoticeBatchLib.one(SERIES_PREFIX);
         _seed(one);
@@ -222,13 +235,13 @@ contract GasBudgetTest is CrossChainTest {
     ///      strands them.
     function test_TheQuoteCoversABridgeMintWhereEveryItemIsRejected() public {
         uint256 items = IntexNFT1155RouterCodec.MAX_BATCH_SIZE;
-        IntexNFT1155 dstToken = DeployProxy.intexNFT1155(admin, admin);
-        IntexNFT1155Router src = DeployProxy.intexNFT1155Router(address(intex), address(bridge), admin);
-        IntexNFT1155Router dst = DeployProxy.intexNFT1155Router(address(dstToken), address(bridge), admin);
-        src.setRemoteRouter(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(dst)));
-        dst.setRemoteRouter(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(src)));
-        intex.grantRole(intex.BRIDGE_ROLE(), address(src));
-        dstToken.grantRole(dstToken.BRIDGE_ROLE(), address(dst));
+        address dstProxy = DeployProxy.reserve();
+        IntexNFT1155 dstToken =
+            DeployProxy.intexNFT1155(admin, DeployProxy.NftLinks(admin, dstProxy, admin, admin, admin));
+        IntexNFT1155Router src =
+            DeployProxy.intexNFT1155RouterAt(srcProxy, address(intex), address(bridge), admin, _remote(dstProxy));
+        IntexNFT1155Router dst =
+            DeployProxy.intexNFT1155RouterAt(dstProxy, address(dstToken), address(bridge), admin, _remote(srcProxy));
 
         _seed(CallNoticeBatchLib.one(SERIES_PREFIX));
         dstToken.openSeries(OpenSeriesLib.params(EMISSION_DAY, 10_000, 0));
@@ -266,9 +279,8 @@ contract GasBudgetTest is CrossChainTest {
     // before the parking write, and the whole message reverts into redelivery.
     function test_ARunawaySeriesIsParkedAndTheBatchContinues() public {
         GasBurningIntex poisoned = new GasBurningIntex(POISON);
-        IntexAuctionTargetRouter mocked = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
+        IntexAuctionTargetRouter mocked = DeployProxy.targetRouter(address(bridge), admin, _links(address(poisoned)));
         _wireOutbeIca(mocked, outbeIca);
-        mocked.setDependencies(makeAddr("auction"), address(poisoned), makeAddr("escrow"));
 
         bytes memory packet = BridgeMsgCodec.encodeIntexSeriesCallNotice(
             EMISSION_DAY, uint32(block.timestamp), CallNoticeBatchLib.two(POISON, SERIES_PREFIX)
@@ -349,20 +361,23 @@ contract AuctionGasBudgetTest is CrossChainTest {
 
     function setUp() public {
         _setUpBridge();
-        intex = DeployProxy.intexNFT1155(admin, admin);
-        auction = DeployProxy.intexAuction(admin, admin);
-        router = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
-        escrow = DeployProxy.escrowAdapter(admin, admin);
+        address routerProxy = DeployProxy.reserve();
         compact = new MockTheCompact();
         paymentToken = new MockWCOEN();
-        escrow.setDependencies(admin, address(compact), address(paymentToken));
+        // The test locks the bids itself, so it is the auction of the escrow.
+        escrow = DeployProxy.escrowAdapter(admin, admin, routerProxy, address(compact), address(paymentToken));
         compact.setResetPeriodSeconds(0);
-
+        intex = DeployProxy.intexNFT1155(admin, DeployProxy.NftLinks(routerProxy, admin, admin, admin, admin));
+        auction = DeployProxy.intexAuction(admin, routerProxy, address(escrow), address(intex));
+        router = DeployProxy.targetRouterAt(
+            routerProxy,
+            address(bridge),
+            admin,
+            DeployProxy.TargetRouterLinks(
+                OUTBE_CHAIN_ID, DeployProxy.WCOEN_BRIDGE, address(auction), address(intex), address(escrow), outbeIca
+            )
+        );
         _wireOutbeIca(router, outbeIca);
-        router.setDependencies(address(auction), address(intex), address(escrow));
-        auction.grantRole(auction.RELAYER_ROLE(), address(router));
-        intex.grantRole(intex.ROUTER_ROLE(), address(router));
-        escrow.grantRole(escrow.RELAYER_ROLE(), address(router));
 
         // The relay leaves from the router's own float.
         vm.deal(address(router), 100 ether);
@@ -420,8 +435,6 @@ contract AuctionGasBudgetTest is CrossChainTest {
 
     function test_TheQuoteCoversRefundsAtTheirWidest() public {
         uint256 winners = BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN;
-        escrow.grantRole(escrow.AUCTION_ROLE(), admin);
-        escrow.setProceedsRecipient(address(router));
 
         address[] memory who = new address[](winners);
         for (uint256 i = 0; i < winners; ++i) {
@@ -481,9 +494,14 @@ contract ClearingRelayGasTest is CrossChainTest {
     function setUp() public {
         _setUpBridge();
         stub = new BidStub();
-        router = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
+        router = DeployProxy.targetRouter(
+            address(bridge),
+            admin,
+            DeployProxy.TargetRouterLinks(
+                OUTBE_CHAIN_ID, DeployProxy.WCOEN_BRIDGE, address(stub), makeAddr("intex"), makeAddr("escrow"), outbeIca
+            )
+        );
         _wireOutbeIca(router, outbeIca);
-        router.setDependencies(address(stub), makeAddr("intex"), makeAddr("escrow"));
         vm.deal(address(router), 100 ether);
     }
 
@@ -614,11 +632,24 @@ contract GasBudgetLateIssuanceTest is CrossChainTest {
 
     function setUp() public {
         _setUpBridge();
-        intex = DeployProxy.intexNFT1155(address(this), address(this));
-        router = DeployProxy.targetRouter(address(bridge), address(this), OUTBE_CHAIN_ID);
+        address routerProxy = DeployProxy.reserve();
+        intex = DeployProxy.intexNFT1155(
+            address(this), DeployProxy.NftLinks(routerProxy, address(this), address(this), address(this), address(this))
+        );
+        router = DeployProxy.targetRouterAt(
+            routerProxy,
+            address(bridge),
+            address(this),
+            DeployProxy.TargetRouterLinks(
+                OUTBE_CHAIN_ID,
+                DeployProxy.WCOEN_BRIDGE,
+                makeAddr("auction"),
+                address(intex),
+                makeAddr("escrow"),
+                outbeIca
+            )
+        );
         _wireOutbeIca(router, outbeIca);
-        router.setDependencies(makeAddr("auction"), address(intex), makeAddr("escrow"));
-        intex.grantRole(intex.ROUTER_ROLE(), address(router));
 
         vm.warp(ISSUED_AT);
         _deliver(OUTBE_CHAIN_ID, outbeIca, address(router), _chunk(0));

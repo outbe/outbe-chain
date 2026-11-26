@@ -3,121 +3,91 @@ pragma solidity 0.8.30;
 
 import {Test} from "forge-std/Test.sol";
 import {ERC1967Utils} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Create3Factory} from "@shared/Create3Factory.sol";
 import {UpgradeProposal} from "@shared/UpgradeProposal.sol";
-import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
-import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
-import {IntexAuctionTargetRouter} from "@contracts/target/IntexAuctionTargetRouter.sol";
-import {Create3Deploy} from "../../../deploy/Create3Deploy.sol";
-import {PrepareUpgrade} from "../../../deploy/PrepareUpgrade.s.sol";
-
-/// @dev The test sets the source commit itself, so parallel tests share no env value that differs.
-contract PrepareUpgradeHarness is PrepareUpgrade {
-    string internal commit;
-
-    function setSourceCommit(string memory commit_) external {
-        commit = commit_;
-    }
-
-    function _sourceCommit() internal view override returns (string memory) {
-        return commit;
-    }
-
-    function _executionDelayBlocks() internal pure override returns (uint256) {
-        return 50;
-    }
-}
+import {IntexCreate3} from "../../../script/IntexCreate3.sol";
+import {DeployAll} from "../../../script/DeployAll.s.sol";
+import {DeployIntexAuctionTargetRouter} from "../../../script/5_DeployIntexAuctionTargetRouter.s.sol";
+import {MockTheCompact} from "../../mocks/MockTheCompact.sol";
+import {MockWCOEN} from "../../mocks/MockWCOEN.sol";
+import {DeployAllHarness, PrepareUpgradeHarness} from "./ScriptHarness.sol";
 
 contract PrepareUpgradeTest is Test {
-    string internal constant SALT = "v-prepare-upgrade";
     uint256 internal constant PK = 0xA11CE;
-    uint32 internal constant OUTBE = 54_322_345;
-    address internal constant HUB = address(0xB0B);
-    address internal constant WCOEN_BRIDGE = address(0xC0E);
+    string internal constant SALT = "v-prepare-upgrade";
     address internal constant GOVERNANCE = address(0x60F);
 
+    DeployAllHarness internal deploy;
     PrepareUpgradeHarness internal script;
-    Create3Factory internal factory;
-    address internal deployer;
-    IntexNFT1155 internal nft;
-    IntexNFT1155Router internal nftRouter;
-    IntexAuctionTargetRouter internal router;
+    DeployAll.Config internal config;
+    IntexCreate3.Stack internal s;
 
     function setUp() public {
+        Create3Factory factory = new Create3Factory();
+        deploy = new DeployAllHarness();
         script = new PrepareUpgradeHarness();
-        factory = new Create3Factory();
-        deployer = vm.addr(PK);
-        vm.setEnv("CREATE3_FACTORY_ADDRESS", vm.toString(address(factory)));
-        vm.setEnv("CONTRACT_SALT", SALT);
+        deploy.setEnv(address(factory), SALT, true, address(0x1CA));
+        script.setEnv(address(factory), SALT, true, address(0x1CA));
 
-        // A remote target stack: no EscrowAdapter or IntexAuction here.
-        vm.startPrank(deployer);
-        nft = IntexNFT1155(
-            _deploy("IntexNFT1155", address(new IntexNFT1155()), abi.encodeCall(IntexNFT1155.initialize, (deployer)))
-        );
-        nftRouter = IntexNFT1155Router(
-            payable(_deploy(
-                    "IntexNFT1155Router",
-                    address(new IntexNFT1155Router(address(nft), HUB)),
-                    abi.encodeCall(IntexNFT1155Router.initialize, (deployer))
-                ))
-        );
-        router = IntexAuctionTargetRouter(
-            payable(_deploy(
-                    "IntexAuctionTargetRouter",
-                    address(new IntexAuctionTargetRouter(HUB, OUTBE, WCOEN_BRIDGE)),
-                    abi.encodeCall(IntexAuctionTargetRouter.initialize, (deployer))
-                ))
-        );
-        vm.stopPrank();
+        uint256[] memory peers = new uint256[](1);
+        peers[0] = 97;
+        config.outbe = true;
+        config.compact = address(new MockTheCompact());
+        config.wcoen = address(new MockWCOEN());
+        config.peerChainIds = peers;
+        config.transport = DeployIntexAuctionTargetRouter.Transport({
+            bridge: address(0xB0B),
+            outbeChainId: uint32(block.chainid),
+            wcoenBridge: address(0xC0E),
+            outbeIca: address(0x1CA)
+        });
+        deploy.deployWith(PK, config);
+        s = deploy.stack(vm.addr(PK));
     }
 
-    function test_DeployerOwned_UpgradesWithTheKey() public {
-        address oldImpl = _implementation(address(router));
+    function test_DeployerOwned_UpgradesWithTheKeyAndKeepsEveryLink() public {
+        address[5] memory proxies = IntexCreate3.proxies(s);
+        address[5] memory oldImpls;
+        for (uint256 i = 0; i < proxies.length; i++) {
+            oldImpls[i] = _implementation(proxies[i]);
+        }
 
         script.prepareChain(PK);
 
-        assertTrue(_implementation(address(router)) != oldImpl, "router upgraded");
-        assertEq(address(IntexAuctionTargetRouter(payable(_implementation(address(router)))).BRIDGE()), HUB, "hub kept");
-        assertEq(
-            IntexAuctionTargetRouter(payable(_implementation(address(router)))).OUTBE_CHAIN_ID(), OUTBE, "outbe kept"
-        );
-        assertEq(
-            address(IntexAuctionTargetRouter(payable(_implementation(address(router)))).erc20Router()),
-            WCOEN_BRIDGE,
-            "erc20Router kept"
-        );
+        for (uint256 i = 0; i < proxies.length; i++) {
+            assertTrue(_implementation(proxies[i]) != oldImpls[i], "upgraded");
+        }
+        deploy.checkLinks(s, config);
         assertEq(bytes(script.proposal()).length, 0, "no payload");
     }
 
-    function test_GovernanceOwned_PrintsOnePayloadWithTheLiveImmutables() public {
+    function test_GovernanceOwned_PrintsOnePayloadWithTheLiveLinks() public {
         _handOver();
         script.setSourceCommit("abc123");
-        address oldImpl = _implementation(address(router));
+        address oldImpl = _implementation(s.targetRouter);
 
         script.prepareChain(PK);
 
-        assertEq(_implementation(address(router)), oldImpl, "nothing upgraded");
+        assertEq(_implementation(s.targetRouter), oldImpl, "nothing upgraded");
         string memory payload = script.proposal();
         assertEq(vm.parseJsonString(payload, ".operation"), "upgradeContracts");
-        assertTrue(vm.keyExistsJson(payload, ".upgrades[2]"), "three upgrades");
-        assertFalse(vm.keyExistsJson(payload, ".upgrades[3]"), "only the deployed proxies");
-        assertEq(vm.parseJsonAddress(payload, ".upgrades[0].proxy"), address(nft));
-        assertEq(vm.parseJsonAddress(payload, ".upgrades[1].proxy"), address(nftRouter));
-        assertEq(vm.parseJsonAddress(payload, ".upgrades[2].proxy"), address(router));
-        assertEq(vm.parseJsonUint(payload, ".upgrades[2].chainId"), block.chainid);
-        assertEq(vm.parseJsonBytes(payload, ".upgrades[2].callData"), "");
-        address[2] memory impls = [
-            vm.parseJsonAddress(payload, ".upgrades[1].implementation"),
-            vm.parseJsonAddress(payload, ".upgrades[2].implementation")
-        ];
-        IntexNFT1155Router bridgeImpl = IntexNFT1155Router(payable(impls[0]));
-        assertEq(address(bridgeImpl.token()), address(nft), "bridged token kept");
-        assertEq(address(bridgeImpl.BRIDGE()), HUB, "bridge hub kept");
-        IntexAuctionTargetRouter routerImpl = IntexAuctionTargetRouter(payable(impls[1]));
-        assertEq(address(routerImpl.BRIDGE()), HUB, "router hub kept");
-        assertEq(routerImpl.OUTBE_CHAIN_ID(), OUTBE, "outbe kept");
-        assertEq(address(routerImpl.erc20Router()), WCOEN_BRIDGE, "erc20Router kept");
+        assertTrue(vm.keyExistsJson(payload, ".upgrades[4]"), "five upgrades");
+        assertFalse(vm.keyExistsJson(payload, ".upgrades[5]"), "one per proxy");
+
+        address[5] memory proxies = IntexCreate3.proxies(s);
+        for (uint256 i = 0; i < proxies.length; i++) {
+            string memory key = string.concat(".upgrades[", vm.toString(i), "]");
+            assertEq(vm.parseJsonAddress(payload, string.concat(key, ".proxy")), proxies[i]);
+            assertEq(vm.parseJsonBytes(payload, string.concat(key, ".callData")), "");
+            // Point the proxy at the new implementation to read its links through the readers.
+            vm.store(
+                proxies[i],
+                ERC1967Utils.IMPLEMENTATION_SLOT,
+                bytes32(uint256(uint160(vm.parseJsonAddress(payload, string.concat(key, ".implementation")))))
+            );
+        }
+        deploy.checkLinks(s, config);
     }
 
     function test_RevertWhen_PayloadHasNoSourceCommit() public {
@@ -127,27 +97,19 @@ contract PrepareUpgradeTest is Test {
     }
 
     function test_RevertWhen_OwnershipIsMixed() public {
-        vm.startPrank(deployer);
-        router.grantRole(bytes32(0), GOVERNANCE);
-        router.renounceRole(bytes32(0), deployer);
-        vm.stopPrank();
+        vm.prank(vm.addr(PK));
+        Ownable(s.targetRouter).transferOwnership(GOVERNANCE);
 
-        vm.expectRevert(abi.encodeWithSelector(UpgradeProposal.MixedOwnership.selector, address(router)));
+        vm.expectRevert(abi.encodeWithSelector(UpgradeProposal.MixedOwnership.selector, s.targetRouter));
         script.prepareChain(PK);
     }
 
-    function _deploy(string memory prefix, address impl, bytes memory initData) internal returns (address) {
-        return Create3Deploy.deployProxy(factory, deployer, prefix, SALT, impl, initData);
-    }
-
     function _handOver() internal {
-        address[3] memory proxies = [address(nft), address(nftRouter), address(router)];
-        vm.startPrank(deployer);
+        address[5] memory proxies = IntexCreate3.proxies(s);
         for (uint256 i = 0; i < proxies.length; i++) {
-            IntexNFT1155(proxies[i]).grantRole(bytes32(0), GOVERNANCE);
-            IntexNFT1155(proxies[i]).renounceRole(bytes32(0), deployer);
+            vm.prank(vm.addr(PK));
+            Ownable(proxies[i]).transferOwnership(GOVERNANCE);
         }
-        vm.stopPrank();
     }
 
     function _implementation(address proxy) internal view returns (address) {

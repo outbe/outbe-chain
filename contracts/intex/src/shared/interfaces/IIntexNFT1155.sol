@@ -184,6 +184,8 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     error SupplyCapExceeded(bytes14 seriesId, uint256 attempted, uint256 cap);
     /// @notice Series index past the end of the series list.
     error SeriesIndexOutOfRange();
+    /// @notice `caller` is not the contract this entry point belongs to.
+    error UnauthorizedCaller(address caller);
 
     // --- Writes ---
 
@@ -222,26 +224,43 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @param calledAt Unix time the origin marked the series Called. The deadline derives from it.
     function callSeries(bytes14 seriesId, uint64 calledAt) external;
 
-    /// @notice Burn `units` of `owner`'s Issued Intex on Outbe when they are settled.
-    /// @dev Entry point of the IntexFactory precompile under BURNER_ROLE. It owns the series
-    ///      state, so this burn checks none.
-    /// @param owner Owner whose Issued tokens are burned.
+    /// @notice Burn `units` of `holder`'s Issued Intex on Outbe when they are settled.
+    /// @dev Entry point of the IntexFactory precompile only. It owns the series state, so this
+    ///      burn checks none.
+    /// @param holder Holder whose Issued tokens are burned.
     /// @param seriesId Series identifier.
     /// @param units Issued units to burn.
-    function burnIntex(address owner, bytes14 seriesId, uint256 units) external;
+    function burnIntex(address holder, bytes14 seriesId, uint256 units) external;
 
-    /// @notice Move `units` of `owner`'s Issued Intex on Outbe into the Gem Factory position
+    /// @notice Move `units` of `holder`'s Issued Intex on Outbe into the Gem Factory position
     ///         `gemFactoryPositionId`: the units leave the series and end with `IntexSentToGemFactory`.
-    /// @dev Entry point of the GemFactory precompile under BURNER_ROLE. It owns the series state,
-    ///      so this call checks none.
-    function sendIntexToGemFactory(address owner, bytes14 seriesId, uint256 units, uint256 gemFactoryPositionId)
+    /// @dev Entry point of the GemFactory precompile only. It owns the series state, so this call
+    ///      checks none.
+    function sendIntexToGemFactory(address holder, bytes14 seriesId, uint256 units, uint256 gemFactoryPositionId)
         external;
 
-    /// @notice Burn all of `owner`'s units of a series that reads Forfeited on this chain. Any
+    /// @notice Burn all of `holder`'s units of a series that reads Forfeited on this chain. Any
     ///         account may call it. Reverts before the transit close or for an empty balance.
-    /// @param owner Owner whose forfeited units are burned.
+    /// @param holder Holder whose forfeited units are burned.
     /// @param seriesId Series identifier.
-    function burnForfeited(address owner, bytes14 seriesId) external;
+    function burnForfeited(address holder, bytes14 seriesId) external;
+
+    // --- Links ---
+
+    /// @notice The IntexAuctionTargetRouter, the only caller of `openSeries` and `callSeries`.
+    function targetRouter() external view returns (address);
+
+    /// @notice The IntexNFT1155Router, the only caller of `crosschainBurn` and `crosschainMint`.
+    function intexNFT1155Router() external view returns (address);
+
+    /// @notice The IntexAuction, the only caller of `issueIntex`.
+    function intexAuction() external view returns (address);
+
+    /// @notice The IntexFactory precompile, the only caller of `burnIntex`. Zero off Outbe.
+    function intexFactory() external view returns (address);
+
+    /// @notice The GemFactory precompile, the only caller of `sendIntexToGemFactory`. Zero off Outbe.
+    function gemFactory() external view returns (address);
 
     // --- Reads ---
 

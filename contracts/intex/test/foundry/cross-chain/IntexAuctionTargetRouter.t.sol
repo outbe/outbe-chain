@@ -6,10 +6,9 @@ import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {IntexAuctionTargetRouter} from "@contracts/target/IntexAuctionTargetRouter.sol";
 import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
 import {IIntexAuctionTargetRouter} from "@contracts/target/interfaces/IIntexAuctionTargetRouter.sol";
-import {IIntexNFT1155Router} from "@contracts/shared/interfaces/IIntexNFT1155Router.sol";
+import {IIntexNFT1155Router, RemoteRouter} from "@contracts/shared/interfaces/IIntexNFT1155Router.sol";
 import {MockDesis} from "@test-mocks/MockDesis.sol";
 import {DESIS} from "@precompiles/IDesis.sol";
-import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {InboundReason} from "@contracts/shared/libs/InboundReason.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
@@ -52,65 +51,61 @@ contract IntexAuctionTargetRouterTest is CrossChainTest {
         vm.deal(admin, 1000 ether);
         vm.deal(user, 1000 ether);
 
-        // Deploy mock contracts
-        auction = DeployProxy.intexAuction(admin, admin);
-        intex = DeployProxy.intexNFT1155(admin, admin);
-
-        // Deploy BNB adapter
-        targetRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
-
-        // Deploy batch adapter on BNB
-        nftRouter = DeployProxy.intexNFT1155Router(address(intex), address(bridge), admin);
-
+        address routerProxy = DeployProxy.reserve();
+        address nftRouterProxy = DeployProxy.reserve();
+        intex = DeployProxy.intexNFT1155(admin, DeployProxy.NftLinks(routerProxy, nftRouterProxy, admin, admin, admin));
+        auction = DeployProxy.intexAuction(admin, routerProxy, admin, address(intex));
+        targetRouter = DeployProxy.targetRouterAt(
+            routerProxy,
+            address(bridge),
+            admin,
+            DeployProxy.TargetRouterLinks(
+                OUTBE_CHAIN_ID, DeployProxy.WCOEN_BRIDGE, address(auction), address(intex), admin, outbeIca
+            )
+        );
+        nftRouter = DeployProxy.intexNFT1155RouterAt(
+            nftRouterProxy, address(intex), address(bridge), admin, new RemoteRouter[](0)
+        );
         _wireOutbeIca(targetRouter, outbeIca);
-
-        // Wire BNB adapter dependencies
-        targetRouter.setDependencies(address(auction), address(intex), admin);
-
-        // Grant ROUTER_ROLE to the router
-        auction.grantRole(auction.RELAYER_ROLE(), address(targetRouter));
-        intex.grantRole(intex.ROUTER_ROLE(), address(targetRouter));
-
-        // Grant BRIDGE_ROLE to batch adapter on intex (for crosschainBurn)
-        intex.grantRole(intex.BRIDGE_ROLE(), address(nftRouter));
     }
 
     // --- Constructor Tests ---
     function test_constructor() public view {
-        assertTrue(targetRouter.hasRole(targetRouter.DEFAULT_ADMIN_ROLE(), admin));
+        assertEq(targetRouter.owner(), admin);
     }
 
     function test_wire() public view {
         assertEq(address(targetRouter.intexAuction()), address(auction));
         assertEq(address(targetRouter.intexContract()), address(intex));
+        assertEq(address(targetRouter.escrow()), admin);
+        assertEq(targetRouter.outbeIca(), outbeIca);
+        assertEq(address(targetRouter.erc20Router()), DeployProxy.WCOEN_BRIDGE);
     }
 
-    function test_setting_events_hold_only_new_values() public {
-        IntexAuctionTargetRouter fresh = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
-        vm.expectEmit(true, true, true, true, address(fresh));
-        emit IIntexAuctionTargetRouter.IntexAuctionTargetRouterDependenciesSet(address(auction), address(intex), admin);
-        fresh.setDependencies(address(auction), address(intex), admin);
+    function _newRouter(address auction_, address intex_, address escrow_, address ica) private {
+        new IntexAuctionTargetRouter(
+            address(bridge), OUTBE_CHAIN_ID, DeployProxy.WCOEN_BRIDGE, auction_, intex_, escrow_, ica
+        );
     }
 
-    function test_wire_revert_zero_address() public {
-        IntexAuctionTargetRouter newRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
-
+    function test_constructor_revert_zero_auction() public {
         vm.expectRevert(abi.encodeWithSelector(IIntexAuctionTargetRouter.ZeroAddress.selector, "intexAuction"));
-        newRouter.setDependencies(address(0), address(intex), admin);
+        _newRouter(address(0), address(intex), admin, outbeIca);
     }
 
-    function test_wire_revert_zero_intex() public {
-        IntexAuctionTargetRouter newRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
-
-        vm.expectRevert(abi.encodeWithSelector(IIntexAuctionTargetRouter.ZeroAddress.selector, "intexContract"));
-        newRouter.setDependencies(address(auction), address(0), admin);
+    function test_constructor_revert_zero_intex() public {
+        vm.expectRevert(abi.encodeWithSelector(IIntexAuctionTargetRouter.ZeroAddress.selector, "intexNFT1155"));
+        _newRouter(address(auction), address(0), admin, outbeIca);
     }
 
-    function test_wire_revert_zero_escrowAdapter() public {
-        IntexAuctionTargetRouter newRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
-
+    function test_constructor_revert_zero_escrowAdapter() public {
         vm.expectRevert(abi.encodeWithSelector(IIntexAuctionTargetRouter.ZeroAddress.selector, "escrow"));
-        newRouter.setDependencies(address(auction), address(intex), address(0));
+        _newRouter(address(auction), address(intex), address(0), outbeIca);
+    }
+
+    function test_constructor_revert_zero_outbe_ica() public {
+        vm.expectRevert(abi.encodeWithSelector(IIntexAuctionTargetRouter.ZeroAddress.selector, "outbeIca"));
+        _newRouter(address(auction), address(intex), admin, address(0));
     }
 
     // --- Inbound from Outbe ---
@@ -131,21 +126,17 @@ contract IntexAuctionTargetRouterTest is CrossChainTest {
         );
     }
 
-    function test_receiveFromOutbe_revert_without_the_ica_role() public {
+    function test_receiveFromOutbe_revert_from_anyone_but_the_outbe_ica() public {
         bytes memory start = _start(uint32(block.timestamp + 1 days));
-        bytes32 role = targetRouter.OUTBE_ICA_ROLE();
-        assertEq(role, keccak256("OUTBE_ICA_ROLE"));
 
-        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, user, role));
+        vm.expectRevert(abi.encodeWithSelector(IIntexAuctionTargetRouter.UnauthorizedCaller.selector, user));
         vm.prank(user);
         targetRouter.receiveFromOutbe(start);
 
-        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, admin, role));
+        vm.expectRevert(abi.encodeWithSelector(IIntexAuctionTargetRouter.UnauthorizedCaller.selector, admin));
         targetRouter.receiveFromOutbe(start);
 
-        vm.expectRevert(
-            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, address(bridge), role)
-        );
+        vm.expectRevert(abi.encodeWithSelector(IIntexAuctionTargetRouter.UnauthorizedCaller.selector, address(bridge)));
         vm.prank(address(bridge));
         targetRouter.receiveFromOutbe(start);
     }
@@ -189,12 +180,5 @@ contract IntexAuctionTargetRouterTest is CrossChainTest {
             keccak256(BridgeMsgCodec.encodeBidsTotals(SERIES_ID_DAY, uint32(block.chainid), 1, 0)),
             "the totals marker closes the relay"
         );
-    }
-
-    // --- ERC165 Tests ---
-    function test_supportsInterface() public view {
-        // IAccessControl interface ID
-        bytes4 accessControlId = 0x7965db0b;
-        assertTrue(targetRouter.supportsInterface(accessControlId));
     }
 }

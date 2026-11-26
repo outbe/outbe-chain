@@ -25,7 +25,6 @@ contract EscrowAdapterWinnersTest is Test {
     address internal admin = address(1);
     address internal relayer = address(2);
     address internal auction = address(3);
-    address internal proceeds = address(4);
     address internal alice = address(5);
     address internal bob = address(6);
 
@@ -35,15 +34,10 @@ contract EscrowAdapterWinnersTest is Test {
     bytes32 internal constant RECEIVE_ID = bytes32(uint256(0xC0FFEE));
 
     function setUp() public {
-        escrow = DeployProxy.escrowAdapter(admin, relayer);
         compact = new MockTheCompact();
         compact.setResetPeriodSeconds(0);
         token = new MockWCOEN();
-
-        vm.startPrank(admin);
-        escrow.setDependencies(auction, address(compact), address(token));
-        escrow.setProceedsRecipient(proceeds);
-        vm.stopPrank();
+        escrow = DeployProxy.escrowAdapter(admin, auction, relayer, address(compact), address(token));
     }
 
     function _refund(uint32 emissionDay, address bidder) internal {
@@ -91,7 +85,7 @@ contract EscrowAdapterWinnersTest is Test {
         uint128 routed = _apply(_list(alice, bob), 1, 2, true);
 
         assertEq(routed, _paid(1) + _paid(2), "bob pays for the two units he won");
-        assertEq(token.balanceOf(proceeds), routed);
+        assertEq(token.balanceOf(relayer), routed);
         IEscrowAdapter.IntexAuctionBidLock memory lock = escrow.getIntexAuctionBidLock(DAY, bob);
         assertEq(uint8(lock.status), uint8(IEscrowAdapter.LockStatus.Won));
         assertEq(lock.quantity, 2, "the lock keeps the units actually won");
@@ -139,7 +133,7 @@ contract EscrowAdapterWinnersTest is Test {
 
         routed = _apply(_one(alice), 0, 0, true);
         assertEq(routed, 0, "a later chunk cannot take the payment again");
-        assertEq(token.balanceOf(proceeds), _paid(3));
+        assertEq(token.balanceOf(relayer), _paid(3));
     }
 
     function test_TheFirstChunkWithWinnersRecordsTheTermsTheRestMustMatch() public {

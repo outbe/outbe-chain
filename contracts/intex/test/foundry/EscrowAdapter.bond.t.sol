@@ -10,7 +10,7 @@ import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 import {MockERC20} from "@test-mocks/MockERC20.sol";
 import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 
-/// @dev Commit-bond custody: lock/release under AUCTION_ROLE, the escrow-local
+/// @dev Commit-bond custody: lock/release by IntexAuction only, the escrow-local
 ///      bid bond escrow timeout, and the shared-lockId accounting with bid escrow.
 contract EscrowAdapterBondTest is Test {
     EscrowAdapter escrow;
@@ -35,12 +35,9 @@ contract EscrowAdapterBondTest is Test {
     }
 
     function setUp() public {
-        escrow = DeployProxy.escrowAdapter(admin, bridger);
         compact = new MockTheCompact();
         paymentToken = new MockWCOEN();
-
-        vm.prank(admin);
-        escrow.setDependencies(auction, address(compact), address(paymentToken));
+        escrow = DeployProxy.escrowAdapter(admin, auction, bridger, address(compact), address(paymentToken));
         compact.setResetPeriodSeconds(0);
 
         paymentToken.mint(bidder1, 1000e18);
@@ -172,25 +169,15 @@ contract EscrowAdapterBondTest is Test {
         escrow.unlockIntexAuctionBidBondAfterTimeout(emissionDay1, bidder1);
     }
 
-    /// @dev The valve is auction-independent by design: a bond locked before the auction
-    ///      contract is rotated away stays recoverable straight from the escrow.
-    /// @dev A live bond pins the auction. The valve still recovers it without the auction.
-    function test_ALiveBondPinsTheAuctionUntilTheValveRecoversIt() public {
+    /// @dev The valve is auction-independent by design: a bond stays recoverable straight from
+    ///      the escrow.
+    function test_TheValveRecoversALiveBondWithoutTheAuction() public {
         _lockBond();
-
-        address newAuction = address(0xA0C71012);
-        vm.prank(admin);
-        vm.expectRevert(IEscrowAdapter.LocksOutstanding.selector);
-        escrow.setDependencies(newAuction, address(compact), address(paymentToken));
 
         vm.warp(block.timestamp + escrow.BID_BOND_ESCROW_TIMEOUT());
         vm.prank(outsider);
         escrow.unlockIntexAuctionBidBondAfterTimeout(emissionDay1, bidder1);
         assertEq(paymentToken.balanceOf(bidder1), 1000e18, "full principal recovered");
-
-        vm.prank(admin);
-        escrow.setDependencies(newAuction, address(compact), address(paymentToken));
-        assertEq(escrow.intexAuction(), newAuction);
     }
 
     /// @dev Any bond amount round-trips lock -> release without residue in The Compact.
@@ -205,18 +192,5 @@ contract EscrowAdapterBondTest is Test {
         escrow.unlockIntexAuctionBidBond(emissionDay1, bidder1, 0);
         assertEq(_liveCompactBalance(), 0, "no residue");
         assertEq(paymentToken.balanceOf(bidder1), 1000e18, "principal intact");
-    }
-
-    // --- shared-lockId accounting ---
-
-    /// @dev A live bond alone registers as an outstanding lock under the shared lock id.
-    function test_HasOutstandingLocks_CoversBonds() public {
-        assertFalse(escrow.hasOutstandingLocks(), "clean slate");
-        _lockBond();
-        assertTrue(escrow.hasOutstandingLocks(), "bond counts as outstanding");
-
-        vm.prank(auction);
-        escrow.unlockIntexAuctionBidBond(emissionDay1, bidder1, 0);
-        assertFalse(escrow.hasOutstandingLocks(), "released bond clears the guard");
     }
 }

@@ -20,6 +20,7 @@ contract AuctionTest is Test {
 
     address admin = address(1);
     address bridger = address(2);
+    address constant INTEX = address(0x1E7E);
 
     // Private keys for signing
     uint256 iba1PrivateKey = 0x100;
@@ -52,13 +53,8 @@ contract AuctionTest is Test {
         iba2 = vm.addr(iba2PrivateKey);
         outsider = vm.addr(outsiderPrivateKey);
 
-        auction = DeployProxy.intexAuction(admin, bridger);
         escrow = new MockAuctionEscrow();
-
-        vm.startPrank(admin);
-        auction.grantRole(auction.RELAYER_ROLE(), bridger);
-        auction.setEscrow(address(escrow));
-        vm.stopPrank();
+        auction = DeployProxy.intexAuction(admin, bridger, address(escrow), INTEX);
     }
 
     // --- Helpers ---
@@ -573,72 +569,20 @@ contract AuctionTest is Test {
     }
 
     // --- Access Control Tests ---
-    function test_AccessControl_Wire() public {
-        vm.expectRevert();
-        vm.prank(iba1);
-        auction.setEscrow(address(0xBEEF));
-
-        vm.expectRevert();
-        vm.prank(bridger);
-        auction.setEscrow(address(0xBEEF));
-
-        MockAuctionEscrow rotated = new MockAuctionEscrow();
-        vm.expectEmit(true, true, true, true, address(auction));
-        emit IIntexAuction.EscrowSet(address(rotated));
-        vm.prank(admin);
-        auction.setEscrow(address(rotated));
+    function test_Constructor_SetsTheLinks() public view {
+        assertEq(auction.targetRouter(), bridger);
+        assertEq(address(auction.escrow()), address(escrow));
+        assertEq(address(auction.intexContract()), INTEX);
+        assertEq(auction.owner(), admin);
     }
 
-    function test_SetIntexContract_AdminOnlyAndNonZero() public {
-        vm.prank(iba1);
-        vm.expectRevert();
-        auction.setIntexContract(address(0xBEEF));
-
-        vm.startPrank(admin);
-        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroAddress.selector, "intexContract"));
-        auction.setIntexContract(address(0));
-
-        vm.expectEmit(true, true, true, true, address(auction));
-        emit IIntexAuction.IntexContractSet(address(0xBEEF));
-        auction.setIntexContract(address(0xBEEF));
-        vm.stopPrank();
-        assertEq(address(auction.intexContract()), address(0xBEEF));
-    }
-
-    /// @dev Bidders claim through the auction from the escrow that took their locks, so the escrow
-    ///      stays until nothing is left on it.
-    function test_Wire_RefusesWhileTheEscrowHoldsLocks() public {
-        uint256 startTs = block.timestamp;
-        uint32 emissionDay = 20250201;
-        _start(emissionDay, 50, 1);
-        _commit(emissionDay, iba1, 30, 80, iba1PrivateKey);
-        _enterRevealStage(emissionDay, startTs);
-        _reveal(emissionDay, iba1, 30, 80, iba1PrivateKey);
-        assertTrue(escrow.hasOutstandingLocks(), "the day's lock is live");
-
-        MockAuctionEscrow escrow2 = new MockAuctionEscrow();
-        vm.prank(admin);
-        vm.expectRevert(IIntexAuction.EscrowHasLiveLocks.selector);
-        auction.setEscrow(address(escrow2));
-
-        vm.prank(admin);
-        auction.setEscrow(address(escrow));
-        assertEq(address(auction.escrow()), address(escrow), "the same escrow rewires");
-    }
-
-    function test_Wire_SucceedsAfterLocksCleared() public {
-        uint256 startTs = block.timestamp;
-        uint32 emissionDay = 20250202;
-        _start(emissionDay, 50, 1);
-        _commit(emissionDay, iba1, 30, 80, iba1PrivateKey);
-        _enterRevealStage(emissionDay, startTs);
-        _reveal(emissionDay, iba1, 30, 80, iba1PrivateKey);
-
-        escrow.releaseAllLocks();
-        MockAuctionEscrow escrow2 = new MockAuctionEscrow();
-        vm.prank(admin);
-        auction.setEscrow(address(escrow2));
-        assertEq(address(auction.escrow()), address(escrow2));
+    function test_Constructor_RejectsZeroLinks() public {
+        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroAddress.selector, "targetRouter"));
+        new IntexAuction(address(0), address(escrow), INTEX);
+        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroAddress.selector, "escrow"));
+        new IntexAuction(bridger, address(0), INTEX);
+        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroAddress.selector, "intexNFT1155"));
+        new IntexAuction(bridger, address(escrow), address(0));
     }
 
     function test_RevealBid_FreesCommitSlot() public {
@@ -654,10 +598,10 @@ contract AuctionTest is Test {
         assertEq(auction.committedIntexAuctionBidsByHash(emissionDay, iba1), bytes32(0));
     }
 
-    function test_AccessControl_AuctionStart() public {
+    function test_OnlyTheTargetRouter_AuctionStart() public {
         uint32 emissionDay = 20250123;
 
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.UnauthorizedCaller.selector, admin));
         vm.prank(admin);
         auction.startAuction(emissionDay, _schedule(), _params(10, 1));
 
@@ -666,7 +610,7 @@ contract AuctionTest is Test {
         auction.startAuction(emissionDay, _schedule(), _params(10, 1));
     }
 
-    function test_AccessControl_StartAwaitingResult() public {
+    function test_OnlyTheTargetRouter_StartAwaitingResult() public {
         uint256 startTs = block.timestamp;
         uint32 emissionDay = 20250125;
         _start(emissionDay, 10, 1);
@@ -681,7 +625,7 @@ contract AuctionTest is Test {
         auction.startAuctionClearing(emissionDay);
     }
 
-    function test_AccessControl_ExecuteAuctionClearing() public {
+    function test_OnlyTheTargetRouter_ExecuteAuctionClearing() public {
         uint256 startTs = block.timestamp;
         uint32 emissionDay = 20250126;
         _start(emissionDay, 10, 1);
@@ -869,18 +813,6 @@ contract AuctionTest is Test {
         vm.expectRevert(IIntexAuction.AuctionAlreadyExists.selector);
         vm.prank(bridger);
         auction.startAuction(emissionDay, _schedule(), _params(10, 1));
-    }
-
-    function test_Wire_Validation() public {
-        IntexAuction newAuction = DeployProxy.intexAuction(admin, bridger);
-        vm.startPrank(admin);
-        newAuction.grantRole(newAuction.RELAYER_ROLE(), bridger);
-
-        // Zero escrow address
-        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroAddress.selector, "escrow"));
-        newAuction.setEscrow(address(0));
-
-        vm.stopPrank();
     }
 
     function test_ExecuteAuctionClearing_Validation() public {

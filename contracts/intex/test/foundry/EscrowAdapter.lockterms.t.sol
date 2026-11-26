@@ -26,12 +26,10 @@ contract EscrowAdapterLockTermsTest is Test {
     uint128 internal constant LOCK = uint128(uint256(30) * BASIS * 800_000 / 1e6) * 1e12;
 
     function setUp() public {
-        escrow = DeployProxy.escrowAdapter(admin, relayer);
         compact = new MockTheCompact();
         token = new MockWCOEN();
         compact.setResetPeriodSeconds(0);
-        vm.prank(admin);
-        escrow.setDependencies(auction, address(compact), address(token));
+        escrow = DeployProxy.escrowAdapter(admin, auction, relayer, address(compact), address(token));
 
         token.mint(bidder, LOCK);
         vm.prank(bidder);
@@ -54,7 +52,7 @@ contract EscrowAdapterLockTermsTest is Test {
         vm.prank(auction);
         escrow.lockIntexAuctionAsset(DAY, bidder, BASIS, 800_000, 30);
 
-        bytes32 dayMap = keccak256(abi.encode(uint256(DAY), uint256(STORAGE_SLOT) + 5));
+        bytes32 dayMap = keccak256(abi.encode(uint256(DAY), uint256(STORAGE_SLOT) + 4));
         uint256 word = uint256(vm.load(address(escrow), keccak256(abi.encode(bidder, dayMap))));
 
         assertEq(uint128(word), LOCK, "amount in the low 16 bytes");

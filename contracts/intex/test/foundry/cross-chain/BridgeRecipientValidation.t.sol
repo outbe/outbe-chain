@@ -6,7 +6,12 @@ import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {OpenSeriesLib} from "../helpers/OpenSeriesLib.sol";
 import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
-import {SendParam, BatchSendParam, MultiRecipientSendParam} from "@contracts/shared/interfaces/IIntexNFT1155Router.sol";
+import {
+    SendParam,
+    BatchSendParam,
+    MultiRecipientSendParam,
+    RemoteRouter
+} from "@contracts/shared/interfaces/IIntexNFT1155Router.sol";
 import {IntexNFT1155RouterCodec} from "@contracts/shared/libs/IntexNFT1155RouterCodec.sol";
 
 /// @notice The send path rejects a non-canonical recipient (dirty high bits) before any burn, as
@@ -34,9 +39,11 @@ contract BridgeRecipientValidationTest is CrossChainTest {
         _setUpBridge();
         bridge.setFee(FEE);
 
-        token = DeployProxy.intexNFT1155(admin, admin);
-        adapter = DeployProxy.intexNFT1155Router(address(token), address(bridge), admin);
-        token.grantRole(token.BRIDGE_ROLE(), address(adapter));
+        address adapterProxy = DeployProxy.reserve();
+        token = DeployProxy.intexNFT1155(admin, DeployProxy.NftLinks(admin, adapterProxy, admin, admin, admin));
+        adapter = DeployProxy.intexNFT1155RouterAt(
+            adapterProxy, address(token), address(bridge), admin, new RemoteRouter[](0)
+        );
         adapter.setRemoteRouter(B_CHAIN_ID, _interop(B_CHAIN_ID, address(adapter)));
 
         token.openSeries(OpenSeriesLib.params(SERIES_ID_DAY, 10_000, 0));

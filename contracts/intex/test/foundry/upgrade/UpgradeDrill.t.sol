@@ -35,7 +35,7 @@ interface IUpgradeProbe {
 ///      3. Upgrade the implementation to a v1.1 stub that adds a new view.
 ///      4. Assert that persisted state survived the upgrade, the implementation pointer moved,
 ///         and the new view is callable.
-///      Covers one upgrade per impl contract. The bridge clients (IntexAuctionTargetRouter and the NFT bridge)
+///      Covers one upgrade per impl contract. The bridge clients (IntexAuctionTargetRouter and IntexNFT1155Router)
 ///      run against a standalone {MockERC7786Bridge}.
 contract UpgradeDrillTest is CrossChainTest {
     uint32 internal constant A_CHAIN_ID = 1;
@@ -62,7 +62,7 @@ contract UpgradeDrillTest is CrossChainTest {
         nft.issueIntex(owner, 3, OpenSeriesLib.seriesId(7));
         vm.stopPrank();
 
-        IntexNFT1155V2 newImpl = new IntexNFT1155V2();
+        IntexNFT1155V2 newImpl = new IntexNFT1155V2(admin, admin, admin, admin, admin);
         vm.prank(admin);
         nft.upgradeToAndCall(address(newImpl), "");
 
@@ -72,7 +72,8 @@ contract UpgradeDrillTest is CrossChainTest {
         IIntexNFT1155.SeriesData memory data = nft.getIntexSeries(OpenSeriesLib.seriesId(7));
         assertGt(data.issuedAt, 0, "series record lost");
         assertEq(uint8(data.state), uint8(IIntexNFT1155.IntexState.Issued), "state lost");
-        assertTrue(nft.hasRole(nft.ROUTER_ROLE(), admin), "role lost");
+        assertEq(nft.targetRouter(), admin, "link lost");
+        assertEq(nft.owner(), admin, "owner lost");
     }
 
     // keccak256(abi.encode(uint256(keccak256("outbe.intex.IntexNFT1155V2Reinit")) - 1)) & ~bytes32(uint256(0xff))
@@ -91,7 +92,7 @@ contract UpgradeDrillTest is CrossChainTest {
         nft.issueIntex(owner, 3, OpenSeriesLib.seriesId(7));
         vm.stopPrank();
 
-        IntexNFT1155V2Reinit newImpl = new IntexNFT1155V2Reinit();
+        IntexNFT1155V2Reinit newImpl = new IntexNFT1155V2Reinit(admin, admin, admin, admin, admin);
         vm.prank(admin);
         nft.upgradeToAndCall(address(newImpl), abi.encodeCall(IntexNFT1155V2Reinit.initializeV2, (UPGRADE_PROBE)));
 
@@ -104,8 +105,8 @@ contract UpgradeDrillTest is CrossChainTest {
     }
 
     function test_Drill_IntexAuction() public {
-        IntexAuction auction = DeployProxy.intexAuction(admin, admin);
         address escrow = makeAddr("escrow");
+        IntexAuction auction = DeployProxy.intexAuction(admin, admin, escrow, makeAddr("intex"));
         address bidder = makeAddr("bidder");
 
         IIntexAuction.AuctionSchedule memory schedule = IIntexAuction.AuctionSchedule({
@@ -122,14 +123,12 @@ contract UpgradeDrillTest is CrossChainTest {
             bidBondMinor: 0
         });
 
-        vm.startPrank(admin);
-        auction.setEscrow(escrow);
+        vm.prank(admin);
         auction.startAuction(20260614, schedule, params);
-        vm.stopPrank();
         vm.prank(bidder);
         auction.commitIntexAuctionBid(20260614, keccak256("commit"));
 
-        IntexAuctionV2 newImpl = new IntexAuctionV2();
+        IntexAuctionV2 newImpl = new IntexAuctionV2(admin, escrow, makeAddr("intex"));
         vm.prank(admin);
         auction.upgradeToAndCall(address(newImpl), "");
 
@@ -140,17 +139,14 @@ contract UpgradeDrillTest is CrossChainTest {
     }
 
     function test_Drill_EscrowAdapter() public {
-        EscrowAdapter escrow = DeployProxy.escrowAdapter(admin, admin);
         MockWCOEN token = new MockWCOEN();
         MockTheCompact compactMock = new MockTheCompact();
         address auction = makeAddr("auction");
-
-        vm.prank(admin);
-        escrow.setDependencies(auction, address(compactMock), address(token));
+        EscrowAdapter escrow = DeployProxy.escrowAdapter(admin, auction, admin, address(compactMock), address(token));
         uint96 allocatorId = escrow.allocatorId();
         bytes12 lockTag = escrow.lockTag();
 
-        EscrowAdapterV2 newImpl = new EscrowAdapterV2();
+        EscrowAdapterV2 newImpl = new EscrowAdapterV2(auction, admin);
         vm.prank(admin);
         escrow.upgradeToAndCall(address(newImpl), "");
 
@@ -159,44 +155,39 @@ contract UpgradeDrillTest is CrossChainTest {
         assertEq(address(escrow.intexAuctionAsset()), address(token), "token wiring lost");
         assertEq(escrow.allocatorId(), allocatorId, "allocatorId lost");
         assertEq(escrow.lockTag(), lockTag, "lockTag lost");
-        assertTrue(escrow.hasRole(escrow.AUCTION_ROLE(), auction), "auction role lost");
+        assertEq(escrow.owner(), admin, "owner lost");
     }
 
     function test_Drill_IntexAuctionTargetRouter() public {
         address erc20Router = makeAddr("erc20Router");
-        IntexAuctionTargetRouter target = DeployProxy.targetRouter(address(bridge), admin, A_CHAIN_ID, erc20Router);
         address auction = makeAddr("auction");
         address intex = makeAddr("intex");
         address escrow = makeAddr("escrow");
         address ica = makeAddr("outbeIca");
-        bytes32 icaRole = target.OUTBE_ICA_ROLE();
+        IntexAuctionTargetRouter target = DeployProxy.targetRouter(
+            address(bridge), admin, DeployProxy.TargetRouterLinks(A_CHAIN_ID, erc20Router, auction, intex, escrow, ica)
+        );
 
-        vm.startPrank(admin);
-        target.setDependencies(auction, intex, escrow);
-        target.grantRole(icaRole, ica);
-        vm.stopPrank();
-
-        IntexAuctionTargetRouterV2 newImpl = new IntexAuctionTargetRouterV2(address(bridge), A_CHAIN_ID, erc20Router);
+        IntexAuctionTargetRouterV2 newImpl =
+            new IntexAuctionTargetRouterV2(address(bridge), A_CHAIN_ID, erc20Router, auction, intex, escrow, ica);
         vm.prank(admin);
         target.upgradeToAndCall(address(newImpl), "");
 
         _assertUpgraded(address(target), address(newImpl));
         assertEq(address(target.intexAuction()), auction, "auction wiring lost");
         assertEq(address(target.escrow()), escrow, "escrow wiring lost");
-        assertTrue(target.hasRole(icaRole, ica), "ICA role lost");
+        assertEq(target.outbeIca(), ica, "ICA lost");
+        assertEq(target.owner(), admin, "owner lost");
         assertEq(address(target.erc20Router()), erc20Router, "erc20Router immutable lost");
     }
 
     function test_Drill_IntexNFT1155Router() public {
         address tokenAddr = makeAddr("token");
         IntexNFT1155Router batch = DeployProxy.intexNFT1155Router(tokenAddr, address(bridge), admin);
-        address relayer = makeAddr("relayer");
         bytes memory remote = _interop(B_CHAIN_ID, address(0xBEEF));
 
-        vm.startPrank(admin);
+        vm.prank(admin);
         batch.setRemoteRouter(B_CHAIN_ID, remote);
-        batch.grantRole(batch.DEFAULT_ADMIN_ROLE(), relayer);
-        vm.stopPrank();
 
         IntexNFT1155RouterV2 newImpl = new IntexNFT1155RouterV2(tokenAddr, address(bridge));
         vm.prank(admin);
@@ -205,6 +196,6 @@ contract UpgradeDrillTest is CrossChainTest {
         _assertUpgraded(address(batch), address(newImpl));
         assertEq(batch.remoteRouter(B_CHAIN_ID), remote, "remote router lost");
         assertEq(address(batch.token()), tokenAddr, "token immutable lost");
-        assertTrue(batch.hasRole(batch.DEFAULT_ADMIN_ROLE(), relayer), "role lost");
+        assertEq(batch.owner(), admin, "owner lost");
     }
 }

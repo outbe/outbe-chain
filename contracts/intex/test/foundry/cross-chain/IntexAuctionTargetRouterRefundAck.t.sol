@@ -57,9 +57,21 @@ contract IntexAuctionTargetRouterRefundAckTest is CrossChainTest {
 
     function setUp() public {
         _setUpBridge();
-        target = DeployProxy.targetRouter(address(bridge), address(this), OUTBE_CHAIN_ID);
+        target = IntexAuctionTargetRouter(payable(DeployProxy.reserve()));
         escrow = new ClosableEscrowAdapter(IERC20(address(new MockWCOEN())));
-        target.setDependencies(makeAddr("auction"), makeAddr("intex"), address(escrow));
+        DeployProxy.targetRouterAt(
+            address(target),
+            address(bridge),
+            address(this),
+            DeployProxy.TargetRouterLinks(
+                OUTBE_CHAIN_ID,
+                DeployProxy.WCOEN_BRIDGE,
+                makeAddr("auction"),
+                makeAddr("intex"),
+                address(escrow),
+                outbeIca
+            )
+        );
         _wireOutbeIca(target, outbeIca);
     }
 
@@ -77,8 +89,18 @@ contract IntexAuctionTargetRouterRefundAckTest is CrossChainTest {
     }
 
     function test_AChunkForAFailedDayIsObsolete() public {
-        IntexAuctionTargetRouter failedTarget = DeployProxy.targetRouter(address(bridge), address(this), OUTBE_CHAIN_ID);
-        failedTarget.setDependencies(address(new FailedDayAuction()), makeAddr("intex"), address(escrow));
+        IntexAuctionTargetRouter failedTarget = DeployProxy.targetRouter(
+            address(bridge),
+            address(this),
+            DeployProxy.TargetRouterLinks(
+                OUTBE_CHAIN_ID,
+                DeployProxy.WCOEN_BRIDGE,
+                address(new FailedDayAuction()),
+                makeAddr("intex"),
+                address(escrow),
+                outbeIca
+            )
+        );
         _wireOutbeIca(failedTarget, outbeIca);
         target = failedTarget;
 

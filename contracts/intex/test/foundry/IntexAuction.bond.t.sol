@@ -59,16 +59,11 @@ contract IntexAuctionBondTest is Test {
     function setUp() public {
         iba1 = vm.addr(iba1PrivateKey);
 
-        auction = DeployProxy.intexAuction(admin, bridger);
-        escrow = DeployProxy.escrowAdapter(admin, bridger);
         compact = new MockTheCompact();
         paymentToken = new MockWCOEN();
-
-        vm.startPrank(admin);
-        auction.grantRole(auction.RELAYER_ROLE(), bridger);
-        auction.setEscrow(address(escrow));
-        escrow.setDependencies(address(auction), address(compact), address(paymentToken));
-        vm.stopPrank();
+        address auctionAt = DeployProxy.reserve();
+        escrow = DeployProxy.escrowAdapter(admin, auctionAt, bridger, address(compact), address(paymentToken));
+        auction = DeployProxy.intexAuctionAt(auctionAt, admin, bridger, address(escrow), address(0x1E7E));
         compact.setResetPeriodSeconds(0);
 
         paymentToken.mint(iba1, 1000e18);

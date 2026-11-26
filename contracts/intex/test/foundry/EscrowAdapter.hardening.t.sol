@@ -81,12 +81,9 @@ contract EscrowAdapterHardeningTest is Test {
     uint32 internal constant SERIES = 20260102;
 
     function setUp() public {
-        escrow = DeployProxy.escrowAdapter(admin, bridger);
         compact = new MockTheCompact();
         paymentToken = new MockWCOEN();
-
-        vm.prank(admin);
-        escrow.setDependencies(auction, address(compact), address(paymentToken));
+        escrow = DeployProxy.escrowAdapter(admin, auction, bridger, address(compact), address(paymentToken));
         compact.setResetPeriodSeconds(0);
     }
 
@@ -139,12 +136,10 @@ contract EscrowAdapterHardeningTest is Test {
     }
 
     function test_FeeOnTransferToken_LockFunds_FailsClosed() public {
-        EscrowAdapter feeEscrow = DeployProxy.escrowAdapter(admin, bridger);
         MockTheCompact feeCompact = new MockTheCompact();
         FeeOnTransferToken feeToken = new FeeOnTransferToken(100);
-
-        vm.prank(admin);
-        feeEscrow.setDependencies(auction, address(feeCompact), address(feeToken));
+        EscrowAdapter feeEscrow =
+            DeployProxy.escrowAdapter(admin, auction, bridger, address(feeCompact), address(feeToken));
         feeCompact.setResetPeriodSeconds(0);
 
         feeToken.mint(bidderA, 1_000e18);

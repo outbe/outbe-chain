@@ -2,76 +2,156 @@
 pragma solidity 0.8.30;
 
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {IntexAuctionTargetRouter} from "@contracts/target/IntexAuctionTargetRouter.sol";
 import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
-import {Vm} from "forge-std/Vm.sol";
+import {RemoteRouter} from "@contracts/shared/interfaces/IIntexNFT1155Router.sol";
 
-/// @dev Deploys implementation + ERC1967 proxy pairs for the UUPS contracts under test.
-///      Returned handles point at the proxy; `bridger` receives the roles each contract gates its operator on.
+/// @dev The first implementation of a reserved proxy: anyone may move it to the real one.
+contract ProxySlot is UUPSUpgradeable {
+    function reserve() external {}
+
+    function _authorizeUpgrade(address) internal override {}
+}
+
+/// @dev Deploys the UUPS contracts under test behind ERC1967 proxies. Every link is an
+///      implementation immutable, so a test that links contracts to each other reserves their
+///      proxies first (`reserve`) and fills each with its implementation (`*At`).
 library DeployProxy {
-    Vm private constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    address internal constant WCOEN_BRIDGE = address(0x7E57B12D6E);
 
-    function intexNFT1155(address defaultAdmin, address bridger) internal returns (IntexNFT1155) {
-        IntexNFT1155 impl = new IntexNFT1155();
-        ERC1967Proxy proxy = new ERC1967Proxy(address(impl), abi.encodeCall(IntexNFT1155.initialize, (defaultAdmin)));
-        IntexNFT1155 nft = IntexNFT1155(address(proxy));
-        bytes32 router = nft.ROUTER_ROLE();
-        bytes32 bridge = nft.BRIDGE_ROLE();
-        bytes32 auction = nft.AUCTION_ROLE();
-        vm.startPrank(defaultAdmin);
-        nft.grantRole(router, bridger);
-        nft.grantRole(bridge, bridger);
-        nft.grantRole(auction, bridger);
-        vm.stopPrank();
-        return nft;
+    /// @dev Links of IntexNFT1155, in constructor order.
+    struct NftLinks {
+        address targetRouter;
+        address intexNFT1155Router;
+        address intexAuction;
+        address intexFactory;
+        address gemFactory;
     }
 
-    function intexAuction(address defaultAdmin, address bridger) internal returns (IntexAuction) {
-        IntexAuction impl = new IntexAuction();
-        ERC1967Proxy proxy = new ERC1967Proxy(address(impl), abi.encodeCall(IntexAuction.initialize, (defaultAdmin)));
-        IntexAuction auction = IntexAuction(address(proxy));
-        bytes32 role = auction.RELAYER_ROLE();
-        vm.prank(defaultAdmin);
-        auction.grantRole(role, bridger);
-        return auction;
+    /// @dev Links of IntexAuctionTargetRouter besides the bridge, in constructor order.
+    struct TargetRouterLinks {
+        uint32 outbeChainId;
+        address wcoenBridge;
+        address intexAuction;
+        address intexNFT1155;
+        address escrow;
+        address outbeIca;
     }
 
-    function escrowAdapter(address defaultAdmin, address bridger) internal returns (EscrowAdapter) {
-        EscrowAdapter impl = new EscrowAdapter();
-        ERC1967Proxy proxy = new ERC1967Proxy(address(impl), abi.encodeCall(EscrowAdapter.initialize, (defaultAdmin)));
-        EscrowAdapter escrow = EscrowAdapter(address(proxy));
-        bytes32 role = escrow.RELAYER_ROLE();
-        vm.prank(defaultAdmin);
-        escrow.grantRole(role, bridger);
-        return escrow;
+    /// @dev A proxy whose implementation is set later by one of the `*At` functions.
+    function reserve() internal returns (address) {
+        return address(new ERC1967Proxy(address(new ProxySlot()), abi.encodeCall(ProxySlot.reserve, ())));
     }
 
-    function targetRouter(address bridge, address delegate, uint32 outbeChainId)
+    /// @dev Every link of the collection is `caller`.
+    function intexNFT1155(address owner, address caller) internal returns (IntexNFT1155) {
+        return intexNFT1155(owner, NftLinks(caller, caller, caller, caller, caller));
+    }
+
+    function intexNFT1155(address owner, NftLinks memory l) internal returns (IntexNFT1155) {
+        return intexNFT1155At(reserve(), owner, l);
+    }
+
+    function intexNFT1155At(address proxy, address owner, NftLinks memory l) internal returns (IntexNFT1155) {
+        _fill(
+            proxy,
+            address(
+                new IntexNFT1155(l.targetRouter, l.intexNFT1155Router, l.intexAuction, l.intexFactory, l.gemFactory)
+            ),
+            abi.encodeCall(IntexNFT1155.initialize, (owner))
+        );
+        return IntexNFT1155(proxy);
+    }
+
+    function intexAuction(address owner, address router, address escrow, address nft) internal returns (IntexAuction) {
+        return intexAuctionAt(reserve(), owner, router, escrow, nft);
+    }
+
+    function intexAuctionAt(address proxy, address owner, address router, address escrow, address nft)
+        internal
+        returns (IntexAuction)
+    {
+        _fill(proxy, address(new IntexAuction(router, escrow, nft)), abi.encodeCall(IntexAuction.initialize, (owner)));
+        return IntexAuction(proxy);
+    }
+
+    function escrowAdapter(address owner, address auction, address router, address compact, address asset)
+        internal
+        returns (EscrowAdapter)
+    {
+        return escrowAdapterAt(reserve(), owner, auction, router, compact, asset);
+    }
+
+    function escrowAdapterAt(
+        address proxy,
+        address owner,
+        address auction,
+        address router,
+        address compact,
+        address asset
+    ) internal returns (EscrowAdapter) {
+        _fill(
+            proxy,
+            address(new EscrowAdapter(auction, router)),
+            abi.encodeCall(EscrowAdapter.initialize, (owner, compact, asset))
+        );
+        return EscrowAdapter(payable(proxy));
+    }
+
+    function targetRouter(address bridge, address owner, TargetRouterLinks memory l)
         internal
         returns (IntexAuctionTargetRouter)
     {
-        return targetRouter(bridge, delegate, outbeChainId, address(0x7E57B12D6E));
+        return targetRouterAt(reserve(), bridge, owner, l);
     }
 
-    function targetRouter(address bridge, address delegate, uint32 outbeChainId, address wcoenBridge)
+    function targetRouterAt(address proxy, address bridge, address owner, TargetRouterLinks memory l)
         internal
         returns (IntexAuctionTargetRouter)
     {
-        IntexAuctionTargetRouter impl = new IntexAuctionTargetRouter(bridge, outbeChainId, wcoenBridge);
-        ERC1967Proxy proxy =
-            new ERC1967Proxy(address(impl), abi.encodeCall(IntexAuctionTargetRouter.initialize, (delegate)));
-        return IntexAuctionTargetRouter(payable(address(proxy)));
+        _fill(
+            proxy,
+            address(
+                new IntexAuctionTargetRouter(
+                    bridge, l.outbeChainId, l.wcoenBridge, l.intexAuction, l.intexNFT1155, l.escrow, l.outbeIca
+                )
+            ),
+            abi.encodeCall(IntexAuctionTargetRouter.initialize, (owner))
+        );
+        return IntexAuctionTargetRouter(payable(proxy));
     }
 
-    function intexNFT1155Router(address tokenAddr, address bridge, address delegate)
+    function intexNFT1155Router(address token, address bridge, address owner) internal returns (IntexNFT1155Router) {
+        return intexNFT1155Router(token, bridge, owner, new RemoteRouter[](0));
+    }
+
+    function intexNFT1155Router(address token, address bridge, address owner, RemoteRouter[] memory remoteRouters)
         internal
         returns (IntexNFT1155Router)
     {
-        IntexNFT1155Router impl = new IntexNFT1155Router(tokenAddr, bridge);
-        ERC1967Proxy proxy = new ERC1967Proxy(address(impl), abi.encodeCall(IntexNFT1155Router.initialize, (delegate)));
-        return IntexNFT1155Router(payable(address(proxy)));
+        return intexNFT1155RouterAt(reserve(), token, bridge, owner, remoteRouters);
+    }
+
+    function intexNFT1155RouterAt(
+        address proxy,
+        address token,
+        address bridge,
+        address owner,
+        RemoteRouter[] memory remoteRouters
+    ) internal returns (IntexNFT1155Router) {
+        _fill(
+            proxy,
+            address(new IntexNFT1155Router(token, bridge)),
+            abi.encodeCall(IntexNFT1155Router.initialize, (owner, remoteRouters))
+        );
+        return IntexNFT1155Router(payable(proxy));
+    }
+
+    function _fill(address proxy, address implementation, bytes memory initData) private {
+        UUPSUpgradeable(proxy).upgradeToAndCall(implementation, initData);
     }
 }

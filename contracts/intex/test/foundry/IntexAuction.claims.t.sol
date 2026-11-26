@@ -49,20 +49,13 @@ contract IntexAuctionClaimsTest is Test {
     function setUp() public {
         alice = vm.addr(aliceKey);
         bob = vm.addr(bobKey);
-        intex = DeployProxy.intexNFT1155(admin, relayer);
-        escrow = DeployProxy.escrowAdapter(admin, relayer);
-        auction = DeployProxy.intexAuction(admin, relayer);
+        address auctionAt = DeployProxy.reserve();
+        intex = DeployProxy.intexNFT1155(admin, DeployProxy.NftLinks(relayer, relayer, auctionAt, relayer, relayer));
         MockTheCompact compact = new MockTheCompact();
         compact.setResetPeriodSeconds(0);
         token = new MockWCOEN();
-
-        vm.startPrank(admin);
-        escrow.setDependencies(address(auction), address(compact), address(token));
-        escrow.setProceedsRecipient(makeAddr("proceeds"));
-        auction.setEscrow(address(escrow));
-        auction.setIntexContract(address(intex));
-        intex.grantRole(intex.AUCTION_ROLE(), address(auction));
-        vm.stopPrank();
+        escrow = DeployProxy.escrowAdapter(admin, auctionAt, relayer, address(compact), address(token));
+        auction = DeployProxy.intexAuctionAt(auctionAt, admin, relayer, address(escrow), address(intex));
 
         startTs = block.timestamp;
         vm.prank(relayer);
@@ -281,15 +274,11 @@ contract IntexAuctionClaimsTest is Test {
         auction.revealIntexAuctionBid(DAY, 3, RATE, USD, USD, uint64(block.chainid), aliceSig);
     }
 
-    function test_TheRelayerRoleCannotIssue() public {
+    function test_TheTargetRouterCannotIssue() public {
         _openSeries(0);
-        address router = makeAddr("router");
-        vm.startPrank(admin);
-        intex.grantRole(intex.ROUTER_ROLE(), router);
-        vm.stopPrank();
 
-        vm.prank(router);
-        vm.expectRevert();
+        vm.prank(relayer);
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.UnauthorizedCaller.selector, relayer));
         intex.issueIntex(alice, 1, OpenSeriesLib.seriesId(DAY));
     }
 
@@ -359,19 +348,6 @@ contract IntexAuctionClaimsTest is Test {
         _finalize(_winner(alice), 0, 0);
         auction.redeemWinNote(DAY, alice);
         assertEq(auction.getRevealedIntexAuctionBid(DAY, alice).bidder, address(0), "cleared with the WinNote");
-    }
-
-    function test_TheCollectionStaysWhileAWinIsOpen() public {
-        _bid(3, 1);
-        _finalize(_winner(alice), 0, 0);
-
-        vm.prank(admin);
-        vm.expectRevert(IIntexAuction.EscrowHasLiveLocks.selector);
-        auction.setIntexContract(makeAddr("intex2"));
-
-        vm.prank(admin);
-        auction.setIntexContract(address(intex));
-        assertEq(address(auction.intexContract()), address(intex), "the same collection resets");
     }
 
     function test_ARefundNeedsABid() public {

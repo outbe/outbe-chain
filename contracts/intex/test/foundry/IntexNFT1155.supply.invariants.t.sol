@@ -19,7 +19,7 @@ contract NFT1155SupplyHandler is Test {
     constructor(IntexNFT1155 _intex, bytes14 _seriesId, address[] memory _bidders) {
         intex = _intex;
         seriesId = _seriesId;
-        intexId = _intex.issuedIntexId(_seriesId);
+        intexId = uint256(keccak256(abi.encodePacked(_seriesId)));
         bidders = _bidders;
     }
 
@@ -49,17 +49,17 @@ contract IntexNFT1155SupplyInvariantTest is StdInvariant, Test {
     uint32 internal constant ISSUED_UNITS = 10_000;
 
     function setUp() public {
-        intex = DeployProxy.intexNFT1155(admin, admin);
-        intex.openSeries(OpenSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));
-
         bidders.push(address(0xB1));
         bidders.push(address(0xB2));
         bidders.push(address(0xB3));
 
-        handler = new NFT1155SupplyHandler(intex, SERIES_ID, bidders);
-        // Handler drives issueIntex and crosschainBurn directly, gated by AUCTION_ROLE and BRIDGE_ROLE.
-        intex.grantRole(intex.AUCTION_ROLE(), address(handler));
-        intex.grantRole(intex.BRIDGE_ROLE(), address(handler));
+        address intexAt = DeployProxy.reserve();
+        handler = new NFT1155SupplyHandler(IntexNFT1155(intexAt), SERIES_ID, bidders);
+        // Handler drives issueIntex and crosschainBurn directly, as the auction and the NFT router.
+        intex = DeployProxy.intexNFT1155At(
+            intexAt, admin, DeployProxy.NftLinks(admin, address(handler), address(handler), admin, admin)
+        );
+        intex.openSeries(OpenSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));
 
         bytes4[] memory selectors = new bytes4[](2);
         selectors[0] = NFT1155SupplyHandler.mint.selector;

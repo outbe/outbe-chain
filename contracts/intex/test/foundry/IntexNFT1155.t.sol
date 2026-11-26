@@ -69,7 +69,9 @@ contract IntexNFT1155Test is Test {
     uint32 constant ISSUED_UNITS = 10_000;
 
     function setUp() public {
-        nft = DeployProxy.intexNFT1155(admin, bridger);
+        nft = DeployProxy.intexNFT1155(
+            admin, DeployProxy.NftLinks(bridger, bridger, bridger, address(this), address(this))
+        );
     }
 
     /// @dev Create a series with the standard parameters and a given call period.
@@ -79,9 +81,22 @@ contract IntexNFT1155Test is Test {
     }
 
     function test_InitialState() public view {
-        assertTrue(nft.hasRole(nft.DEFAULT_ADMIN_ROLE(), admin));
-        assertTrue(nft.hasRole(nft.ROUTER_ROLE(), bridger));
-        assertTrue(nft.hasRole(nft.BRIDGE_ROLE(), bridger));
+        assertEq(nft.owner(), admin);
+        assertEq(nft.targetRouter(), bridger);
+        assertEq(nft.intexNFT1155Router(), bridger);
+        assertEq(nft.intexAuction(), bridger);
+        assertEq(nft.intexFactory(), address(this));
+        assertEq(nft.gemFactory(), address(this));
+    }
+
+    function test_Constructor_RejectsZeroLinksButTheFactories() public {
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.ZeroAddress.selector, "targetRouter", address(0)));
+        new IntexNFT1155(address(0), bridger, bridger, address(0), address(0));
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.ZeroAddress.selector, "intexNFT1155Router", address(0)));
+        new IntexNFT1155(bridger, address(0), bridger, address(0), address(0));
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.ZeroAddress.selector, "intexAuction", address(0)));
+        new IntexNFT1155(bridger, bridger, address(0), address(0), address(0));
+        new IntexNFT1155(bridger, bridger, bridger, address(0), address(0));
     }
 
     function test_OpenSeries() public {
@@ -307,54 +322,80 @@ contract IntexNFT1155Test is Test {
         vm.stopPrank();
     }
 
-    function test_RouterRole_CannotBurnOrMint() public {
+    /// @dev Each entry point takes only the contract it belongs to.
+    function test_EachEntryPointTakesOnlyItsLink() public {
         address router = address(0x7001);
-        bytes32 routerRole = nft.ROUTER_ROLE();
-        vm.prank(admin);
-        nft.grantRole(routerRole, router);
-        _openSeries(SERIES_ID_1_DAY, 0);
-        vm.prank(bridger);
-        nft.issueIntex(user, 10, SERIES_ID_1);
-        bytes32 role = nft.BRIDGE_ROLE();
-
-        vm.startPrank(router);
-        vm.expectRevert(abi.encodeWithSignature("AccessControlUnauthorizedAccount(address,bytes32)", router, role));
-        nft.crosschainBurn(user, user, INTEX_ID_1, 1);
-        vm.expectRevert(abi.encodeWithSignature("AccessControlUnauthorizedAccount(address,bytes32)", router, role));
-        nft.crosschainMint(user, INTEX_ID_1, 1);
-        vm.stopPrank();
+        address nftRouter = address(0x7002);
+        address auction = address(0x7003);
+        address intexFactory = address(0x7004);
+        address gemFactory = address(0x7005);
+        IntexNFT1155 split =
+            DeployProxy.intexNFT1155(admin, DeployProxy.NftLinks(router, nftRouter, auction, intexFactory, gemFactory));
+        vm.prank(router);
+        split.openSeries(OpenSeriesLib.params(SERIES_ID_1_DAY, ISSUED_UNITS, 0));
+        vm.prank(auction);
+        split.issueIntex(user, 10, SERIES_ID_1);
+        address[5] memory others = [nftRouter, auction, intexFactory, gemFactory, admin];
+        for (uint256 i; i < others.length; ++i) {
+            vm.startPrank(others[i]);
+            vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.UnauthorizedCaller.selector, others[i]));
+            split.openSeries(OpenSeriesLib.params(SERIES_ID_2_DAY, ISSUED_UNITS, 0));
+            vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.UnauthorizedCaller.selector, others[i]));
+            split.callSeries(SERIES_ID_1, uint64(block.timestamp));
+            vm.stopPrank();
+        }
+        others = [router, auction, intexFactory, gemFactory, admin];
+        for (uint256 i; i < others.length; ++i) {
+            vm.startPrank(others[i]);
+            vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.UnauthorizedCaller.selector, others[i]));
+            split.crosschainBurn(user, user, INTEX_ID_1, 1);
+            vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.UnauthorizedCaller.selector, others[i]));
+            split.crosschainMint(user, INTEX_ID_1, 1);
+            vm.stopPrank();
+        }
+        others = [router, nftRouter, intexFactory, gemFactory, admin];
+        for (uint256 i; i < others.length; ++i) {
+            vm.prank(others[i]);
+            vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.UnauthorizedCaller.selector, others[i]));
+            split.issueIntex(user, 1, SERIES_ID_1);
+        }
+        others = [router, nftRouter, auction, gemFactory, admin];
+        for (uint256 i; i < others.length; ++i) {
+            vm.prank(others[i]);
+            vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.UnauthorizedCaller.selector, others[i]));
+            split.burnIntex(user, SERIES_ID_1, 1);
+        }
+        others = [router, nftRouter, auction, intexFactory, admin];
+        for (uint256 i; i < others.length; ++i) {
+            vm.prank(others[i]);
+            vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.UnauthorizedCaller.selector, others[i]));
+            split.sendIntexToGemFactory(user, SERIES_ID_1, 1, 1);
+        }
     }
 
-    function test_BridgeRole_CannotOpenOrCallASeries() public {
-        address bridge = address(0x7002);
-        bytes32 bridgeRole = nft.BRIDGE_ROLE();
-        vm.prank(admin);
-        nft.grantRole(bridgeRole, bridge);
-        _openSeries(SERIES_ID_1_DAY, 0);
-        bytes32 role = nft.ROUTER_ROLE();
-
-        vm.startPrank(bridge);
-        vm.expectRevert(abi.encodeWithSignature("AccessControlUnauthorizedAccount(address,bytes32)", bridge, role));
-        nft.openSeries(OpenSeriesLib.params(SERIES_ID_2_DAY, ISSUED_UNITS, 0));
-        vm.expectRevert(abi.encodeWithSignature("AccessControlUnauthorizedAccount(address,bytes32)", bridge, role));
-        nft.callSeries(SERIES_ID_1, uint64(block.timestamp));
+    /// @dev Off Outbe nothing burns the settled units or moves them into a Gem Factory position.
+    function test_WithoutTheFactoriesNoOneBurns() public {
+        IntexNFT1155 target =
+            DeployProxy.intexNFT1155(admin, DeployProxy.NftLinks(bridger, bridger, bridger, address(0), address(0)));
+        vm.startPrank(bridger);
+        target.openSeries(OpenSeriesLib.params(SERIES_ID_1_DAY, ISSUED_UNITS, 0));
+        target.issueIntex(user, 10, SERIES_ID_1);
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.UnauthorizedCaller.selector, bridger));
+        target.burnIntex(user, SERIES_ID_1, 1);
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.UnauthorizedCaller.selector, bridger));
+        target.sendIntexToGemFactory(user, SERIES_ID_1, 1, 1);
         vm.stopPrank();
     }
 
     /// @dev A Called series still changes holder across the bridge until its cutoff.
     function test_CrosschainBurn_InCalled_CarriesToAnotherHolder() public {
-        address plainRelayer = address(0x9999);
-        vm.startPrank(admin);
-        nft.grantRole(nft.BRIDGE_ROLE(), plainRelayer);
-        vm.stopPrank();
-
         _openSeries(SERIES_ID_1_DAY, 0);
         vm.startPrank(bridger);
         nft.issueIntex(user, 10, SERIES_ID_1);
         nft.callSeries(SERIES_ID_1, uint32(block.timestamp));
         vm.stopPrank();
 
-        vm.prank(plainRelayer);
+        vm.prank(bridger);
         nft.crosschainBurn(user, user2, INTEX_ID_1, 1);
         assertEq(nft.balanceOf(user, INTEX_ID_1), 9, "burned on the source, bound for another holder");
     }
@@ -691,7 +732,6 @@ contract IntexNFT1155Test is Test {
         _openSeries(SERIES_ID_1_DAY, 0);
         vm.prank(bridger);
         nft.issueIntex(user, 10, SERIES_ID_1);
-        _grantBurnerRole(address(this));
         uint256 gemFactoryPositionId = 0xabc;
 
         vm.expectEmit(true, true, true, true, address(nft));
@@ -704,9 +744,10 @@ contract IntexNFT1155Test is Test {
         assertEq(nft.totalSupply(INTEX_ID_1), 6);
     }
 
-    function test_SendIntexToGemFactory_OnlyBurner() public {
+    function test_SendIntexToGemFactory_OnlyTheGemFactory() public {
         _openSeries(SERIES_ID_1_DAY, 0);
-        vm.expectRevert();
+        vm.prank(bridger);
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.UnauthorizedCaller.selector, bridger));
         nft.sendIntexToGemFactory(user, SERIES_ID_1, 1, 1);
     }
 
@@ -714,7 +755,6 @@ contract IntexNFT1155Test is Test {
         _openSeries(SERIES_ID_1_DAY, 0);
         vm.prank(bridger);
         nft.issueIntex(user, 2, SERIES_ID_1);
-        _grantBurnerRole(address(this));
         vm.recordLogs();
         nft.burnIntex(user, SERIES_ID_1, 1);
         Vm.Log[] memory logs = vm.getRecordedLogs();
@@ -725,20 +765,12 @@ contract IntexNFT1155Test is Test {
 
     // --- burnIntex: the burn of a settlement or a Gem position on Outbe ---
 
-    /// @dev Helper: grant BURNER_ROLE on the deployed Intex contract to `account`.
-    function _grantBurnerRole(address account) internal {
-        bytes32 role = nft.BURNER_ROLE();
-        vm.prank(admin);
-        nft.grantRole(role, account);
-    }
-
     function test_BurnIntex_TransferredUnitsBurnFromTheirNewOwner() public {
         _openSeries(SERIES_ID_1_DAY, 0);
         vm.prank(bridger);
         nft.issueIntex(user, 10, SERIES_ID_1);
         vm.prank(user);
         nft.safeTransferFrom(user, user2, INTEX_ID_1, 4, "");
-        _grantBurnerRole(address(this));
 
         nft.burnIntex(user2, SERIES_ID_1, 3);
 
@@ -753,8 +785,7 @@ contract IntexNFT1155Test is Test {
 
     function test_BurnIntex_RevertsOnZeroHolder() public {
         _openSeries(SERIES_ID_1_DAY, 0);
-        _grantBurnerRole(address(this));
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.ZeroAddress.selector, "owner", address(0)));
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.ZeroAddress.selector, "holder", address(0)));
         nft.burnIntex(address(0), SERIES_ID_1, 1);
     }
 
@@ -764,7 +795,6 @@ contract IntexNFT1155Test is Test {
         nft.openSeries(OpenSeriesLib.params(SERIES_ID_1_DAY, cap, 0));
         nft.issueIntex(user, 10, SERIES_ID_1);
         vm.stopPrank();
-        _grantBurnerRole(address(this));
 
         nft.burnIntex(user, SERIES_ID_1, 4);
 

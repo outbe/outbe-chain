@@ -29,15 +29,10 @@ contract EscrowAdapterReturnableTest is Test {
     uint128 internal constant BASIS = 1000e6;
 
     function setUp() public {
-        escrow = DeployProxy.escrowAdapter(admin, relayer);
         compact = new MockTheCompact();
         token = new MockWCOEN();
         compact.setResetPeriodSeconds(0);
-
-        vm.startPrank(admin);
-        escrow.setDependencies(auction, address(compact), address(token));
-        escrow.setProceedsRecipient(address(0xBEEF));
-        vm.stopPrank();
+        escrow = DeployProxy.escrowAdapter(admin, auction, relayer, address(compact), address(token));
 
         _lock(bidder);
         _lock(other);

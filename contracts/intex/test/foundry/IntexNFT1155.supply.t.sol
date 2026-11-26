@@ -25,10 +25,7 @@ contract IntexNFT1155SupplyTest is Test {
     uint32 constant CALL_PERIOD = uint32(1 days);
 
     function setUp() public {
-        nft = DeployProxy.intexNFT1155(admin, bridger);
-        vm.startPrank(admin);
-        nft.grantRole(nft.BURNER_ROLE(), burner);
-        vm.stopPrank();
+        nft = DeployProxy.intexNFT1155(admin, DeployProxy.NftLinks(bridger, bridger, bridger, burner, burner));
     }
 
     function _openSeries(uint32 issuedUnits) internal {
@@ -135,11 +132,10 @@ contract IntexNFT1155SupplyTest is Test {
         nft.burnIntex(ownerA, SERIES_ID, 1);
     }
 
-    function test_BurnIntex_WithoutTheRole_Reverts() public {
+    function test_BurnIntex_ByAnyoneButIntexFactory_Reverts() public {
         _issue(6, false);
-        bytes32 role = nft.BURNER_ROLE();
         vm.prank(ownerA);
-        vm.expectRevert(abi.encodeWithSignature("AccessControlUnauthorizedAccount(address,bytes32)", ownerA, role));
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.UnauthorizedCaller.selector, ownerA));
         nft.burnIntex(ownerA, SERIES_ID, 1);
     }
 

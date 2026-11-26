@@ -3,7 +3,7 @@ pragma solidity 0.8.30;
 
 import {Test} from "forge-std/Test.sol";
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
-import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {ERC1967Utils} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
@@ -22,9 +22,8 @@ contract IntexNFT1155UupsTest is Test {
         nft = DeployProxy.intexNFT1155(admin, bridger);
     }
 
-    function test_Initialize_GrantsRoles() public view {
-        assertTrue(nft.hasRole(nft.DEFAULT_ADMIN_ROLE(), admin));
-        assertTrue(nft.hasRole(nft.ROUTER_ROLE(), bridger));
+    function test_Initialize_SetsTheOwner() public view {
+        assertEq(nft.owner(), admin);
     }
 
     function test_RevertWhen_InitializeCalledTwice() public {
@@ -33,23 +32,21 @@ contract IntexNFT1155UupsTest is Test {
     }
 
     function test_RevertWhen_ImplementationInitialized() public {
-        IntexNFT1155 impl = new IntexNFT1155();
+        IntexNFT1155 impl = _implementation();
         vm.expectRevert(Initializable.InvalidInitialization.selector);
         impl.initialize(admin);
     }
 
-    function test_RevertWhen_InitializeZeroAdmin() public {
-        IntexNFT1155 impl = new IntexNFT1155();
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.ZeroAddress.selector, "defaultAdmin", address(0)));
+    function test_RevertWhen_InitializeZeroOwner() public {
+        IntexNFT1155 impl = _implementation();
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.ZeroAddress.selector, "owner", address(0)));
         new ERC1967Proxy(address(impl), abi.encodeCall(IntexNFT1155.initialize, (address(0))));
     }
 
-    function test_RevertWhen_UpgradeByNonAdmin() public {
-        IntexNFT1155 newImpl = new IntexNFT1155();
+    function test_RevertWhen_UpgradeByNonOwner() public {
+        IntexNFT1155 newImpl = _implementation();
         vm.prank(stranger);
-        vm.expectRevert(
-            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, stranger, bytes32(0))
-        );
+        vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, stranger));
         nft.upgradeToAndCall(address(newImpl), "");
     }
 
@@ -59,7 +56,7 @@ contract IntexNFT1155UupsTest is Test {
         vm.prank(bridger);
         nft.issueIntex(stranger, 3, OpenSeriesLib.seriesId(7));
 
-        IntexNFT1155 newImpl = new IntexNFT1155();
+        IntexNFT1155 newImpl = _implementation();
         vm.prank(admin);
         nft.upgradeToAndCall(address(newImpl), "");
 
@@ -68,6 +65,11 @@ contract IntexNFT1155UupsTest is Test {
         uint256 intexId = nft.issuedIntexId(OpenSeriesLib.seriesId(7));
         assertEq(nft.balanceOf(stranger, intexId), 3);
         assertEq(nft.totalSupply(intexId), 3);
-        assertTrue(nft.hasRole(nft.ROUTER_ROLE(), bridger));
+        assertEq(nft.targetRouter(), bridger);
+        assertEq(nft.owner(), admin);
+    }
+
+    function _implementation() internal returns (IntexNFT1155) {
+        return new IntexNFT1155(bridger, bridger, bridger, bridger, bridger);
     }
 }

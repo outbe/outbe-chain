@@ -25,13 +25,25 @@ contract CallNoticeClockTest is CrossChainTest {
 
     function setUp() public {
         _setUpBridge();
-        intex = DeployProxy.intexNFT1155(admin, admin);
-        router = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
+        address routerProxy = DeployProxy.reserve();
+        intex = DeployProxy.intexNFT1155(admin, DeployProxy.NftLinks(routerProxy, admin, admin, admin, admin));
+        router = DeployProxy.targetRouterAt(
+            routerProxy,
+            address(bridge),
+            admin,
+            DeployProxy.TargetRouterLinks(
+                OUTBE_CHAIN_ID,
+                DeployProxy.WCOEN_BRIDGE,
+                makeAddr("auction"),
+                address(intex),
+                makeAddr("escrow"),
+                outbeIca
+            )
+        );
         _wireOutbeIca(router, outbeIca);
-        router.setDependencies(makeAddr("auction"), address(intex), makeAddr("escrow"));
-        intex.grantRole(intex.ROUTER_ROLE(), address(router));
         // A real notice period: with zero the window closes the instant the series
         // is called, and the reads below would report the series forfeited.
+        vm.prank(address(router));
         intex.openSeries(OpenSeriesLib.params(EMISSION_DAY, 10_000, 21 days));
     }
 

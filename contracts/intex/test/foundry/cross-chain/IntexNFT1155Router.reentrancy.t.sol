@@ -9,7 +9,8 @@ import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
 import {
     IIntexNFT1155Router,
     BatchSendParam,
-    MultiRecipientSendParam
+    MultiRecipientSendParam,
+    RemoteRouter
 } from "@contracts/shared/interfaces/IIntexNFT1155Router.sol";
 import {IERC1155Receiver} from "@openzeppelin/contracts/token/ERC1155/IERC1155Receiver.sol";
 
@@ -94,14 +95,23 @@ contract IntexNFT1155RouterReentrancyTest is CrossChainTest {
 
         _setUpBridge();
 
-        tokenA = DeployProxy.intexNFT1155(address(this), address(this));
-        tokenB = DeployProxy.intexNFT1155(address(this), address(this));
+        address adapterAProxy = DeployProxy.reserve();
+        tokenA = DeployProxy.intexNFT1155(
+            address(this),
+            DeployProxy.NftLinks(address(this), adapterAProxy, address(this), address(this), address(this))
+        );
+        address adapterBProxy = DeployProxy.reserve();
+        tokenB = DeployProxy.intexNFT1155(
+            address(this),
+            DeployProxy.NftLinks(address(this), adapterBProxy, address(this), address(this), address(this))
+        );
 
-        adapterA = DeployProxy.intexNFT1155Router(address(tokenA), address(bridge), address(this));
-        adapterB = DeployProxy.intexNFT1155Router(address(tokenB), address(bridge), address(this));
-
-        tokenA.grantRole(tokenA.BRIDGE_ROLE(), address(adapterA));
-        tokenB.grantRole(tokenB.BRIDGE_ROLE(), address(adapterB));
+        adapterA = DeployProxy.intexNFT1155RouterAt(
+            adapterAProxy, address(tokenA), address(bridge), address(this), new RemoteRouter[](0)
+        );
+        adapterB = DeployProxy.intexNFT1155RouterAt(
+            adapterBProxy, address(tokenB), address(bridge), address(this), new RemoteRouter[](0)
+        );
 
         adapterA.setRemoteRouter(bChainId, _interop(bChainId, address(adapterB)));
         adapterB.setRemoteRouter(aChainId, _interop(aChainId, address(adapterA)));

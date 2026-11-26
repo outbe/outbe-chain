@@ -4,7 +4,7 @@ pragma solidity 0.8.30;
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 
 import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
-import {IIntexNFT1155Router, BatchSendParam} from "@contracts/shared/interfaces/IIntexNFT1155Router.sol";
+import {IIntexNFT1155Router, BatchSendParam, RemoteRouter} from "@contracts/shared/interfaces/IIntexNFT1155Router.sol";
 
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
@@ -39,10 +39,16 @@ contract DuplicateProtectionTest is CrossChainTest {
         // A genuine send auto-delivers (records lastPayload) so `deliverLast()` can replay it.
         bridge.setAutoDeliver(true);
 
-        intexSrc = DeployProxy.intexNFT1155(admin, admin);
-        intexDst = DeployProxy.intexNFT1155(admin, admin);
-        batchSrc = DeployProxy.intexNFT1155Router(address(intexSrc), address(bridge), admin);
-        batchDst = DeployProxy.intexNFT1155Router(address(intexDst), address(bridge), admin);
+        address batchSrcProxy = DeployProxy.reserve();
+        intexSrc = DeployProxy.intexNFT1155(admin, DeployProxy.NftLinks(admin, batchSrcProxy, admin, admin, admin));
+        address batchDstProxy = DeployProxy.reserve();
+        intexDst = DeployProxy.intexNFT1155(admin, DeployProxy.NftLinks(admin, batchDstProxy, admin, admin, admin));
+        batchSrc = DeployProxy.intexNFT1155RouterAt(
+            batchSrcProxy, address(intexSrc), address(bridge), admin, new RemoteRouter[](0)
+        );
+        batchDst = DeployProxy.intexNFT1155RouterAt(
+            batchDstProxy, address(intexDst), address(bridge), admin, new RemoteRouter[](0)
+        );
 
         // Outbound recipient for the send.
         batchSrc.setRemoteRouter(DST_CHAIN_ID, _interop(DST_CHAIN_ID, address(batchDst)));
@@ -50,12 +56,9 @@ contract DuplicateProtectionTest is CrossChainTest {
         // destination must recognize the source adapter under that chainId.
         batchDst.setRemoteRouter(uint32(block.chainid), _interop(uint32(block.chainid), address(batchSrc)));
 
-        // Series in a bridgeable (Issued) state on both chains, with the adapters granted BRIDGE_ROLE so
-        // crosschainBurn/crosschainMint succeed.
+        // Series in a bridgeable (Issued) state on both chains, so crosschainBurn/crosschainMint succeed.
         _seedSeries(intexSrc);
         _seedSeries(intexDst);
-        intexSrc.grantRole(intexSrc.BRIDGE_ROLE(), address(batchSrc));
-        intexDst.grantRole(intexDst.BRIDGE_ROLE(), address(batchDst));
 
         // Mint on the source so the caller (an EOA that can receive/hold ERC1155) has a balance to bridge.
         intexSrc.issueIntex(sender, 1, SERIES_ID);

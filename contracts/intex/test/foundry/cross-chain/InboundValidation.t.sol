@@ -18,7 +18,7 @@ import {DeployProxy} from "../helpers/DeployProxy.sol";
 ///         advances a lane silently. Instead the router/adapter reverts with a typed error, the
 ///         bridge rolls back, and the transport redelivers. Each case asserts that the exact typed
 ///         revert propagates out of the delivery.
-/// @dev IntexAuctionTargetRouter takes its messages from the Interchain Account of Outbe and the NFT bridge
+/// @dev IntexAuctionTargetRouter takes its messages from the Interchain Account of Outbe and IntexNFT1155Router
 ///      from the loopback bridge as the authenticated peer, so the payload is the only thing under
 ///      test.
 contract InboundValidationTest is CrossChainTest {
@@ -37,20 +37,26 @@ contract InboundValidationTest is CrossChainTest {
     function setUp() public {
         _setUpBridge();
 
-        auction = DeployProxy.intexAuction(admin, admin);
         intex = DeployProxy.intexNFT1155(admin, admin);
+        auction = DeployProxy.intexAuction(admin, admin, admin, address(intex));
 
-        bnbRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
+        bnbRouter = IntexAuctionTargetRouter(payable(DeployProxy.reserve()));
         nftRouterBnb = DeployProxy.intexNFT1155Router(address(intex), address(bridge), admin);
 
         IntexNFT1155 intexOutbe = DeployProxy.intexNFT1155(admin, admin);
         nftRouterOutbe = DeployProxy.intexNFT1155Router(address(intexOutbe), address(bridge), admin);
 
         // Wire the inbound sources so authentication passes and the payload is what fails.
+        DeployProxy.targetRouterAt(
+            address(bnbRouter),
+            address(bridge),
+            admin,
+            DeployProxy.TargetRouterLinks(
+                OUTBE_CHAIN_ID, DeployProxy.WCOEN_BRIDGE, address(auction), address(intex), admin, outbeIca
+            )
+        );
         _wireOutbeIca(bnbRouter, outbeIca);
         nftRouterBnb.setRemoteRouter(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(nftRouterOutbe)));
-
-        bnbRouter.setDependencies(address(auction), address(intex), admin);
     }
 
     // ---------------------------------------------------------------

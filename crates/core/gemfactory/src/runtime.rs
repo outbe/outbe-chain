@@ -242,7 +242,7 @@ pub fn create_gem_factory_position(
     Ok(gem_factory_position_id)
 }
 
-/// Burn `units` of the merchant's Issued Intex into the position (BURNER_ROLE). Reverts on
+/// Burn `units` of the merchant's Issued Intex into the position. Reverts on
 /// zero units or more than the merchant holds.
 fn send_intex_to_gem_factory(
     storage: &StorageHandle<'_>,
@@ -255,7 +255,7 @@ fn send_intex_to_gem_factory(
         INTEX_NFT1155_ADDRESS,
         U256::ZERO,
         IIntexNFT1155::sendIntexToGemFactoryCall {
-            owner,
+            holder: owner,
             seriesId: series_id.into(),
             units,
             gemFactoryPositionId: gem_factory_position_id,

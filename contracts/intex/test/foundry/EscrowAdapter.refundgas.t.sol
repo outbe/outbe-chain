@@ -110,14 +110,11 @@ abstract contract RefundGasBase is CrossChainTest {
     IERC20 internal token;
     address internal admin = address(this);
 
-    function _setUpEscrow() internal {
+    /// @dev `router` charges the winners and takes the proceeds.
+    function _setUpEscrow(address router) internal {
         vm.etch(COMPACT, vm.parseBytes(vm.trim(vm.readFile("../predeploys/the_compact.code.hex"))));
         token = IERC20(address(new MockWCOEN()));
-        escrow = DeployProxy.escrowAdapter(admin, admin);
-        escrow.setDependencies(admin, COMPACT, address(token));
-        escrow.grantRole(escrow.AUCTION_ROLE(), admin);
-        escrow.grantRole(escrow.RELAYER_ROLE(), admin);
-        escrow.setProceedsRecipient(makeAddr("proceeds"));
+        escrow = DeployProxy.escrowAdapter(admin, admin, router, COMPACT, address(token));
     }
 
     function _bidder(uint256 i) internal pure returns (address) {
@@ -158,7 +155,7 @@ abstract contract RefundGasBase is CrossChainTest {
 
 contract RefundFinalizeGasTest is RefundGasBase {
     function setUp() public {
-        _setUpEscrow();
+        _setUpEscrow(admin);
         _lock(0, 64, BID_RATE, 0);
         _elapseCompactResetPeriod();
     }
@@ -188,7 +185,7 @@ contract RefundFinalizeGasTest is RefundGasBase {
 ///      a claim.
 contract RefundFinalizeWholeLockGasTest is RefundGasBase {
     function setUp() public {
-        _setUpEscrow();
+        _setUpEscrow(admin);
         _lock(0, 64, CLEARING_RATE, 0);
         _elapseCompactResetPeriod();
     }
@@ -200,7 +197,7 @@ contract RefundFinalizeWholeLockGasTest is RefundGasBase {
 
 contract RefundClaimUnfinalizedGasTest is RefundGasBase {
     function setUp() public {
-        _setUpEscrow();
+        _setUpEscrow(admin);
         _lock(0, 1, BID_RATE, 0);
         vm.warp(block.timestamp + escrow.UNFINALIZED_RETURN_DELAY());
     }
@@ -215,7 +212,7 @@ contract RefundClaimUnfinalizedGasTest is RefundGasBase {
 /// @dev Bidders 0 and 1 won, and bidder 1 already holds the token. Bidder 2 lost.
 contract RefundClaimFinalizedGasTest is RefundGasBase {
     function setUp() public {
-        _setUpEscrow();
+        _setUpEscrow(admin);
         _lock(0, 1, BID_RATE, 0);
         _lock(1, 1, BID_RATE, 1e18);
         _lock(2, 1, BID_RATE, 0);
@@ -266,18 +263,25 @@ contract RefundDayGasTest is RefundGasBase {
 
     function setUp() public {
         _setUpBridge();
-        _setUpEscrow();
+        address routerProxy = DeployProxy.reserve();
+        _setUpEscrow(routerProxy);
 
-        router = DeployProxy.targetRouter(
-            address(bridge), admin, OUTBE_CHAIN_ID, address(new LocalWcoenTokenBridge(token, new LocalWcoenGateway()))
+        // A real auction: each chunk asks it whether the day failed, and that read is part of the cost.
+        address auction = address(DeployProxy.intexAuction(admin, routerProxy, address(escrow), makeAddr("intex")));
+        router = DeployProxy.targetRouterAt(
+            routerProxy,
+            address(bridge),
+            admin,
+            DeployProxy.TargetRouterLinks({
+                outbeChainId: OUTBE_CHAIN_ID,
+                wcoenBridge: address(new LocalWcoenTokenBridge(token, new LocalWcoenGateway())),
+                intexAuction: auction,
+                intexNFT1155: makeAddr("intex"),
+                escrow: address(escrow),
+                outbeIca: outbeIca
+            })
         );
         _wireOutbeIca(router, outbeIca);
-        // A real auction: each chunk asks it whether the day failed, and that read is part of the cost.
-        router.setDependencies(
-            address(DeployProxy.intexAuction(admin, address(router))), makeAddr("intex"), address(escrow)
-        );
-        escrow.setProceedsRecipient(address(router));
-        escrow.grantRole(escrow.RELAYER_ROLE(), address(router));
         vm.deal(address(router), 1 ether);
 
         _lock(0, BIDDERS, BID_RATE, 0);

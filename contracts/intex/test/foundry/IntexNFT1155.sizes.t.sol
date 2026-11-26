@@ -20,7 +20,7 @@ contract IntexNFT1155SizeTest is Test {
 
     function test_IntexNFT1155_RuntimeSize_WithinEIP170() public {
         // The implementation carries all runtime code. The ERC1967 proxy in front is tiny.
-        IntexNFT1155 nft = new IntexNFT1155();
+        IntexNFT1155 nft = new IntexNFT1155(address(1), address(1), address(1), address(1), address(1));
         uint256 size = address(nft).code.length;
         assertLe(size, EIP170_LIMIT, "IntexNFT1155 runtime bytecode exceeds the EIP-170 limit");
     }
@@ -28,7 +28,7 @@ contract IntexNFT1155SizeTest is Test {
     function test_IntexNFT1155V2Reinit_RuntimeSize_WithinEIP170() public {
         // Tightest inheritor: base contract + a reinitializer migration entrypoint. The test uses
         // `new` (not vm.getDeployedCode) so that the linked IntexMetadata placeholder resolves.
-        IntexNFT1155V2Reinit nft = new IntexNFT1155V2Reinit();
+        IntexNFT1155V2Reinit nft = new IntexNFT1155V2Reinit(address(1), address(1), address(1), address(1), address(1));
         uint256 size = address(nft).code.length;
         assertLe(size, EIP170_LIMIT, "IntexNFT1155V2Reinit runtime bytecode exceeds the EIP-170 limit");
     }

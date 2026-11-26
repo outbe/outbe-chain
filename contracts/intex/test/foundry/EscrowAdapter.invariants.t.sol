@@ -32,14 +32,9 @@ contract EscrowAdapterInvariantsTest is Test {
     uint32 constant CLEARING_RATE = 600_000;
 
     function setUp() public {
-        escrow = DeployProxy.escrowAdapter(admin, bridger);
         compact = new MockTheCompact();
         paymentToken = new MockWCOEN();
-
-        vm.prank(admin);
-        escrow.setDependencies(auction, address(compact), address(paymentToken));
-        vm.prank(admin);
-        escrow.setProceedsRecipient(bridger);
+        escrow = DeployProxy.escrowAdapter(admin, auction, bridger, address(compact), address(paymentToken));
         compact.setResetPeriodSeconds(0);
 
         address[3] memory bidders = [bidderA, bidderB, bidderC];
@@ -141,12 +136,12 @@ contract EscrowAdapterInvariantsTest is Test {
     }
 
     /// @dev Storage slot of the `auctionEscrowState` mapping inside the contract's ERC-7201
-    /// namespaced struct (`erc7201:outbe.intex.EscrowAdapter`). Field offset 6: four address/uint
+    /// namespaced struct (`erc7201:outbe.intex.EscrowAdapter`). Field offset 5: three address/uint
     /// slots, the packed allocatorId+lockTag slot, then the bidLocks mapping precede it.
     function _auctionEscrowStateSlot() internal pure returns (uint256) {
         uint256 base = uint256(
             keccak256(abi.encode(uint256(keccak256("outbe.intex.EscrowAdapter")) - 1)) & ~bytes32(uint256(0xff))
         );
-        return base + 6;
+        return base + 5;
     }
 }

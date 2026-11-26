@@ -66,9 +66,16 @@ contract GasAttributeTest is CrossChainTest {
 
     function setUp() public {
         _setUpBridge();
-        bnb = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
+        bnb = IntexAuctionTargetRouter(payable(DeployProxy.reserve()));
         stub = new GasAttributeBidsStub();
-        bnb.setDependencies(address(stub), makeAddr("intex"), makeAddr("escrow"));
+        DeployProxy.targetRouterAt(
+            address(bnb),
+            address(bridge),
+            admin,
+            DeployProxy.TargetRouterLinks(
+                OUTBE_CHAIN_ID, DeployProxy.WCOEN_BRIDGE, address(stub), makeAddr("intex"), makeAddr("escrow"), outbeIca
+            )
+        );
         _wireOutbeIca(bnb, outbeIca);
         vm.deal(address(bnb), 10 ether);
     }

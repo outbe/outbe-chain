@@ -13,7 +13,8 @@ import {
     IntexIssuanceState,
     FailedIntexAuctionProceedsSend,
     IntexAuctionReturnState,
-    IntexAuctionTargetRouterStorage
+    IntexAuctionTargetRouterStorage,
+    TargetLinks
 } from "../IntexAuctionTargetRouterStorage.sol";
 
 /// @dev Self-call shims the router exposes for per-item isolation. The library calls them on
@@ -51,20 +52,18 @@ library TargetInbound {
     ///      - a schedule the day can no longer honour
     ///      - an unknown day state
     ///      Anything else propagates so the relayer redelivers.
-    function handleIntexAuctionStart(
-        IntexAuctionTargetRouterStorage storage $,
-        uint32 srcChainId,
-        bytes calldata message
-    ) external {
+    function handleIntexAuctionStart(TargetLinks memory links, uint32 srcChainId, bytes calldata message) external {
         (uint32 emissionDay, IIntexAuction.AuctionSchedule memory schedule, IIntexAuction.AuctionParams memory params) =
             BridgeMsgCodec.decodeAuctionParams(message);
 
-        try $.intexAuction.startAuction(emissionDay, schedule, params) {}
+        try links.intexAuction.startAuction(emissionDay, schedule, params) {}
         catch (bytes memory reason) {
             bytes4 selector = _selectorOf(reason);
             uint8 why;
             if (selector == IIntexAuction.AuctionAlreadyExists.selector) {
-                why = _sameAuction($, emissionDay, schedule, params) ? InboundReason.DUPLICATE : InboundReason.CONFLICT;
+                why = _sameAuction(links, emissionDay, schedule, params)
+                    ? InboundReason.DUPLICATE
+                    : InboundReason.CONFLICT;
             } else if (selector == IIntexAuction.AuctionCanceled.selector) {
                 why = InboundReason.CONFLICT;
             } else if (selector == IIntexAuction.InvalidSchedule.selector) {
@@ -87,12 +86,13 @@ library TargetInbound {
     ///      valid, so the relayer redelivers. Only the outbound intexAuctionBidsSendState is caught (parked on failure).
     function handleIntexAuctionClearingStart(
         IntexAuctionTargetRouterStorage storage $,
+        TargetLinks memory links,
         uint32 srcChainId,
         bytes calldata message
     ) external {
         uint32 emissionDay = BridgeMsgCodec.decodeIntexAuctionClearingStart(message);
 
-        try $.intexAuction.startAuctionClearing(emissionDay) {}
+        try links.intexAuction.startAuctionClearing(emissionDay) {}
         catch (bytes memory reason) {
             bytes4 selector = _selectorOf(reason);
             uint8 why;
@@ -147,13 +147,14 @@ library TargetInbound {
     ///      redelivers.
     function handleIntexAuctionResult(
         IntexAuctionTargetRouterStorage storage $,
+        TargetLinks memory links,
         uint32 srcChainId,
         bytes calldata message
     ) external {
         (uint32 emissionDay, BridgeMsgCodec.IntexAuctionChainResult memory r) =
             BridgeMsgCodec.decodeIntexAuctionResult(message);
 
-        try $.intexAuction
+        try links.intexAuction
             .completeAuction(emissionDay, r.wonQuantity, r.wonBidsCount, r.quantity, r.clearingRate, r.totalDemand) {
             $.intexAuctionResultHash[emissionDay] = keccak256(abi.encode(r));
         } catch (bytes memory reason) {
@@ -192,14 +193,10 @@ library TargetInbound {
     ///      - a day that is already canceled (duplicate)
     ///      - a day with a result, or one that failed (obsolete)
     ///      A day this chain has not started is recorded as canceled.
-    function handleIntexAuctionCancel(
-        IntexAuctionTargetRouterStorage storage $,
-        uint32 srcChainId,
-        bytes calldata message
-    ) external {
+    function handleIntexAuctionCancel(TargetLinks memory links, uint32 srcChainId, bytes calldata message) external {
         (uint32 emissionDay, uint8 reason) = BridgeMsgCodec.decodeIntexAuctionCancel(message);
 
-        try $.intexAuction.cancelAuction(emissionDay, reason) {}
+        try links.intexAuction.cancelAuction(emissionDay, reason) {}
         catch (bytes memory err) {
             bytes4 selector = _selectorOf(err);
             uint8 why;
@@ -214,19 +211,19 @@ library TargetInbound {
             return;
         }
 
-        (, bool finalized,) = $.escrow.auctionStatus(emissionDay);
-        if (!finalized) $.escrow.chargeIntexAuctionAsset(emissionDay, new address[](0), 0, 0, 0, 0, true);
+        (, bool finalized,) = links.escrow.auctionStatus(emissionDay);
+        if (!finalized) links.escrow.chargeIntexAuctionAsset(emissionDay, new address[](0), 0, 0, 0, 0, true);
     }
 
     /// @dev Whether the auction this chain holds for `emissionDay` was opened under the START's terms. The reveal
     ///      end is left out: CLEARING snaps it forward, and a START repeated after that is still the same START.
     function _sameAuction(
-        IntexAuctionTargetRouterStorage storage $,
+        TargetLinks memory links,
         uint32 emissionDay,
         IIntexAuction.AuctionSchedule memory schedule,
         IIntexAuction.AuctionParams memory params
     ) private view returns (bool) {
-        IIntexAuction.AuctionData memory a = $.intexAuction.getAuctionInfo(emissionDay);
+        IIntexAuction.AuctionData memory a = links.intexAuction.getAuctionInfo(emissionDay);
         return a.schedule.commitEnd == schedule.commitEnd && a.schedule.issuanceEnd == schedule.issuanceEnd
             && keccak256(abi.encode(a.params)) == keccak256(abi.encode(params));
     }
@@ -241,9 +238,9 @@ library TargetInbound {
     }
 
     /// @dev Whether this chain reads the day as failed. A day it never opened is not.
-    function _failed(IntexAuctionTargetRouterStorage storage $, uint32 emissionDay) private view returns (bool) {
-        if (address($.intexAuction).code.length == 0) return false;
-        try $.intexAuction.auctionStage(emissionDay) returns (IIntexAuction.AuctionStage stage) {
+    function _failed(TargetLinks memory links, uint32 emissionDay) private view returns (bool) {
+        if (address(links.intexAuction).code.length == 0) return false;
+        try links.intexAuction.auctionStage(emissionDay) returns (IIntexAuction.AuctionStage stage) {
             return stage == IIntexAuction.AuctionStage.Failed;
         } catch {
             return false;
@@ -280,9 +277,12 @@ library TargetInbound {
     ///      - a chunk whose header disagrees with the day's run
     ///      - a series whose stored params differ from the chunk's
     ///      The last applied page emits `IntexSeriesAllReceived`.
-    function handleIntexSeries(IntexAuctionTargetRouterStorage storage $, uint32 srcChainId, bytes calldata message)
-        external
-    {
+    function handleIntexSeries(
+        IntexAuctionTargetRouterStorage storage $,
+        TargetLinks memory links,
+        uint32 srcChainId,
+        bytes calldata message
+    ) external {
         (uint32 emissionDay, uint16 pageIndex, uint16 totalPages, BridgeMsgCodec.IntexSeriesPayload[] memory series) =
             BridgeMsgCodec.decodeIntexSeries(message);
 
@@ -309,8 +309,8 @@ library TargetInbound {
                 _ignoreMessage(BridgeMsgCodec.MSG_INTEX_SERIES, emissionDay, InboundReason.INVALID);
                 return;
             }
-            known[s] = $.intexContract.seriesExists(series[s].seriesId);
-            bool conflict = known[s] && !_sameSeries($, series[s]);
+            known[s] = links.intexContract.seriesExists(series[s].seriesId);
+            bool conflict = known[s] && !_sameSeries(links, series[s]);
             for (uint256 j = 0; !conflict && j < s; j++) {
                 if (series[j].seriesId != series[s].seriesId) continue;
                 conflict = !_samePayloadParams(series[j], series[s]);
@@ -327,7 +327,7 @@ library TargetInbound {
         $.intexSeriesPagesApplied[emissionDay] |= bit;
 
         for (uint256 s = 0; s < series.length; s++) {
-            _applyIssuance($, srcChainId, series[s], known[s]);
+            _applyIssuance($, links, srcChainId, series[s], known[s]);
         }
 
         if (seen == totalPages) {
@@ -338,13 +338,14 @@ library TargetInbound {
     /// @dev Create the series if this chain has not seen it.
     function _applyIssuance(
         IntexAuctionTargetRouterStorage storage $,
+        TargetLinks memory links,
         uint32 srcChainId,
         BridgeMsgCodec.IntexSeriesPayload memory payload,
         bool seriesKnown
     ) private {
         // Create-if-absent: any of a day's chunks may be the first to name a series.
         if (!seriesKnown) {
-            $.intexContract
+            links.intexContract
                 .openSeries(
                     IIntexNFT1155.OpenSeriesParams({
                         seriesId: payload.seriesId,
@@ -383,12 +384,12 @@ library TargetInbound {
     }
 
     /// @dev Whether the series this chain holds was created under exactly the chunk's terms.
-    function _sameSeries(IntexAuctionTargetRouterStorage storage $, BridgeMsgCodec.IntexSeriesPayload memory payload)
+    function _sameSeries(TargetLinks memory links, BridgeMsgCodec.IntexSeriesPayload memory payload)
         private
         view
         returns (bool)
     {
-        IIntexNFT1155.SeriesData memory d = $.intexContract.getIntexSeries(payload.seriesId);
+        IIntexNFT1155.SeriesData memory d = links.intexContract.getIntexSeries(payload.seriesId);
         return d.emissionDay == payload.emissionDay && d.issuanceCurrency == payload.issuanceCurrency
             && d.referenceCurrency == payload.referenceCurrency && d.issuedUnits == payload.issuedUnits
             && d.promisLoadMinor == payload.promisLoadMinor && d.entryPriceMinor == payload.entryPriceMinor
@@ -408,6 +409,7 @@ library TargetInbound {
     ///      Bidders it would have settled recover through the auction's `returnIntexAuctionAsset` path.
     function handleIntexAuctionWinners(
         IntexAuctionTargetRouterStorage storage $,
+        TargetLinks memory links,
         uint32 srcChainId,
         bytes calldata message
     ) external {
@@ -434,8 +436,8 @@ library TargetInbound {
             _ignoreMessage(BridgeMsgCodec.MSG_INTEX_AUCTION_WINNERS, emissionDay, InboundReason.CONFLICT);
             return;
         }
-        (, bool finalized,) = $.escrow.auctionStatus(emissionDay);
-        if (finalized || _failed($, emissionDay)) {
+        (, bool finalized,) = links.escrow.auctionStatus(emissionDay);
+        if (finalized || _failed(links, emissionDay)) {
             _ignoreMessage(BridgeMsgCodec.MSG_INTEX_AUCTION_WINNERS, emissionDay, InboundReason.OBSOLETE);
             return;
         }
@@ -446,7 +448,7 @@ library TargetInbound {
         // `>=` rather than `==`: an overshoot would otherwise never close the day in the escrow.
         bool completesDay = seen >= totalPages;
 
-        uint128 totalPaid = $.escrow
+        uint128 totalPaid = links.escrow
             .chargeIntexAuctionAsset(emissionDay, winners, partialIndex, partialWon, clearingRate, basis, completesDay);
         $.intexAuctionReturnState[emissionDay] = IntexAuctionReturnState({totalPages: totalPages, pagesSeen: seen});
         // Each chunk sends its own payments, so a chunk that never lands holds back no other.
@@ -465,6 +467,7 @@ library TargetInbound {
     ///      slot reads zero as empty.
     function handleIntexSeriesCallNotice(
         IntexAuctionTargetRouterStorage storage $,
+        TargetLinks memory links,
         uint32 srcChainId,
         bytes calldata message
     ) external {
@@ -475,7 +478,7 @@ library TargetInbound {
             return;
         }
         for (uint256 i = 0; i < seriesIds.length; ++i) {
-            _applyIntexSeriesCallNotice($, srcChainId, seriesIds[i], calledAt);
+            _applyIntexSeriesCallNotice($, links, srcChainId, seriesIds[i], calledAt);
         }
     }
 
@@ -483,11 +486,12 @@ library TargetInbound {
     ///      other failure slots it for `retryIntexSeriesCallNoticeApply`.
     function _applyIntexSeriesCallNotice(
         IntexAuctionTargetRouterStorage storage $,
+        TargetLinks memory links,
         uint32 srcChainId,
         bytes14 seriesId,
         uint64 calledAt
     ) private {
-        if (!$.intexContract.seriesExists(seriesId)) {
+        if (!links.intexContract.seriesExists(seriesId)) {
             _slotIntexSeriesCallNotice($, srcChainId, seriesId, calledAt, "");
             return;
         }

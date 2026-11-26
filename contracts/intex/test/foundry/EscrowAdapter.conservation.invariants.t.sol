@@ -102,14 +102,9 @@ contract EscrowAdapterConservationInvariantTest is StdInvariant, Test {
     address[] internal bidders;
 
     function setUp() public {
-        escrow = DeployProxy.escrowAdapter(admin, bridger);
         compact = new MockTheCompact();
         paymentToken = new MockWCOEN();
-
-        vm.prank(admin);
-        escrow.setDependencies(auction, address(compact), address(paymentToken));
-        vm.prank(admin);
-        escrow.setProceedsRecipient(bridger);
+        escrow = DeployProxy.escrowAdapter(admin, auction, bridger, address(compact), address(paymentToken));
         compact.setResetPeriodSeconds(0);
 
         bidders.push(address(0xB1));

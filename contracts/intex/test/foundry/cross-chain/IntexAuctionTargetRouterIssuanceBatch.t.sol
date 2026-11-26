@@ -19,12 +19,24 @@ contract IntexAuctionTargetRouterIssuanceBatchTest is CrossChainTest {
 
     function setUp() public {
         _setUpBridge();
-        intex = DeployProxy.intexNFT1155(address(this), address(this));
-        router = DeployProxy.targetRouter(address(bridge), address(this), OUTBE_CHAIN_ID);
-
+        address routerProxy = DeployProxy.reserve();
+        intex = DeployProxy.intexNFT1155(
+            address(this), DeployProxy.NftLinks(routerProxy, address(this), address(this), address(this), address(this))
+        );
+        router = DeployProxy.targetRouterAt(
+            routerProxy,
+            address(bridge),
+            address(this),
+            DeployProxy.TargetRouterLinks(
+                OUTBE_CHAIN_ID,
+                DeployProxy.WCOEN_BRIDGE,
+                makeAddr("auction"),
+                address(intex),
+                makeAddr("escrow"),
+                outbeIca
+            )
+        );
         _wireOutbeIca(router, outbeIca);
-        router.setDependencies(makeAddr("auction"), address(intex), makeAddr("escrow"));
-        intex.grantRole(intex.ROUTER_ROLE(), address(router));
     }
 
     function _series(bytes14 seriesId) internal view returns (BridgeMsgCodec.IntexSeriesPayload memory payload) {

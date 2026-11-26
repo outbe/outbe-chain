@@ -22,12 +22,8 @@ contract IntexAuctionScheduleSnapTest is Test {
     uint32 constant ISSUANCE_OFFSET = 300;
 
     function setUp() public {
-        auction = DeployProxy.intexAuction(admin, bridger);
         escrow = new MockAuctionEscrow();
-        vm.startPrank(admin);
-        auction.grantRole(auction.RELAYER_ROLE(), bridger);
-        auction.setEscrow(address(escrow));
-        vm.stopPrank();
+        auction = DeployProxy.intexAuction(admin, bridger, address(escrow), address(0x1E7E));
     }
 
     function _start(uint32 emissionDay) internal {

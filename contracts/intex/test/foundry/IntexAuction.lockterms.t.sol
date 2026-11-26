@@ -17,10 +17,6 @@ contract RecordingLockEscrow {
         bidRate = bidRate_;
         quantity = quantity_;
     }
-
-    function hasOutstandingLocks() external pure returns (bool) {
-        return false;
-    }
 }
 
 /// @dev The reveal hands the escrow the terms the lock was computed from, not just the amount.
@@ -42,12 +38,8 @@ contract IntexAuctionLockTermsTest is Test {
 
     function setUp() public {
         bidder = vm.addr(bidderKey);
-        auction = DeployProxy.intexAuction(admin, relayer);
         escrow = new RecordingLockEscrow();
-        vm.startPrank(admin);
-        auction.grantRole(auction.RELAYER_ROLE(), relayer);
-        auction.setEscrow(address(escrow));
-        vm.stopPrank();
+        auction = DeployProxy.intexAuction(admin, relayer, address(escrow), address(0x1E7E));
     }
 
     function _signature() internal view returns (bytes memory) {

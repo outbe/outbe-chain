@@ -47,13 +47,8 @@ contract IntexAuctionFuzzTest is Test {
         iba1 = vm.addr(iba1Pk);
         iba2 = vm.addr(iba2Pk);
 
-        auction = DeployProxy.intexAuction(admin, bridger);
         escrow = new MockAuctionEscrow();
-
-        vm.startPrank(admin);
-        auction.grantRole(auction.RELAYER_ROLE(), bridger);
-        auction.setEscrow(address(escrow));
-        vm.stopPrank();
+        auction = DeployProxy.intexAuction(admin, bridger, address(escrow), address(0x1E7E));
     }
 
     function test_Fuzz_RevealBid_RejectsRateAboveMax(uint256 qSeed, uint256 rSeed) public {

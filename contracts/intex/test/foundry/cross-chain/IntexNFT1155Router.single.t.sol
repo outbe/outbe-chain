@@ -8,7 +8,7 @@ import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {OpenSeriesLib} from "../helpers/OpenSeriesLib.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
-import {IIntexNFT1155Router, SendParam} from "@contracts/shared/interfaces/IIntexNFT1155Router.sol";
+import {IIntexNFT1155Router, SendParam, RemoteRouter} from "@contracts/shared/interfaces/IIntexNFT1155Router.sol";
 import {ERC7786Sender} from "@contracts/shared/ERC7786Sender.sol";
 
 /// @title IntexNFT1155RouterSingleTest
@@ -43,15 +43,17 @@ contract IntexNFT1155RouterSingleTest is CrossChainTest {
         bridge.setFee(FEE);
 
         // Deploy IntexNFT1155 tokens on both chains
-        tokenA = DeployProxy.intexNFT1155(admin, admin);
-        tokenB = DeployProxy.intexNFT1155(admin, admin);
+        address adapterAProxy = DeployProxy.reserve();
+        tokenA = DeployProxy.intexNFT1155(admin, DeployProxy.NftLinks(admin, adapterAProxy, admin, admin, admin));
+        address adapterBProxy = DeployProxy.reserve();
+        tokenB = DeployProxy.intexNFT1155(admin, DeployProxy.NftLinks(admin, adapterBProxy, admin, admin, admin));
 
-        adapterA = DeployProxy.intexNFT1155Router(address(tokenA), address(bridge), admin);
-        adapterB = DeployProxy.intexNFT1155Router(address(tokenB), address(bridge), admin);
-
-        // Grant BRIDGE_ROLE to adapters
-        tokenA.grantRole(tokenA.BRIDGE_ROLE(), address(adapterA));
-        tokenB.grantRole(tokenB.BRIDGE_ROLE(), address(adapterB));
+        adapterA = DeployProxy.intexNFT1155RouterAt(
+            adapterAProxy, address(tokenA), address(bridge), admin, new RemoteRouter[](0)
+        );
+        adapterB = DeployProxy.intexNFT1155RouterAt(
+            adapterBProxy, address(tokenB), address(bridge), admin, new RemoteRouter[](0)
+        );
 
         // Wire adapters (register each as the other's remote router)
         adapterA.setRemoteRouter(B_CHAIN_ID, _interop(B_CHAIN_ID, address(adapterB)));
@@ -75,7 +77,7 @@ contract IntexNFT1155RouterSingleTest is CrossChainTest {
     }
 
     function test_constructor() public view {
-        assertTrue(adapterA.hasRole(adapterA.DEFAULT_ADMIN_ROLE(), admin));
+        assertEq(adapterA.owner(), admin);
         assertEq(address(adapterA.token()), address(tokenA));
         assertEq(address(adapterA.BRIDGE()), address(bridge));
     }

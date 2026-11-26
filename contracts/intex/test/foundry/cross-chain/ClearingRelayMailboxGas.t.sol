@@ -187,11 +187,15 @@ abstract contract RelayGasBase is Test {
     }
 
     function _wireRouter(address bridge) internal {
-        router = DeployProxy.targetRouter(bridge, admin, DST_CHAIN_ID);
-        router.grantRole(router.OUTBE_ICA_ROLE(), outbeIca);
         stub = new StoredBidStub();
         stub.seed(SEEDED_BIDS);
-        router.setDependencies(address(stub), makeAddr("intex"), makeAddr("escrow"));
+        router = DeployProxy.targetRouter(
+            bridge,
+            admin,
+            DeployProxy.TargetRouterLinks(
+                DST_CHAIN_ID, DeployProxy.WCOEN_BRIDGE, address(stub), makeAddr("intex"), makeAddr("escrow"), outbeIca
+            )
+        );
         vm.deal(address(router), 100 ether);
     }
 

@@ -99,25 +99,23 @@ contract LocalLoopbackTest is Test {
 
         wcoen = new MockWCOEN();
         tokenBridge = new LocalTokenBridge(IERC20(address(wcoen)));
-        intex = DeployProxy.intexNFT1155(address(this), address(this));
-        auction = DeployProxy.intexAuction(address(this), address(this));
-        target = DeployProxy.targetRouter(address(bridge), address(this), local, address(tokenBridge));
-        target.grantRole(target.OUTBE_ICA_ROLE(), outbeIca);
-
-        escrow = DeployProxy.escrowAdapter(address(this), address(this));
+        address targetProxy = DeployProxy.reserve();
+        address auctionProxy = DeployProxy.reserve();
+        intex = DeployProxy.intexNFT1155(
+            address(this), DeployProxy.NftLinks(targetProxy, address(this), auctionProxy, address(this), address(this))
+        );
         compact = new MockTheCompact();
-        escrow.setDependencies(address(auction), address(compact), address(wcoen));
-        escrow.setProceedsRecipient(address(target));
+        escrow = DeployProxy.escrowAdapter(address(this), auctionProxy, targetProxy, address(compact), address(wcoen));
         compact.setResetPeriodSeconds(0);
-
-        target.setDependencies(address(auction), address(intex), address(escrow));
-
-        auction.setEscrow(address(escrow));
-        auction.setIntexContract(address(intex));
-        intex.grantRole(intex.AUCTION_ROLE(), address(auction));
-        auction.grantRole(auction.RELAYER_ROLE(), address(target));
-        intex.grantRole(intex.ROUTER_ROLE(), address(target));
-        escrow.grantRole(escrow.RELAYER_ROLE(), address(target));
+        auction = DeployProxy.intexAuctionAt(auctionProxy, address(this), targetProxy, address(escrow), address(intex));
+        target = DeployProxy.targetRouterAt(
+            targetProxy,
+            address(bridge),
+            address(this),
+            DeployProxy.TargetRouterLinks(
+                local, address(tokenBridge), address(auction), address(intex), address(escrow), outbeIca
+            )
+        );
 
         wcoen.mint(iba1, INITIAL_WCOEN_BALANCE);
         wcoen.mint(iba2, INITIAL_WCOEN_BALANCE);

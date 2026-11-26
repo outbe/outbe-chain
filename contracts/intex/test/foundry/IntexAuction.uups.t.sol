@@ -4,7 +4,7 @@ pragma solidity 0.8.30;
 import {ReferenceCurrencyPriceLib} from "./helpers/ReferenceCurrencyPriceLib.sol";
 import {Test} from "forge-std/Test.sol";
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
-import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {ERC1967Utils} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
@@ -19,8 +19,11 @@ contract IntexAuctionUupsTest is Test {
 
     IntexAuction internal auction;
 
+    address internal escrow = makeAddr("escrow");
+    address internal intex = makeAddr("intex");
+
     function setUp() public {
-        auction = DeployProxy.intexAuction(admin, bridger);
+        auction = DeployProxy.intexAuction(admin, bridger, escrow, intex);
     }
 
     function _startAuction(uint32 emissionDay) internal {
@@ -41,9 +44,8 @@ contract IntexAuctionUupsTest is Test {
         auction.startAuction(emissionDay, schedule, params);
     }
 
-    function test_Initialize_GrantsRoles() public view {
-        assertTrue(auction.hasRole(auction.DEFAULT_ADMIN_ROLE(), admin));
-        assertTrue(auction.hasRole(auction.RELAYER_ROLE(), bridger));
+    function test_Initialize_SetsTheOwner() public view {
+        assertEq(auction.owner(), admin);
     }
 
     function test_RevertWhen_InitializeCalledTwice() public {
@@ -52,23 +54,21 @@ contract IntexAuctionUupsTest is Test {
     }
 
     function test_RevertWhen_ImplementationInitialized() public {
-        IntexAuction impl = new IntexAuction();
+        IntexAuction impl = new IntexAuction(bridger, escrow, intex);
         vm.expectRevert(Initializable.InvalidInitialization.selector);
         impl.initialize(admin);
     }
 
-    function test_RevertWhen_InitializeZeroAdmin() public {
-        IntexAuction impl = new IntexAuction();
-        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroAddress.selector, "defaultAdmin"));
+    function test_RevertWhen_InitializeZeroOwner() public {
+        IntexAuction impl = new IntexAuction(bridger, escrow, intex);
+        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroAddress.selector, "owner"));
         new ERC1967Proxy(address(impl), abi.encodeCall(IntexAuction.initialize, (address(0))));
     }
 
-    function test_RevertWhen_UpgradeByNonAdmin() public {
-        IntexAuction newImpl = new IntexAuction();
+    function test_RevertWhen_UpgradeByNonOwner() public {
+        IntexAuction newImpl = new IntexAuction(bridger, escrow, intex);
         vm.prank(stranger);
-        vm.expectRevert(
-            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, stranger, bytes32(0))
-        );
+        vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, stranger));
         auction.upgradeToAndCall(address(newImpl), "");
     }
 
@@ -76,18 +76,17 @@ contract IntexAuctionUupsTest is Test {
         _startAuction(20260612);
         vm.prank(bidder);
         auction.commitIntexAuctionBid(20260612, keccak256("commit"));
-        vm.prank(admin);
-        auction.setEscrow(makeAddr("escrow"));
 
-        IntexAuction newImpl = new IntexAuction();
+        IntexAuction newImpl = new IntexAuction(bridger, escrow, intex);
         vm.prank(admin);
         auction.upgradeToAndCall(address(newImpl), "");
 
         bytes32 implSlot = vm.load(address(auction), ERC1967Utils.IMPLEMENTATION_SLOT);
         assertEq(address(uint160(uint256(implSlot))), address(newImpl));
         assertEq(auction.committedIntexAuctionBidsByHash(20260612, bidder), keccak256("commit"));
-        assertEq(address(auction.escrow()), makeAddr("escrow"));
+        assertEq(address(auction.escrow()), escrow);
         assertEq(uint8(auction.auctionStage(20260612)), uint8(IIntexAuction.AuctionStage.CommittingBids));
-        assertTrue(auction.hasRole(auction.RELAYER_ROLE(), bridger));
+        assertEq(auction.targetRouter(), bridger);
+        assertEq(auction.owner(), admin);
     }
 }

@@ -4,7 +4,7 @@ pragma solidity 0.8.30;
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 
 import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
-import {IIntexNFT1155Router} from "@contracts/shared/interfaces/IIntexNFT1155Router.sol";
+import {IIntexNFT1155Router, RemoteRouter} from "@contracts/shared/interfaces/IIntexNFT1155Router.sol";
 import {IntexNFT1155RouterCodec} from "@contracts/shared/libs/IntexNFT1155RouterCodec.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
@@ -38,8 +38,11 @@ contract InboundFailureIsolationTest is CrossChainTest {
     function setUp() public {
         _setUpBridge();
 
-        intex = DeployProxy.intexNFT1155(admin, admin);
-        nftRouterBnb = DeployProxy.intexNFT1155Router(address(intex), address(bridge), admin);
+        address nftRouterBnbProxy = DeployProxy.reserve();
+        intex = DeployProxy.intexNFT1155(admin, DeployProxy.NftLinks(admin, nftRouterBnbProxy, admin, admin, admin));
+        nftRouterBnb = DeployProxy.intexNFT1155RouterAt(
+            nftRouterBnbProxy, address(intex), address(bridge), admin, new RemoteRouter[](0)
+        );
         nftRouterOutbe = DeployProxy.intexNFT1155Router(address(intex), address(bridge), admin);
 
         nftRouterBnb.setRemoteRouter(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(nftRouterOutbe)));
@@ -48,8 +51,6 @@ contract InboundFailureIsolationTest is CrossChainTest {
         // Two series: one Issued (crosschainMint succeeds), one not (crosschainMint reverts on state check).
         intex.openSeries(OpenSeriesLib.params(SERIES_GOOD_DAY, 10_000, 0));
         // SERIES_BAD intentionally not created - `intex.crosschainMint` will revert on lookup.
-
-        intex.grantRole(intex.BRIDGE_ROLE(), address(nftRouterBnb));
     }
 
     /// @dev Deliver `message` from the OUTBE peer to the BNB adapter through the bridge.

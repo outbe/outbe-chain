@@ -6,7 +6,7 @@ import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
-import {SendParam, MultiRecipientSendParam} from "@contracts/shared/interfaces/IIntexNFT1155Router.sol";
+import {SendParam, MultiRecipientSendParam, RemoteRouter} from "@contracts/shared/interfaces/IIntexNFT1155Router.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {OpenSeriesLib} from "../helpers/OpenSeriesLib.sol";
 
@@ -26,11 +26,11 @@ contract CalledSeriesTransfersTest is CrossChainTest {
 
     function setUp() public {
         _setUpBridge();
-        intex = DeployProxy.intexNFT1155(admin, admin);
-        nftRouter = DeployProxy.intexNFT1155Router(address(intex), address(bridge), admin);
-        nftRouter.setRemoteRouter(DST_CHAIN_ID, _interop(DST_CHAIN_ID, address(0xD57)));
-
-        intex.grantRole(intex.BRIDGE_ROLE(), address(nftRouter));
+        address nftRouterProxy = DeployProxy.reserve();
+        intex = DeployProxy.intexNFT1155(admin, DeployProxy.NftLinks(admin, nftRouterProxy, admin, admin, admin));
+        RemoteRouter[] memory remotes = new RemoteRouter[](1);
+        remotes[0] = RemoteRouter(DST_CHAIN_ID, _interop(DST_CHAIN_ID, address(0xD57)));
+        nftRouter = DeployProxy.intexNFT1155RouterAt(nftRouterProxy, address(intex), address(bridge), admin, remotes);
 
         intex.openSeries(OpenSeriesLib.params(EMISSION_DAY, 10_000, 1 days));
         intex.issueIntex(owner, 10, SERIES_ID);

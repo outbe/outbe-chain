@@ -117,8 +117,13 @@ contract IntexAuctionTargetRouterProceedsTest is CrossChainTest {
     }
 
     function _targetOn(uint32 outbeChainId, address erc20Router) internal returns (IntexAuctionTargetRouter router) {
-        router = DeployProxy.targetRouter(address(bridge), address(this), outbeChainId, erc20Router);
-        router.setDependencies(makeAddr("auction"), makeAddr("intex"), address(escrow));
+        router = DeployProxy.targetRouter(
+            address(bridge),
+            address(this),
+            DeployProxy.TargetRouterLinks(
+                outbeChainId, erc20Router, makeAddr("auction"), makeAddr("intex"), address(escrow), outbeIca
+            )
+        );
         _wireOutbeIca(router, outbeIca);
     }
 
@@ -142,7 +147,15 @@ contract IntexAuctionTargetRouterProceedsTest is CrossChainTest {
 
     function test_RevertWhen_Erc20RouterZero() public {
         vm.expectRevert(abi.encodeWithSelector(IIntexAuctionTargetRouter.ZeroAddress.selector, "erc20Router"));
-        new IntexAuctionTargetRouter(address(bridge), OUTBE_CHAIN_ID, address(0));
+        new IntexAuctionTargetRouter(
+            address(bridge),
+            OUTBE_CHAIN_ID,
+            address(0),
+            makeAddr("auction"),
+            makeAddr("intex"),
+            address(escrow),
+            outbeIca
+        );
     }
 
     function test_proceeds_of_a_page_carry_the_page_index() public {

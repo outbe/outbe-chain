@@ -35,10 +35,10 @@ abstract contract CrossChainTest is Test {
         }
     }
 
-    /// @dev Grant `ica` the `OUTBE_ICA_ROLE` of `router` and route its {_deliver} calls through
-    ///      `receiveFromOutbe`. The caller must hold the router's admin role.
+    /// @dev Route the {_deliver} calls to `router` through `receiveFromOutbe`, sent by `ica`, the
+    ///      Interchain Account of Outbe the router was deployed with.
     function _wireOutbeIca(IntexAuctionTargetRouter router, address ica) internal {
-        router.grantRole(router.OUTBE_ICA_ROLE(), ica);
+        assertEq(router.outbeIca(), ica, "the router takes the messages of this account");
         _viaOutbeIca[address(router)] = true;
     }
 

@@ -57,28 +57,28 @@ contract IntexAuctionTargetRouterInboundHandlersTest is CrossChainTest {
     function setUp() public {
         _setUpBridge();
 
-        intex = DeployProxy.intexNFT1155(admin, admin);
-        auction = DeployProxy.intexAuction(admin, admin);
-
-        bnbRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
+        // The router drives the auction lifecycle, creates IntexNFT1155 series and finalizes the
+        // escrow. Each downstream contract takes those calls only from the router it was built with.
+        address routerProxy = DeployProxy.reserve();
+        intex = DeployProxy.intexNFT1155(admin, DeployProxy.NftLinks(routerProxy, admin, admin, admin, admin));
         nftRouter = DeployProxy.intexNFT1155Router(address(intex), address(bridge), admin);
 
-        escrow = DeployProxy.escrowAdapter(admin, admin);
         compact = new MockTheCompact();
         paymentToken = new MockWCOEN();
-        escrow.setDependencies(admin, address(compact), address(paymentToken));
+        // The test locks the bids itself, so it is the auction of the escrow.
+        escrow = DeployProxy.escrowAdapter(admin, admin, routerProxy, address(compact), address(paymentToken));
         compact.setResetPeriodSeconds(0);
+        auction = DeployProxy.intexAuction(admin, routerProxy, address(escrow), address(intex));
 
+        bnbRouter = DeployProxy.targetRouterAt(
+            routerProxy,
+            address(bridge),
+            admin,
+            DeployProxy.TargetRouterLinks(
+                OUTBE_CHAIN_ID, DeployProxy.WCOEN_BRIDGE, address(auction), address(intex), address(escrow), outbeIca
+            )
+        );
         _wireOutbeIca(bnbRouter, outbeIca);
-
-        bnbRouter.setDependencies(address(auction), address(intex), address(escrow));
-
-        // The router drives auction lifecycle (RELAYER_ROLE), creates IntexNFT1155 series
-        // (ROUTER_ROLE), and finalizes escrow (RELAYER_ROLE). Each downstream contract gates
-        // mutations on its own role which only the wired router should hold.
-        auction.grantRole(auction.RELAYER_ROLE(), address(bnbRouter));
-        intex.grantRole(intex.ROUTER_ROLE(), address(bnbRouter));
-        escrow.grantRole(escrow.RELAYER_ROLE(), address(bnbRouter));
 
         // Bidder funds + approve so EscrowAdapter.lockIntexAuctionAsset works in the REFUND_INSTRUCTIONS test.
         paymentToken.mint(bidder, 10_000e6);
@@ -129,24 +129,13 @@ contract IntexAuctionTargetRouterInboundHandlersTest is CrossChainTest {
 
     // --- _handleCallNotice: the call notice is a pure state flip and never touches balances ---
     function test_handleCallNotice_leavesBalancesUntouched() public {
-        uint32 local = uint32(block.chainid);
-        IntexAuctionTargetRouter localRouter = DeployProxy.targetRouter(address(bridge), admin, local);
-        address localIca = makeAddr("localIca");
-        _wireOutbeIca(localRouter, localIca);
-        localRouter.setDependencies(address(auction), address(intex), address(escrow));
-        intex.grantRole(intex.ROUTER_ROLE(), address(localRouter));
-
-        _deliver(local, localIca, address(localRouter), _issuancePacket());
-        intex.grantRole(intex.AUCTION_ROLE(), admin);
+        _deliver(_issuancePacket());
         intex.issueIntex(bidder, 5, SERIES_ID);
 
         uint256 intexId = intex.issuedIntexId(SERIES_ID);
         assertEq(intex.balanceOf(bidder, intexId), 5);
 
         _deliver(
-            local,
-            localIca,
-            address(localRouter),
             BridgeMsgCodec.encodeIntexSeriesCallNotice(
                 EMISSION_DAY, uint32(block.timestamp), CallNoticeBatchLib.one(SERIES_ID)
             )
@@ -212,32 +201,13 @@ contract IntexAuctionTargetRouterInboundHandlersTest is CrossChainTest {
         );
     }
 
-    /// @dev A day in flight finalizes on the escrow that took its locks, so the venue stays put.
-    function test_wire_keepsTheVenueWhileTheEscrowHoldsLocks() public {
-        paymentToken.mint(bidder, 1e18);
-        vm.prank(admin);
-        escrow.lockIntexAuctionAsset(EMISSION_DAY, bidder, 1e6, 1_000_000, 1);
-
-        vm.expectRevert(IIntexAuctionTargetRouter.EscrowHasLiveLocks.selector);
-        bnbRouter.setDependencies(address(auction), address(intex), makeAddr("escrow2"));
-        vm.expectRevert(IIntexAuctionTargetRouter.EscrowHasLiveLocks.selector);
-        bnbRouter.setDependencies(makeAddr("auction2"), address(intex), address(escrow));
-        vm.expectRevert(IIntexAuctionTargetRouter.EscrowHasLiveLocks.selector);
-        bnbRouter.setDependencies(address(auction), makeAddr("intex2"), address(escrow));
-
-        bnbRouter.setDependencies(address(auction), address(intex), address(escrow));
-    }
-
     // --- _handleRefundInstructions: forwarded to EscrowAdapter.chargeIntexAuctionAsset ---
     // The winner's lock flips to Won.
     function test_handleRefundInstructions_finalizesEscrow() public {
         // Lock funds for the bidder so chargeIntexAuctionAsset's per-winner branch can land.
         paymentToken.mint(bidder, 1e18);
-        vm.startPrank(admin);
-        escrow.grantRole(escrow.AUCTION_ROLE(), admin);
-        escrow.setProceedsRecipient(address(bnbRouter));
+        vm.prank(admin);
         escrow.lockIntexAuctionAsset(EMISSION_DAY, bidder, 1e6, 1_000_000, 1);
-        vm.stopPrank();
 
         address[] memory winners = new address[](1);
         winners[0] = bidder;
@@ -382,6 +352,7 @@ contract IntexAuctionTargetRouterInboundHandlersTest is CrossChainTest {
     }
 
     function _seedSeriesOnIntex() internal {
+        vm.prank(address(bnbRouter));
         intex.openSeries(OpenSeriesLib.params(EMISSION_DAY, ISSUED_UNITS, 0));
     }
 

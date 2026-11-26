@@ -25,14 +25,15 @@ struct IntexAuctionReturnState {
     uint16 pagesSeen;
 }
 
+/// @notice The contracts the router drives, implementation immutables passed to its inbound handlers.
+struct TargetLinks {
+    IIntexAuction intexAuction;
+    IIntexNFT1155 intexContract;
+    IEscrowAdapter escrow;
+}
+
 /// @custom:storage-location erc7201:outbe.intex.IntexAuctionTargetRouter
 struct IntexAuctionTargetRouterStorage {
-    /// @dev Auction contract that originates outbound bids and receives inbound stage transitions.
-    IIntexAuction intexAuction;
-    /// @dev IntexNFT1155 contract that issuance and mark-called messages apply to.
-    IIntexNFT1155 intexContract;
-    /// @dev EscrowAdapter contract that refund instructions are forwarded to for finalization.
-    IEscrowAdapter escrow;
     /// @dev Per-day bids relay progress: a redelivered CLEARING resumes it rather than starting over.
     mapping(uint32 emissionDay => IntexAuctionBidsSendState) intexAuctionBidsSendState;
     /// @dev Issuance-run progress for a day on this chain: the span the first applied chunk declared and
