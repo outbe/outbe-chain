@@ -30,12 +30,16 @@ interface IPayNote {
     /// @notice Deposit `amount` of `asset` into the pool under `noteSn`.
     /// @dev `noteSn` is the note serial number — a hiding commitment to the spend key,
     /// chosen off-chain as `P(NOTE_SN, [spendKey])`. It reveals nothing about the key.
-    /// @param asset ERC20 to deposit. It must have a registered reserve vault.
-    /// @param amount Units to pull from the caller. The caller must approve
-    /// this pool. The pool must receive exactly `amount`.
+    /// `asset == address(0)` deposits native COEN: `msg.value` must equal `amount`.
+    /// An ERC20 deposit must send no value. Native notes cannot be spent or
+    /// merged yet.
+    /// @param asset ERC20 to deposit, which must have a registered reserve vault,
+    /// or `address(0)` for native COEN.
+    /// @param amount Units to deposit. For an ERC20, the caller must approve
+    /// this pool, and the pool must receive exactly `amount`.
     /// @param noteSn Caller-supplied note serial. Must be a non-zero canonical
     /// BN254 field word.
-    function deposit(address asset, uint256 amount, bytes32 noteSn) external;
+    function deposit(address asset, uint256 amount, bytes32 noteSn) external payable;
 
     /// @notice Atomically consume 2..maxMergeInputs same-asset notes and append
     /// one ordinary note for their exact sum. Any address may relay the proof.

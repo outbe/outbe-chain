@@ -203,23 +203,25 @@ pub(crate) fn append(
     Ok((leaf_index, current))
 }
 
-/// `deposit(asset, amount, noteSn)` — pull the ERC20 into the pool and append
-/// the derived note commitment. The tokens stay in the pool until a spend. The
-/// spend routes them into the reserve vault of the asset.
+/// `deposit(asset, amount, noteSn)` — move the asset into the pool and append
+/// the derived note commitment. An ERC20 is pulled from the caller and stays in
+/// the pool until a spend routes it into the reserve vault of the asset.
+/// `asset == 0` is native COEN: the payable route has already credited
+/// `msg.value` to the pool, so it must equal `amount`.
 pub(crate) fn deposit(
     storage: StorageHandle<'_>,
     caller: Address,
-    asset: Address,
-    amount: U256,
+    (asset, amount, value): (Address, U256, U256),
     note_sn: B256,
 ) -> Result<()> {
     // Guards, before any mutation.
     if amount.is_zero() {
         return Err(PayNoteError::InvalidInput("deposit amount must be non-zero".into()).into());
     }
-    // This check enforces `asset != 0` because we do not accept native currency here.
-    if asset.is_zero() {
-        return Err(PayNoteError::InvalidInput("asset must be non-zero".into()).into());
+    let native = asset.is_zero();
+    let expected_value = if native { amount } else { U256::ZERO };
+    if value != expected_value {
+        return Err(PayNoteError::NativeValueMismatch.into());
     }
     let serial = field_from_b256(&note_sn)
         .map_err(|_| PayNoteError::InvalidInput("noteSn is not a canonical BN254 field".into()))?;
@@ -235,7 +237,8 @@ pub(crate) fn deposit(
     }
     // A spend routes the tokens into the vault of the asset. If the asset has
     // no vault, no spend can settle the note. Thus, reject the deposit.
-    if outbe_vaultrouter::api::asset_vaults_count(&storage, asset)?.is_zero() {
+    // NB: native COEN has no vault. Its spend path is not defined yet.
+    if !native && outbe_vaultrouter::api::asset_vaults_count(&storage, asset)?.is_zero() {
         return Err(PayNoteError::AssetVaultMissing.into());
     }
 
@@ -262,7 +265,10 @@ pub(crate) fn deposit(
         // The caller must approve the pool. The commitment uses `amount`. Thus,
         // the pool must receive exactly `amount`. This check also rejects a
         // fee-on-transfer token and a reentrant nested deposit.
-        token::pull_exact(&storage, asset, caller, amount)?;
+        // Native COEN is already in the pool: the route credited `msg.value`.
+        if !native {
+            token::pull_exact(&storage, asset, caller, amount)?;
+        }
 
         if leaf_count == 0 {
             let empty_root = field_to_b256(&zeros[PAYNOTE_TREE_DEPTH])
@@ -319,7 +325,9 @@ pub(crate) fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNo
         return Err(PayNoteError::InvalidInput("chain ID does not match runtime".into()).into());
     }
 
-    // This check enforces `asset != 0` because we do not accept native currency here.
+    // TODO: native COEN spend. Until it exists, a native note cannot be
+    // consumed. The ERC20 routing below would call address 0, which succeeds
+    // silently.
     if claim.asset.is_zero() {
         return Err(PayNoteError::InvalidInput("asset must be non-zero".into()).into());
     }

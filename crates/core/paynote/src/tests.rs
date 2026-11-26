@@ -88,8 +88,8 @@ fn prove_spend(
 // ---- selectors, value policy, gas -----------------------------------------
 
 #[test]
-fn paynote_takes_no_native_value() {
-    assert_eq!(PAYABLE_SELECTORS, &[] as &[[u8; 4]]);
+fn only_deposit_takes_native_value() {
+    assert_eq!(PAYABLE_SELECTORS, &[IPayNote::depositCall::SELECTOR]);
 
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     provider.enter(|storage| {
@@ -97,7 +97,7 @@ fn paynote_takes_no_native_value() {
         let result = dispatch(storage, &data, ALICE, U256::from(1u64));
         assert!(
             result.is_err(),
-            "a non-payable precompile must reject credited value"
+            "a non-payable selector must reject credited value"
         );
     });
 }
@@ -207,15 +207,26 @@ fn deposit_guards_fire_before_any_sub_call() {
     let serial = note(CHAIN_ID, 17, USDC, U256::from(100)).serial;
 
     provider.enter(|storage| {
-        let result = runtime::deposit(storage, ALICE, USDC, U256::from(0), b256(serial));
+        let result = runtime::deposit(storage, ALICE, (USDC, U256::ZERO, U256::ZERO), b256(serial));
         assert_revert(result, "PayNote deposit amount must be non-zero");
     });
+    let mismatch = "PayNote msg.value must equal amount for native COEN and be zero for ERC20";
+    for (asset, value) in [(Address::ZERO, 99u64), (Address::ZERO, 0), (USDC, 100)] {
+        provider.enter(|storage| {
+            let funds = (asset, U256::from(100), U256::from(value));
+            assert_revert(
+                runtime::deposit(storage, ALICE, funds, b256(serial)),
+                mismatch,
+            );
+        });
+    }
     provider.enter(|storage| {
-        let result = runtime::deposit(storage, ALICE, Address::ZERO, U256::from(100), b256(serial));
-        assert_revert(result, "PayNote asset must be non-zero");
-    });
-    provider.enter(|storage| {
-        let result = runtime::deposit(storage, ALICE, USDC, U256::from(100), B256::ZERO);
+        let result = runtime::deposit(
+            storage,
+            ALICE,
+            (USDC, U256::from(100), U256::ZERO),
+            B256::ZERO,
+        );
         assert_revert(result, "PayNote noteSn must be non-zero");
     });
     provider.enter(|storage| {
@@ -223,11 +234,26 @@ fn deposit_guards_fire_before_any_sub_call() {
         let result = runtime::deposit(
             storage,
             ALICE,
-            USDC,
-            U256::from(100),
+            (USDC, U256::from(100), U256::ZERO),
             B256::repeat_byte(0xff),
         );
         assert_revert(result, "PayNote noteSn is not a canonical BN254 field");
+    });
+}
+
+/// Native COEN needs no vault or token sub-call: the payable route credits the
+/// pool, and the deposit only books the commitment.
+#[test]
+fn native_deposit_books_the_commitment() {
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    let amount = U256::from(100);
+    let fixture = note(CHAIN_ID, 17, Address::ZERO, amount);
+    provider.enter(|storage| {
+        let funds = (Address::ZERO, amount, amount);
+        runtime::deposit(storage.clone(), ALICE, funds, b256(fixture.serial)).unwrap();
+        let paynote: PayNoteContract<'_> = storage.contract();
+        assert_eq!(paynote.leaf_count.read().unwrap(), 1);
+        assert!(paynote.commitments.read(&b256(fixture.commitment)).unwrap());
     });
 }
 

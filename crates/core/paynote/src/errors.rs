@@ -42,6 +42,8 @@ pub enum PayNoteError {
         covered: alloy_primitives::U256,
         required: alloy_primitives::U256,
     },
+    #[error("PayNote msg.value must equal amount for native COEN and be zero for ERC20")]
+    NativeValueMismatch,
     #[error("PayNote asset has no reserve vault")]
     AssetVaultMissing,
     /// An ERC20 call returned data that is not empty and not `true`.
