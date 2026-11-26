@@ -75,6 +75,95 @@ pub fn vm_units() -> Vec<UnitFile> {
     })
 }
 
+/// Relative systemd drop-in filename used by dev-flavor-only diagnostic overrides.
+pub const VM_DEV_DROPIN_NAME: &str = "20-outbe-dev.conf";
+
+const VM_NODE_SERVICES: &[&str] = &[
+    "outbe-validator.service",
+    "outbe-joining-validator.service",
+    "outbe-full-node.service",
+];
+
+const VM_CONSOLE_ONLY_SERVICES: &[&str] = &[
+    "dstack-guest-agent.service",
+    "outbe-feeder.service",
+    "outbe-hyperlane-validator.service",
+    "outbe-radicle.service",
+];
+
+/// Render dev-flavor-only systemd drop-ins (`<unit>.d/20-outbe-dev.conf`).
+///
+/// Never installed into the production image:
+/// - Forwards stdout/stderr of `outbe-*` services and `dstack-guest-agent.service` to the serial
+///   console (`StandardOutput=journal+console`, `StandardError=journal+console`).
+/// - Overrides `ExecStart` on `outbe-chain` node units (`outbe-validator.service`,
+///   `outbe-joining-validator.service`, `outbe-full-node.service`) so `--metrics` binds on
+///   `${OUTBE_RPC_BIND_IP}:9101` instead of `127.0.0.1:9101` and stdout logging includes
+///   `--log.stdout.filter info,commonware_p2p=debug`, derived directly from [`vm_units`] so flags
+///   cannot drift.
+pub fn vm_dev_dropins() -> Vec<UnitFile> {
+    let base_units = vm_units();
+    let mut dropins = Vec::new();
+
+    for service_name in VM_NODE_SERVICES {
+        let base = base_units
+            .iter()
+            .find(|u| u.name == *service_name)
+            .unwrap_or_else(|| panic!("missing base VM unit {service_name}"));
+        let exec_start = extract_exec_start_block(&base.content)
+            .unwrap_or_else(|| panic!("missing ExecStart in {service_name}"));
+        let from = "  --metrics 127.0.0.1:9101 \\";
+        let to = "  --metrics ${OUTBE_RPC_BIND_IP}:9101 \\\n  --log.stdout.filter info,commonware_p2p=debug \\";
+        assert_eq!(
+            exec_start.matches(from).count(),
+            1,
+            "{service_name}: expected exactly one loopback --metrics flag in ExecStart"
+        );
+        let dev_exec_start = exec_start.replacen(from, to, 1);
+        let content = format!(
+            "[Service]\n\
+             StandardOutput=journal+console\n\
+             StandardError=journal+console\n\
+             ExecStart=\n\
+             {dev_exec_start}\n"
+        );
+        dropins.push(UnitFile {
+            name: format!("{service_name}.d/{VM_DEV_DROPIN_NAME}"),
+            content,
+        });
+    }
+
+    for service_name in VM_CONSOLE_ONLY_SERVICES {
+        dropins.push(UnitFile {
+            name: format!("{service_name}.d/{VM_DEV_DROPIN_NAME}"),
+            content: concat!(
+                "[Service]\n",
+                "StandardOutput=journal+console\n",
+                "StandardError=journal+console\n",
+            )
+            .to_owned(),
+        });
+    }
+
+    dropins.sort_by(|left, right| left.name.cmp(&right.name));
+    dropins
+}
+
+fn extract_exec_start_block(unit_content: &str) -> Option<String> {
+    let mut lines_iter = unit_content.lines();
+    let first = lines_iter.find(|line| line.starts_with("ExecStart="))?;
+    let mut block = vec![first];
+    if first.trim_end().ends_with('\\') {
+        for line in lines_iter {
+            block.push(line);
+            if !line.trim_end().ends_with('\\') {
+                break;
+            }
+        }
+    }
+    Some(block.join("\n"))
+}
+
 fn managed_units(profile: &ManagedProfile<'_>) -> Vec<UnitFile> {
     let internal_cmd = |subcommand: &str| match profile.internal_bin_dir {
         Some(dir) => format!(
@@ -1227,6 +1316,87 @@ mod tests {
         assert!(full_content.contains("ExecStartPost=/usr/local/bin/outbe-vm-agent wait-rpc\n"));
     }
 
+    #[test]
+    fn vm_dev_dropins_bind_metrics_on_service_ip_and_preserve_prod_vm_units() {
+        let vm = vm_units();
+        let dropins = vm_dev_dropins();
+        let names: Vec<&str> = dropins.iter().map(|u| u.name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec![
+                "dstack-guest-agent.service.d/20-outbe-dev.conf",
+                "outbe-feeder.service.d/20-outbe-dev.conf",
+                "outbe-full-node.service.d/20-outbe-dev.conf",
+                "outbe-hyperlane-validator.service.d/20-outbe-dev.conf",
+                "outbe-joining-validator.service.d/20-outbe-dev.conf",
+                "outbe-radicle.service.d/20-outbe-dev.conf",
+                "outbe-validator.service.d/20-outbe-dev.conf",
+            ]
+        );
+
+        // Prod base units must remain pinned on 127.0.0.1:9101 and without journal+console.
+        for name in [
+            "outbe-validator.service",
+            "outbe-joining-validator.service",
+            "outbe-full-node.service",
+        ] {
+            let base = unit(&vm, name);
+            assert!(
+                base.contains("  --metrics 127.0.0.1:9101 \\"),
+                "{name}: prod unit must keep loopback metrics bind"
+            );
+            assert!(
+                !base.contains("--metrics ${OUTBE_RPC_BIND_IP}:9101"),
+                "{name}: prod unit must never bind metrics on service IP"
+            );
+            assert!(
+                !base.contains("StandardOutput=journal+console"),
+                "{name}: prod unit must not forward stdout to console"
+            );
+            assert!(
+                !base.contains("--log.stdout.filter"),
+                "{name}: prod unit must not set dev stdout log filter"
+            );
+
+            let dropin = unit(&dropins, &format!("{name}.d/20-outbe-dev.conf"));
+            assert!(dropin.contains("StandardOutput=journal+console\n"));
+            assert!(dropin.contains("StandardError=journal+console\n"));
+            assert!(dropin.contains("\nExecStart=\nExecStart=/usr/local/bin/outbe-chain node \\"));
+            assert!(dropin.contains("  --metrics ${OUTBE_RPC_BIND_IP}:9101 \\"));
+            assert!(dropin.contains("  --log.stdout.filter info,commonware_p2p=debug \\"));
+            assert!(!dropin.contains("127.0.0.1:9101"));
+
+            // Dev ExecStart differs from canonical prod unit ONLY in --metrics bind address and
+            // the appended --log.stdout.filter info,commonware_p2p=debug pair.
+            let base_tokens = exec_start_tokens(base);
+            let mut expected_dev_tokens = base_tokens.clone();
+            let metrics_pos = expected_dev_tokens
+                .iter()
+                .position(|tok| tok == "127.0.0.1:9101")
+                .expect("base ExecStart must contain 127.0.0.1:9101");
+            expected_dev_tokens[metrics_pos] = "${OUTBE_RPC_BIND_IP}:9101".to_owned();
+            expected_dev_tokens.insert(metrics_pos + 1, "--log.stdout.filter".to_owned());
+            expected_dev_tokens.insert(metrics_pos + 2, "info,commonware_p2p=debug".to_owned());
+            let dev_tokens = exec_start_tokens(dropin);
+            assert_eq!(
+                dev_tokens, expected_dev_tokens,
+                "{name}: dev ExecStart must differ only in --metrics address and --log.stdout.filter"
+            );
+        }
+
+        for name in [
+            "dstack-guest-agent.service.d/20-outbe-dev.conf",
+            "outbe-feeder.service.d/20-outbe-dev.conf",
+            "outbe-hyperlane-validator.service.d/20-outbe-dev.conf",
+            "outbe-radicle.service.d/20-outbe-dev.conf",
+        ] {
+            let dropin = unit(&dropins, name);
+            assert!(dropin.contains("StandardOutput=journal+console\n"));
+            assert!(dropin.contains("StandardError=journal+console\n"));
+            assert!(!dropin.contains("ExecStart"));
+        }
+    }
+
     fn logical_directives(content: &str) -> Vec<(String, String)> {
         let mut out = Vec::new();
         let mut buffer = String::new();
@@ -1253,7 +1423,7 @@ mod tests {
     fn exec_start_tokens(content: &str) -> Vec<String> {
         let (_, value) = logical_directives(content)
             .into_iter()
-            .find(|(key, _)| key == "ExecStart")
+            .find(|(key, value)| key == "ExecStart" && !value.is_empty())
             .expect("unit must define ExecStart");
         value.split_whitespace().map(str::to_owned).collect()
     }
