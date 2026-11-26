@@ -20,7 +20,11 @@ pub async fn run(
     ssh_config: Option<&Path>,
     timeout: Duration,
 ) -> Result<()> {
-    let ssh: Arc<dyn HostExec> = Arc::new(SshOptions::new(ssh_key, ssh_config)?);
+    let build = NetworkArtifacts::load(artifacts)?;
+    let ssh: Arc<dyn HostExec> = Arc::new(
+        SshOptions::new(ssh_key, ssh_config)?
+            .with_network_known_hosts(&build.manifest.genesis.final_sha256)?,
+    );
     run_with_exec(artifacts, ssh, timeout).await
 }
 
@@ -53,10 +57,15 @@ async fn start_founders(
     for founder in build.config.founders.clone() {
         let exec = Arc::clone(exec);
         tasks.spawn_blocking(move || {
+            let marker = outbe_operator_node_role::process::SERVICES_ENABLED_MARKER;
             run_quiet_founder(
                 exec.as_ref(),
                 &founder,
-                "if [ \"$(id -u)\" -eq 0 ]; then systemctl enable --now outbe-validator.target; else sudo -n systemctl enable --now outbe-validator.target; fi",
+                &format!(
+                    "if [ \"$(id -u)\" -eq 0 ]; then \
+systemctl enable --now outbe-validator.target && install -d -m 0755 /opt/outbe-chain/state && install -m 0644 /dev/null {marker}; \
+else sudo -n sh -c 'systemctl enable --now outbe-validator.target && install -d -m 0755 /opt/outbe-chain/state && install -m 0644 /dev/null {marker}'; fi"
+                ),
             )
             .wrap_err_with(|| format!("start {}", founder.name))
         });

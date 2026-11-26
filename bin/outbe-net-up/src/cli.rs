@@ -176,12 +176,18 @@ enum NetworkCommand {
         /// Target host bridge name [default: network vm.bridge].
         #[arg(long)]
         bridge: Option<String>,
-        /// Static private IPv4 address assigned to this VM on the host bridge.
+        /// Static private IPv4 address assigned to this VM on the host bridge (`OUTBE_VM_IP`).
         #[arg(long)]
-        bridge_ip: Ipv4Addr,
+        vm_ip: Ipv4Addr,
+        /// Optional HTTP JSON-RPC listen address (`OUTBE_RPC_BIND_IP`, defaults to `--vm-ip`).
+        #[arg(long)]
+        rpc_bind_ip: Option<Ipv4Addr>,
         /// Public/external IPv4 address advertised for P2P and on-chain consensus registration.
         #[arg(long)]
         advertise_ip: Ipv4Addr,
+        /// Guest/local HTTP JSON-RPC port (`OUTBE_RPC_PORT`, default 8545).
+        #[arg(long, default_value_t = crate::network::config::BASE_RPC_PORT)]
+        rpc_port: u16,
         /// Port offset added to base P2P/Radicle ports (1:1 host-to-guest DNAT).
         #[arg(long, default_value_t = 0)]
         port_offset: u16,
@@ -245,12 +251,18 @@ enum NetworkCommand {
         /// Target host bridge name [default: network vm.bridge].
         #[arg(long)]
         bridge: Option<String>,
-        /// Static private IPv4 address assigned to this VM on the host bridge.
+        /// Static private IPv4 address assigned to this VM on the host bridge (`OUTBE_VM_IP`).
         #[arg(long)]
-        bridge_ip: Ipv4Addr,
-        /// Optional external IPv4 written to validator.env (defaults to bridge_ip; outbound-only).
+        vm_ip: Ipv4Addr,
+        /// Optional HTTP JSON-RPC listen address (`OUTBE_RPC_BIND_IP`, defaults to `--vm-ip`).
+        #[arg(long)]
+        rpc_bind_ip: Option<Ipv4Addr>,
+        /// Optional external IPv4 written to validator.env (defaults to vm_ip; outbound-only).
         #[arg(long)]
         advertise_ip: Option<Ipv4Addr>,
+        /// Guest/local HTTP JSON-RPC port (`OUTBE_RPC_PORT`, default 8545).
+        #[arg(long, default_value_t = crate::network::config::BASE_RPC_PORT)]
+        rpc_port: u16,
         /// Local guest OS image `.tar.zst` archive (defaults to already-deployed image if omitted).
         #[arg(long)]
         image_archive: Option<PathBuf>,
@@ -524,8 +536,10 @@ impl Cli {
                     port,
                     vmm_home,
                     bridge,
-                    bridge_ip,
+                    vm_ip,
+                    rpc_bind_ip,
                     advertise_ip,
+                    rpc_port,
                     port_offset,
                     image_archive,
                     image_url,
@@ -550,8 +564,10 @@ impl Cli {
                         port,
                         vmm_home: vmm_home.as_deref(),
                         bridge: bridge.as_deref(),
-                        bridge_ip,
+                        vm_ip,
+                        rpc_bind_ip,
                         advertise_ip,
+                        rpc_port,
                         port_offset,
                         image_source,
                         vcpu,
@@ -574,8 +590,10 @@ impl Cli {
                     port,
                     vmm_home,
                     bridge,
-                    bridge_ip,
+                    vm_ip,
+                    rpc_bind_ip,
                     advertise_ip,
+                    rpc_port,
                     image_archive,
                     image_url,
                     image_sha256,
@@ -599,8 +617,10 @@ impl Cli {
                         port,
                         vmm_home: vmm_home.as_deref(),
                         bridge: bridge.as_deref(),
-                        bridge_ip,
+                        vm_ip,
+                        rpc_bind_ip,
                         advertise_ip,
+                        rpc_port,
                         image_source,
                         vcpu,
                         memory_gib,
@@ -811,11 +831,11 @@ mod tests {
             "--name",
             "validator-joiner-0",
             "--host",
-            "141.95.168.110",
-            "--bridge-ip",
+            "203.0.113.20",
+            "--vm-ip",
             "10.77.0.13",
             "--advertise-ip",
-            "141.95.168.110",
+            "203.0.113.20",
             "--port-offset",
             "2",
         ])
@@ -829,8 +849,8 @@ mod tests {
             "--name",
             "fullnode-0",
             "--host",
-            "162.19.107.121",
-            "--bridge-ip",
+            "198.51.100.10",
+            "--vm-ip",
             "10.77.0.13",
         ])
         .is_ok());

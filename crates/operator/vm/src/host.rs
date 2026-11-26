@@ -3062,7 +3062,7 @@ mod tests {
           {"accept": null}
         ]}},
         {"rule": {"family": "inet", "table": "host_firewall", "chain": "forward", "handle": 711, "comment": "validator-0-hyperlane", "expr": [
-          {"match": {"op": "==", "left": {"payload": {"protocol": "ip", "field": "saddr"}}, "right": "141.95.147.184"}},
+          {"match": {"op": "==", "left": {"payload": {"protocol": "ip", "field": "saddr"}}, "right": "198.51.100.30"}},
           {"match": {"op": "==", "left": {"payload": {"protocol": "ip", "field": "daddr"}}, "right": "10.77.0.11"}},
           {"match": {"op": "in", "left": {"ct": {"key": "status"}}, "right": "dnat"}},
           {"match": {"op": "==", "left": {"payload": {"protocol": "tcp", "field": "dport"}}, "right": 9000}},
@@ -3072,14 +3072,14 @@ mod tests {
         {"chain": {"family": "ip", "table": "host_firewall_nat", "name": "prerouting", "handle": 1, "type": "nat", "hook": "prerouting", "prio": -100, "policy": "accept"}},
         {"chain": {"family": "ip", "table": "host_firewall_nat", "name": "postrouting", "handle": 2, "type": "nat", "hook": "postrouting", "prio": 100, "policy": "accept"}},
         {"rule": {"family": "ip", "table": "host_firewall_nat", "chain": "prerouting", "handle": 456, "comment": "validator-0-hyperlane", "expr": [
-          {"match": {"op": "==", "left": {"payload": {"protocol": "ip", "field": "daddr"}}, "right": "162.19.107.121"}},
-          {"match": {"op": "==", "left": {"payload": {"protocol": "ip", "field": "saddr"}}, "right": "141.95.147.184"}},
+          {"match": {"op": "==", "left": {"payload": {"protocol": "ip", "field": "daddr"}}, "right": "198.51.100.10"}},
+          {"match": {"op": "==", "left": {"payload": {"protocol": "ip", "field": "saddr"}}, "right": "198.51.100.30"}},
           {"match": {"op": "==", "left": {"payload": {"protocol": "tcp", "field": "dport"}}, "right": 9000}},
           {"dnat": {"addr": "10.77.0.11"}}
         ]}},
         {"rule": {"family": "ip", "table": "host_firewall_nat", "chain": "prerouting", "handle": 466, "comment": "validator-1-hyperlane", "expr": [
-          {"match": {"op": "==", "left": {"payload": {"protocol": "ip", "field": "daddr"}}, "right": "162.19.107.121"}},
-          {"match": {"op": "==", "left": {"payload": {"protocol": "ip", "field": "saddr"}}, "right": "141.95.147.184"}},
+          {"match": {"op": "==", "left": {"payload": {"protocol": "ip", "field": "daddr"}}, "right": "198.51.100.10"}},
+          {"match": {"op": "==", "left": {"payload": {"protocol": "ip", "field": "saddr"}}, "right": "198.51.100.30"}},
           {"match": {"op": "==", "left": {"payload": {"protocol": "tcp", "field": "dport"}}, "right": 9001}},
           {"dnat": {"addr": "10.77.0.12", "port": 9000}}
         ]}},
@@ -3105,7 +3105,7 @@ mod tests {
         assert_eq!(fw.forward_allows.len(), 1);
         assert_eq!(fw.forward_allows[0].dest_ip, Ipv4Addr::new(10, 77, 0, 11));
         assert_eq!(fw.forward_allows[0].dest_port, 9000);
-        assert_eq!(fw.forward_allows[0].sources, vec!["141.95.147.184/32"]);
+        assert_eq!(fw.forward_allows[0].sources, vec!["198.51.100.30/32"]);
 
         assert_eq!(fw.dnat_rules.len(), 2);
         assert_eq!(fw.dnat_rules[0].host_port, 9000);
@@ -3113,7 +3113,7 @@ mod tests {
         assert_eq!(fw.dnat_rules[0].dest_ip, Ipv4Addr::new(10, 77, 0, 11));
         assert_eq!(
             fw.dnat_rules[0].public_ip,
-            Some(Ipv4Addr::new(162, 19, 107, 121))
+            Some(Ipv4Addr::new(198, 51, 100, 10))
         );
         assert_eq!(fw.dnat_rules[1].host_port, 9001);
         assert_eq!(fw.dnat_rules[1].guest_port, 9000);
@@ -3190,8 +3190,8 @@ ExecReload={ path=/bin/kill ; argv[]=/bin/kill -HUP $MAINPID ; ignore_errors=no 
         assert!(parse_port_spec("9000/icmp").is_err());
 
         assert_eq!(
-            normalize_ipv4_cidr("141.95.147.184").unwrap(),
-            "141.95.147.184/32"
+            normalize_ipv4_cidr("198.51.100.30").unwrap(),
+            "198.51.100.30/32"
         );
         assert_eq!(normalize_ipv4_cidr("10.77.0.5/24").unwrap(), "10.77.0.0/24");
         assert_eq!(normalize_ipv4_cidr("0.0.0.0/0").unwrap(), "0.0.0.0/0");
@@ -3224,12 +3224,12 @@ be:f7:7b:2c:d1:85,10.77.0.68,10m
             {"table": {"family": "ip", "name": "host_firewall_nat", "handle": 67}},
             {"chain": {"family": "ip", "table": "host_firewall_nat", "name": "prerouting", "handle": 1, "type": "nat", "hook": "prerouting", "prio": -100, "policy": "accept"}},
             {"rule": {"family": "ip", "table": "host_firewall_nat", "chain": "prerouting", "handle": 10, "comment": "range-dnat", "expr": [
-              {"match": {"op": "==", "left": {"payload": {"protocol": "ip", "field": "daddr"}}, "right": "162.19.107.121"}},
+              {"match": {"op": "==", "left": {"payload": {"protocol": "ip", "field": "daddr"}}, "right": "198.51.100.10"}},
               {"match": {"op": "==", "left": {"payload": {"protocol": "tcp", "field": "dport"}}, "right": {"range": [9000, 9010]}}},
               {"dnat": {"addr": "10.77.0.11"}}
             ]}},
             {"rule": {"family": "ip", "table": "host_firewall_nat", "chain": "prerouting", "handle": 11, "comment": "set-dnat", "expr": [
-              {"match": {"op": "==", "left": {"payload": {"protocol": "ip", "field": "daddr"}}, "right": "162.19.107.121"}},
+              {"match": {"op": "==", "left": {"payload": {"protocol": "ip", "field": "daddr"}}, "right": "198.51.100.10"}},
               {"match": {"op": "==", "left": {"payload": {"protocol": "tcp", "field": "dport"}}, "right": {"set": [9020, 9021, {"range": [9030, 9031]}]}}},
               {"dnat": {"addr": "10.77.0.12"}}
             ]}},
@@ -3249,7 +3249,7 @@ be:f7:7b:2c:d1:85,10.77.0.68,10m
               {"dnat": {"addr": "10.77.0.15"}}
             ]}},
             {"rule": {"family": "ip", "table": "host_firewall_nat", "chain": "prerouting", "handle": 23, "comment": "wildcard-dnat", "expr": [
-              {"match": {"op": "==", "left": {"payload": {"protocol": "ip", "field": "daddr"}}, "right": "162.19.107.121"}},
+              {"match": {"op": "==", "left": {"payload": {"protocol": "ip", "field": "daddr"}}, "right": "198.51.100.10"}},
               {"dnat": {"addr": "10.77.0.16"}}
             ]}}
           ]

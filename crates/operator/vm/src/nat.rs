@@ -1664,12 +1664,12 @@ mod tests {
             {"rule": {"family": "ip", "table": "outbe_mvp", "chain": "postrouting", "expr": [
               {"match": {"op": "==", "left": {"payload": {"protocol": "ip", "field": "saddr"}}, "right": {"prefix": {"addr": "10.77.0.0", "len": 24}}}},
               {"match": {"op": "==", "left": {"payload": {"protocol": "ip", "field": "daddr"}}, "right": {"prefix": {"addr": "10.77.0.0", "len": 24}}}},
-              {"snat": {"addr": "162.19.107.121"}}
+              {"snat": {"addr": "198.51.100.10"}}
             ]}},
             {"rule": {"family": "ip", "table": "outbe_mvp", "chain": "postrouting", "expr": [
               {"match": {"op": "==", "left": {"payload": {"protocol": "ip", "field": "saddr"}}, "right": {"prefix": {"addr": "10.77.0.0", "len": 24}}}},
               {"match": {"op": "==", "left": {"meta": {"key": "oifname"}}, "right": "eno1"}},
-              {"snat": {"addr": "162.19.107.121"}}
+              {"snat": {"addr": "198.51.100.10"}}
             ]}}
           ]
         }"#;

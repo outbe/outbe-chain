@@ -106,8 +106,8 @@ pub enum VmFlavor {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FounderVmConfig {
-    /// Private bridge IPv4 address assigned to this founder VM.
-    pub bridge_ip: Ipv4Addr,
+    /// Static private IPv4 address assigned to this founder VM on the host bridge (`OUTBE_VM_IP`).
+    pub vm_ip: Ipv4Addr,
     /// Optional host port offset added to base service ports (`rpc`, `radicle`, `hyperlane`,
     /// `reth_p2p`, `consensus_p2p`, `reth_discv5`) for multi-host / published VM deployments.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -175,6 +175,28 @@ impl FounderPublishedPorts {
         ]
     }
 
+    /// Return the 5 P2P/Radicle 1:1 DNAT port tuples `(public_port, vm_port, proto, purpose)`
+    /// verified by `outbe-up host check` and recorded in `network-manifest.json`.
+    pub fn dnat_ports(self) -> [(u16, u16, &'static str, &'static str); 5] {
+        [
+            (self.reth_p2p_tcp, self.reth_p2p_tcp, "tcp", "reth-p2p"),
+            (self.reth_p2p_udp, self.reth_p2p_udp, "udp", "reth-p2p"),
+            (
+                self.consensus_p2p_tcp,
+                self.consensus_p2p_tcp,
+                "tcp",
+                "consensus-p2p",
+            ),
+            (
+                self.reth_discv5_udp,
+                self.reth_discv5_udp,
+                "udp",
+                "reth-discovery",
+            ),
+            (self.radicle_tcp, self.radicle_tcp, "tcp", "radicle"),
+        ]
+    }
+
     /// Return `outbe-up host check|publish --port` specs for 1:1 P2P/Radicle DNAT
     /// (`host_port == guest_port == base + offset`) plus Hyperlane (`9000 -> 9000 + offset`).
     #[allow(dead_code)]
@@ -209,7 +231,7 @@ pub struct ResolvedFounderVm {
     pub dhcp_leases_file: PathBuf,
     #[allow(dead_code)]
     pub dhcp_pid_file: PathBuf,
-    pub bridge_ip: Ipv4Addr,
+    pub vm_ip: Ipv4Addr,
     pub port_offset: u16,
     pub port_offset_explicit: bool,
     pub vcpu: u32,
@@ -252,11 +274,21 @@ pub struct Founder {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ssh: Option<Ssh>,
     pub advertise_ip: Ipv4Addr,
-    #[serde(default = "loopback")]
-    pub rpc_bind_ip: Ipv4Addr,
+    /// Optional HTTP JSON-RPC listen address (`OUTBE_RPC_BIND_IP`).
+    /// Defaults to `vm.vm_ip` in VM mode, or `127.0.0.1` on bare host.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rpc_bind_ip: Option<Ipv4Addr>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rpc_port: Option<u16>,
     pub hyperlane_public_url: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vm: Option<FounderVmConfig>,
+}
+
+impl Founder {
+    pub fn rpc_port(&self) -> u16 {
+        self.rpc_port.unwrap_or(BASE_RPC_PORT)
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -430,7 +462,7 @@ impl NetworkConfig {
         let mut ssh_targets = BTreeSet::new();
         let mut advertise_ips = BTreeSet::new();
         let mut vm_resolved: Vec<(&Founder, ResolvedFounderVm)> = Vec::new();
-        let mut bridge_ips_per_host: BTreeSet<(String, Ipv4Addr)> = BTreeSet::new();
+        let mut vm_ips_per_host: BTreeSet<(String, Ipv4Addr)> = BTreeSet::new();
         let mut distinct_vmm_hosts: BTreeSet<String> = BTreeSet::new();
         let mut hosts_with_explicit_offset: BTreeSet<String> = BTreeSet::new();
 
@@ -481,19 +513,19 @@ impl NetworkConfig {
                     founder.name
                 );
                 ensure!(
-                    resolved.bridge_ip.is_private(),
-                    "vm.bridge_ip for {} must be a private IPv4 address",
+                    resolved.vm_ip.is_private(),
+                    "vm.vm_ip for {} must be a private IPv4 address",
                     founder.name
                 );
+                let rpc_bind_ip = self.founder_rpc_bind_ip(founder)?;
                 ensure!(
-                    founder.rpc_bind_ip == resolved.bridge_ip,
-                    "founder {} rpc_bind_ip ({}) must equal vm.bridge_ip ({}) for static VM addressing",
+                    rpc_bind_ip == Ipv4Addr::LOCALHOST || rpc_bind_ip == resolved.vm_ip,
+                    "founder {} rpc_bind_ip ({rpc_bind_ip}) must be 127.0.0.1 or equal to vm.vm_ip ({})",
                     founder.name,
-                    founder.rpc_bind_ip,
-                    resolved.bridge_ip
+                    resolved.vm_ip
                 );
                 outbe_operator_node_role::vm_network::StaticVmNetworkConfig {
-                    address: resolved.bridge_ip,
+                    address: resolved.vm_ip,
                     prefix_len: resolved.prefix,
                     gateway: resolved.gateway,
                     dns: resolved.dns.clone(),
@@ -501,10 +533,9 @@ impl NetworkConfig {
                 .validate()
                 .wrap_err_with(|| format!("invalid static VM addressing for {}", founder.name))?;
                 ensure!(
-                    bridge_ips_per_host
-                        .insert((resolved.vmm_host.host.clone(), resolved.bridge_ip)),
-                    "duplicate vm.bridge_ip {} on host {}",
-                    resolved.bridge_ip,
+                    vm_ips_per_host.insert((resolved.vmm_host.host.clone(), resolved.vm_ip)),
+                    "duplicate vm.vm_ip {} on host {}",
+                    resolved.vm_ip,
                     resolved.vmm_host.host
                 );
                 if resolved.flavor == VmFlavor::Prod {
@@ -514,9 +545,18 @@ impl NetworkConfig {
                         founder.name
                     );
                 }
-                // Validate port_offset arithmetic for every VM founder up front.
-                let _ = FounderPublishedPorts::from_offset(resolved.port_offset)
+                // Validate port_offset arithmetic and per-founder RPC port up front.
+                let published = FounderPublishedPorts::from_offset(resolved.port_offset)
                     .wrap_err_with(|| format!("invalid vm.port_offset for {}", founder.name))?;
+                outbe_operator_node_role::vm_network::VmPortsConfig {
+                    rpc_port: founder.rpc_port(),
+                    consensus_port: published.consensus_p2p_tcp,
+                    reth_port: published.reth_p2p_tcp,
+                    discv5_port: published.reth_discv5_udp,
+                    radicle_port: published.radicle_tcp,
+                }
+                .validate()
+                .wrap_err_with(|| format!("invalid rpc_port for {}", founder.name))?;
                 distinct_vmm_hosts.insert(resolved.vmm_host.host.clone());
                 if resolved.port_offset_explicit {
                     hosts_with_explicit_offset.insert(resolved.vmm_host.host.clone());
@@ -533,6 +573,12 @@ impl NetworkConfig {
                     .as_ref()
                     .ok_or_else(|| eyre::eyre!("missing ssh configuration for {}", founder.name))?;
                 validate_ssh(ssh, &founder.name)?;
+                outbe_operator_node_role::vm_network::VmPortsConfig {
+                    rpc_port: founder.rpc_port(),
+                    ..outbe_operator_node_role::vm_network::VmPortsConfig::default()
+                }
+                .validate()
+                .wrap_err_with(|| format!("invalid rpc_port for {}", founder.name))?;
                 ensure!(
                     ssh_targets.insert((&ssh.host, ssh.port)),
                     "duplicate SSH target: {}:{}",
@@ -545,8 +591,9 @@ impl NetworkConfig {
                     founder.advertise_ip
                 );
             }
+            let rpc_bind_ip = self.founder_rpc_bind_ip(founder)?;
             ensure!(
-                founder.rpc_bind_ip.is_loopback() || founder.rpc_bind_ip.is_private(),
+                rpc_bind_ip.is_loopback() || rpc_bind_ip.is_private(),
                 "rpc_bind_ip for {} must be loopback or private",
                 founder.name
             );
@@ -705,7 +752,7 @@ impl NetworkConfig {
             dhcp_hosts_file: defaults.dhcp_hosts_file.clone(),
             dhcp_leases_file: defaults.dhcp_leases_file.clone(),
             dhcp_pid_file: defaults.dhcp_pid_file.clone(),
-            bridge_ip: override_cfg.bridge_ip,
+            vm_ip: override_cfg.vm_ip,
             port_offset: override_cfg.port_offset.unwrap_or(0),
             port_offset_explicit: override_cfg.port_offset.is_some(),
             vcpu: override_cfg.vcpu.unwrap_or(defaults.vcpu),
@@ -719,23 +766,40 @@ impl NetworkConfig {
         })
     }
 
+    /// Resolve effective HTTP JSON-RPC bind address for a founder:
+    /// explicit `rpc_bind_ip`, else `vm.vm_ip` in VM mode, else `127.0.0.1` on bare host.
+    pub fn founder_rpc_bind_ip(&self, founder: &Founder) -> Result<Ipv4Addr> {
+        if self.vm.is_some() {
+            let resolved = self.resolve_founder_vm(founder)?;
+            Ok(founder.rpc_bind_ip.unwrap_or(resolved.vm_ip))
+        } else {
+            Ok(founder.rpc_bind_ip.unwrap_or(Ipv4Addr::LOCALHOST))
+        }
+    }
+
     /// Resolve effective Hyperlane validator configuration for a founder.
     pub fn resolve_hyperlane_config(&self, founder: &Founder) -> Result<HyperlaneConfig> {
         self.resolve_hyperlane_for_endpoint(
             founder.hyperlane_public_url.clone(),
-            founder.rpc_bind_ip,
+            self.founder_rpc_bind_ip(founder)?,
+            founder.rpc_port(),
         )
     }
 
     /// Resolve Hyperlane configuration for the joining operator example config.
     pub fn resolve_joining_hyperlane_config(&self) -> Result<HyperlaneConfig> {
-        self.resolve_hyperlane_for_endpoint("http://192.0.2.10:9000".into(), Ipv4Addr::LOCALHOST)
+        self.resolve_hyperlane_for_endpoint(
+            "http://192.0.2.10:9000".into(),
+            Ipv4Addr::LOCALHOST,
+            BASE_RPC_PORT,
+        )
     }
 
     fn resolve_hyperlane_for_endpoint(
         &self,
         public_url: String,
         local_rpc_ip: Ipv4Addr,
+        local_rpc_port: u16,
     ) -> Result<HyperlaneConfig> {
         if self.vm.is_none() {
             ensure!(
@@ -758,7 +822,7 @@ impl NetworkConfig {
         let origins = if self.hyperlane.origins.is_empty() {
             let mut generated = vec![HyperlaneOrigin {
                 domain: local_domain,
-                rpc_urls: vec![format!("http://{local_rpc_ip}:8545")],
+                rpc_urls: vec![format!("http://{local_rpc_ip}:{local_rpc_port}")],
                 rpc_consensus: RpcConsensus::Single,
                 reorg_period: ReorgPeriod::Blocks(0),
                 interval_secs: default_local_evm_interval(),
@@ -854,6 +918,7 @@ fn reserved_genesis_keys() -> BTreeSet<&'static str> {
         "remote_base_dir",
         "remote_keys_dir",
         "rpc_bind_ip",
+        "rpc_port",
         "consensus_use_local_defaults",
     ]
     .into_iter()
@@ -865,10 +930,6 @@ fn safe_name(value: &str) -> bool {
         && value
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
-}
-
-const fn loopback() -> Ipv4Addr {
-    Ipv4Addr::LOCALHOST
 }
 
 const fn default_hyperlane_poll_interval() -> u64 {
@@ -1008,39 +1069,36 @@ chain_id: 54322345
 certified_rpc: "http://10.77.0.10:8545"
 vm:
   vmm_host:
-    host: 162.19.107.121
+    host: 198.51.100.10
   prefix: 24
   gateway: 10.77.0.1
   dns: [1.1.1.1, 8.8.8.8]
 founders:
   - name: validator-0
-    advertise_ip: 162.19.107.121
+    advertise_ip: 198.51.100.10
     rpc_bind_ip: 10.77.0.10
-    hyperlane_public_url: http://162.19.107.121:9000
+    hyperlane_public_url: http://198.51.100.10:9000
     vm:
-      bridge_ip: 10.77.0.10{o0}
+      vm_ip: 10.77.0.10{o0}
   - name: validator-1
-    advertise_ip: 162.19.107.121
-    rpc_bind_ip: 10.77.0.11
-    hyperlane_public_url: http://162.19.107.121:9001
+    advertise_ip: 198.51.100.10
+    hyperlane_public_url: http://198.51.100.10:9001
     vm:
-      bridge_ip: 10.77.0.11{o1}
+      vm_ip: 10.77.0.11{o1}
   - name: validator-2
-    advertise_ip: 141.95.168.110
-    rpc_bind_ip: 10.77.0.10
-    hyperlane_public_url: http://141.95.168.110:9000
+    advertise_ip: 203.0.113.20
+    hyperlane_public_url: http://203.0.113.20:9000
     vm:
-      bridge_ip: 10.77.0.10{o2}
+      vm_ip: 10.77.0.10{o2}
       vmm_host:
-        host: 141.95.168.110
+        host: 203.0.113.20
   - name: validator-3
-    advertise_ip: 141.95.168.110
-    rpc_bind_ip: 10.77.0.11
-    hyperlane_public_url: http://141.95.168.110:9001
+    advertise_ip: 203.0.113.20
+    hyperlane_public_url: http://203.0.113.20:9001
     vm:
-      bridge_ip: 10.77.0.11{o3}
+      vm_ip: 10.77.0.11{o3}
       vmm_host:
-        host: 141.95.168.110
+        host: 203.0.113.20
 hyperlane:
   origins:
     - domain: 54322345
@@ -1114,7 +1172,8 @@ genesis:
             ]
         );
 
-        // Missing static VM fields (prefix/gateway/dns) and rpc_bind_ip != bridge_ip are rejected.
+        // Missing static VM fields (prefix/gateway/dns) and unrelated rpc_bind_ip are rejected;
+        // loopback rpc_bind_ip (127.0.0.1) is allowed at config/build time (refused at deploy/start/update).
         let mut missing_prefix = mixed_host_vm_config([Some(0), Some(1), Some(0), Some(1)]);
         missing_prefix.vm.as_mut().unwrap().prefix = None;
         assert!(missing_prefix
@@ -1123,13 +1182,30 @@ genesis:
             .to_string()
             .contains("vm.prefix"));
 
+        let mut loopback_bind = mixed_host_vm_config([Some(0), Some(1), Some(0), Some(1)]);
+        loopback_bind.founders[0].rpc_bind_ip = Some(Ipv4Addr::LOCALHOST);
+        loopback_bind.validate().unwrap();
+        assert_eq!(
+            loopback_bind
+                .founder_rpc_bind_ip(&loopback_bind.founders[0])
+                .unwrap(),
+            Ipv4Addr::LOCALHOST
+        );
+        // Omitting rpc_bind_ip in VM mode defaults to vm.vm_ip.
+        assert_eq!(
+            loopback_bind
+                .founder_rpc_bind_ip(&loopback_bind.founders[1])
+                .unwrap(),
+            Ipv4Addr::new(10, 77, 0, 11)
+        );
+
         let mut mismatch_bind = mixed_host_vm_config([Some(0), Some(1), Some(0), Some(1)]);
-        mismatch_bind.founders[0].rpc_bind_ip = Ipv4Addr::LOCALHOST;
+        mismatch_bind.founders[0].rpc_bind_ip = Some(Ipv4Addr::new(10, 77, 0, 99));
         assert!(mismatch_bind
             .validate()
             .unwrap_err()
             .to_string()
-            .contains("must equal vm.bridge_ip"));
+            .contains("must be 127.0.0.1 or equal to vm.vm_ip"));
     }
 
     #[test]
@@ -1143,7 +1219,7 @@ chain_id: 424242
 certified_rpc: "http://10.77.0.68:8545"
 vm:
   vmm_host:
-    host: 162.19.107.121
+    host: 198.51.100.10
   prefix: 24
   gateway: 10.77.0.1
   dns: [1.1.1.1, 8.8.8.8]
@@ -1158,8 +1234,7 @@ genesis:
 "#,
             (0..4)
                 .map(|i| format!(
-                    "  - name: validator-{i}\n    advertise_ip: 10.77.0.{}\n    rpc_bind_ip: 10.77.0.{}\n    hyperlane_public_url: http://10.77.0.{}:9000\n    vm:\n      bridge_ip: 10.77.0.{}",
-                    68 + i,
+                    "  - name: validator-{i}\n    advertise_ip: 10.77.0.{}\n    hyperlane_public_url: http://10.77.0.{}:9000\n    vm:\n      vm_ip: 10.77.0.{}",
                     68 + i,
                     68 + i,
                     68 + i
@@ -1172,13 +1247,13 @@ genesis:
     }
 
     #[test]
-    fn vm_validation_enforces_rpc_bind_eq_bridge_ip_and_vm_name_rules() {
-        // 1. rpc_bind_ip != vm.bridge_ip must fail.
+    fn vm_validation_enforces_rpc_bind_and_vm_name_rules() {
+        // 1. Unrelated rpc_bind_ip (neither 127.0.0.1 nor vm.vm_ip) must fail.
         let mut cfg = mixed_host_vm_config([Some(0), Some(1), Some(0), Some(1)]);
-        cfg.founders[0].rpc_bind_ip = Ipv4Addr::LOCALHOST;
+        cfg.founders[0].rpc_bind_ip = Some(Ipv4Addr::new(10, 77, 0, 99));
         let err = cfg.validate().unwrap_err();
         assert!(
-            err.to_string().contains("rpc_bind_ip") && err.to_string().contains("vm.bridge_ip"),
+            err.to_string().contains("rpc_bind_ip") && err.to_string().contains("vm.vm_ip"),
             "{err}"
         );
 
@@ -1236,5 +1311,148 @@ genesis:
             err.contains("dkg_prepare_window_blocks") && err.contains("epoch_length_blocks"),
             "{err}"
         );
+    }
+
+    fn vm_config(network: &str, chain_id: u64) -> NetworkConfig {
+        serde_yaml_ng::from_str(&format!(
+            r#"
+version: 1
+name: vm-devnet
+network: {network}
+chain_id: {chain_id}
+certified_rpc: "http://10.77.0.10:8545"
+vm:
+  vmm_host:
+    host: 192.0.2.50
+  prefix: 24
+  gateway: 10.77.0.1
+  dns: [1.1.1.1, 8.8.8.8]
+  authorized_keys: ./dev.pub
+founders:
+  - name: validator-0
+    advertise_ip: 10.77.0.10
+    hyperlane_public_url: http://192.0.2.50:9000
+    vm:
+      vm_ip: 10.77.0.10
+      port_offset: 0
+  - name: validator-1
+    advertise_ip: 10.77.0.11
+    hyperlane_public_url: http://192.0.2.50:9001
+    vm:
+      vm_ip: 10.77.0.11
+      port_offset: 1
+      vcpu: 4
+      memory_gib: 8
+  - name: validator-2
+    advertise_ip: 10.77.0.12
+    hyperlane_public_url: http://192.0.2.51:9000
+    vm:
+      vm_ip: 10.77.0.12
+      port_offset: 0
+      vmm_host:
+        host: 192.0.2.51
+        user: root
+        port: 2222
+  - name: validator-3
+    advertise_ip: 10.77.0.13
+    hyperlane_public_url: http://192.0.2.51:9001
+    vm:
+      vm_ip: 10.77.0.13
+      port_offset: 1
+      vmm_host:
+        host: 192.0.2.51
+        user: root
+        port: 2222
+hyperlane:
+  origins:
+    - domain: {chain_id}
+      rpc_urls: ["https://rpc.example.invalid"]
+      reorg_period: 0
+topology:
+  use_local_defaults: true
+genesis:
+  prefunded_accounts: {{}}
+"#
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn vm_config_resolves_defaults_and_overrides() {
+        let config = vm_config("devnet", Network::Devnet.chain_id());
+        config.validate().unwrap();
+
+        let f0 = config.resolve_founder_vm(&config.founders[0]).unwrap();
+        assert_eq!(f0.vmm_host.host, "192.0.2.50");
+        assert_eq!(f0.vcpu, 3);
+        assert_eq!(f0.memory_gib, 5);
+        assert_eq!(f0.disk_gib, 40);
+        assert_eq!(f0.flavor, VmFlavor::Dev);
+        assert_eq!(f0.vm_ip, Ipv4Addr::new(10, 77, 0, 10));
+        assert_eq!(f0.authorized_keys, Some(PathBuf::from("./dev.pub")));
+
+        let f1 = config.resolve_founder_vm(&config.founders[1]).unwrap();
+        assert_eq!(f1.vcpu, 4);
+        assert_eq!(f1.memory_gib, 8);
+        assert_eq!(f1.disk_gib, 40);
+
+        let f2 = config.resolve_founder_vm(&config.founders[2]).unwrap();
+        assert_eq!(f2.vmm_host.host, "192.0.2.51");
+        assert_eq!(f2.vmm_host.user, "root");
+        assert_eq!(f2.vmm_host.port, 2222);
+    }
+
+    #[test]
+    fn vm_config_rejects_mainnet_and_invalid_combinations() {
+        let mainnet = vm_config("mainnet", Network::Mainnet.chain_id());
+        let err = mainnet.validate().unwrap_err();
+        assert!(err.to_string().contains("mainnet"), "{err}");
+
+        let mut prod_with_keys = vm_config("devnet", Network::Devnet.chain_id());
+        prod_with_keys.vm.as_mut().unwrap().flavor = VmFlavor::Prod;
+        let err = prod_with_keys.validate().unwrap_err();
+        assert!(err.to_string().contains("authorized_keys"), "{err}");
+
+        let mut duplicate_vm_ip = vm_config("devnet", Network::Devnet.chain_id());
+        duplicate_vm_ip.founders[1].vm.as_mut().unwrap().vm_ip = Ipv4Addr::new(10, 77, 0, 10);
+        let err = duplicate_vm_ip.validate().unwrap_err();
+        assert!(err.to_string().contains("duplicate vm.vm_ip"), "{err}");
+    }
+
+    #[test]
+    fn custom_rpc_port_validates_strictly_and_propagates_to_hyperlane_origin() {
+        let mut vm = vm_config("devnet", Network::Devnet.chain_id());
+        vm.hyperlane.origins.clear();
+        vm.founders[0].rpc_port = Some(18_545);
+        vm.validate().unwrap();
+        assert_eq!(vm.founders[0].rpc_port(), 18_545);
+        assert_eq!(vm.founders[1].rpc_port(), BASE_RPC_PORT);
+
+        let hl = vm.resolve_hyperlane_config(&vm.founders[0]).unwrap();
+        assert_eq!(hl.origins[0].rpc_urls, vec!["http://10.77.0.10:18545"]);
+
+        // Bare-host custom rpc_port is accepted.
+        let mut bare = config_with(4);
+        bare.founders[0].rpc_port = Some(18_545);
+        bare.validate().unwrap();
+
+        // Zero, fixed loopback ports, and collisions with P2P/Radicle ports must fail.
+        for bad in [
+            0_u16, 8551, 8876, 9000, 9002, 9003, 9101, 30303, 30400, 8776,
+        ] {
+            let mut bad_vm = vm_config("devnet", Network::Devnet.chain_id());
+            bad_vm.founders[0].rpc_port = Some(bad);
+            assert!(
+                bad_vm.validate().is_err(),
+                "VM config must reject rpc_port={bad}"
+            );
+
+            let mut bad_bare = config_with(4);
+            bad_bare.founders[0].rpc_port = Some(bad);
+            assert!(
+                bad_bare.validate().is_err(),
+                "bare-host config must reject rpc_port={bad}"
+            );
+        }
     }
 }

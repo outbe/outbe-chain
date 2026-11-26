@@ -191,7 +191,7 @@ fn required_env(name: &str) -> Result<String> {
         .ok_or_else(|| eyre::eyre!("missing environment variable: {name}"))
 }
 
-fn local_rpc_url() -> Result<String> {
+pub(crate) fn local_rpc_url() -> Result<String> {
     let bind = required_env("OUTBE_RPC_BIND_IP")?
         .parse::<std::net::Ipv4Addr>()
         .wrap_err("OUTBE_RPC_BIND_IP must be an IPv4 literal")?;
@@ -199,7 +199,16 @@ fn local_rpc_url() -> Result<String> {
         bind.is_loopback() || bind.is_private(),
         "OUTBE_RPC_BIND_IP must be a loopback or private IPv4 address"
     );
-    Ok(format!("http://{bind}:8545"))
+    let raw_port = required_env("OUTBE_RPC_PORT")?;
+    ensure!(
+        raw_port.bytes().all(|b| b.is_ascii_digit()),
+        "OUTBE_RPC_PORT must be a decimal port in 1..=65535, got `{raw_port}`"
+    );
+    let port: u16 = raw_port
+        .parse()
+        .wrap_err_with(|| format!("OUTBE_RPC_PORT must be in 1..=65535, got `{raw_port}`"))?;
+    ensure!(port > 0, "OUTBE_RPC_PORT must be in 1..=65535, got 0");
+    Ok(format!("http://{bind}:{port}"))
 }
 
 fn valid_key(value: &str) -> bool {

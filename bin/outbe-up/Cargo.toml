@@ -10,27 +10,23 @@ name = "outbe-up"
 path = "src/main.rs"
 
 [dependencies]
-alloy-primitives = { workspace = true, features = ["std"] }
 clap.workspace = true
 eyre.workspace = true
-hex.workspace = true
-outbe-genesis-cli.workspace = true
 outbe-operator-node-role.workspace = true
-outbe-operator-remote.workspace = true
 outbe-operator-vm.workspace = true
 outbe-operator-vm-image.workspace = true
-outbe-primitives = { workspace = true, features = ["tee-attestation-v1"] }
-outbe-software-bundle.workspace = true
 reqwest.workspace = true
 rustix.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-serde_yaml_ng.workspace = true
 tempfile.workspace = true
 tokio.workspace = true
-toml.workspace = true
 url.workspace = true
-walkdir.workspace = true
+
+[dev-dependencies]
+alloy-primitives = { workspace = true, features = ["std"] }
+outbe-primitives = { workspace = true, features = ["tee-attestation-v1"] }
+outbe-software-bundle.workspace = true
 
 [lints]
 workspace = true

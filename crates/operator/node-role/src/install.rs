@@ -30,14 +30,14 @@ const ENV_KEYS: &[&str] = &[
     "OUTBE_NODE_ROLE",
     "OUTBE_EXTERNAL_IP",
     "OUTBE_RPC_BIND_IP",
+    "OUTBE_RPC_PORT",
+    "OUTBE_VM_IP",
     "OUTBE_VM_PREFIX",
     "OUTBE_VM_GATEWAY",
     "OUTBE_VM_DNS",
     "OUTBE_RETH_P2P_PORT",
     "OUTBE_RETH_DISCOVERY_PORT",
     "OUTBE_CONSENSUS_PORT",
-    "OUTBE_RETH_PORT",
-    "OUTBE_DISCV5_PORT",
     "OUTBE_RADICLE_PORT",
     "OUTBE_CERTIFIED_RPC",
     "OUTBE_VALIDATOR_ADDRESS",
@@ -51,12 +51,14 @@ const FULL_NODE_ENV_KEYS: &[&str] = &[
     "OUTBE_NODE_ROLE",
     "OUTBE_EXTERNAL_IP",
     "OUTBE_RPC_BIND_IP",
+    "OUTBE_RPC_PORT",
+    "OUTBE_VM_IP",
     "OUTBE_VM_PREFIX",
     "OUTBE_VM_GATEWAY",
     "OUTBE_VM_DNS",
+    "OUTBE_RETH_P2P_PORT",
+    "OUTBE_RETH_DISCOVERY_PORT",
     "OUTBE_CONSENSUS_PORT",
-    "OUTBE_RETH_PORT",
-    "OUTBE_DISCV5_PORT",
     "OUTBE_RADICLE_PORT",
     "OUTBE_CERTIFIED_RPC",
     "OUTBE_BOOTNODES",
@@ -64,12 +66,11 @@ const FULL_NODE_ENV_KEYS: &[&str] = &[
     "OUTBE_CHAIN_ID",
 ];
 
-const VM_STATIC_NET_KEYS: &[&str] = &["OUTBE_VM_PREFIX", "OUTBE_VM_GATEWAY", "OUTBE_VM_DNS"];
-const HOST_PORT_KEYS: &[&str] = &[
-    "OUTBE_RETH_P2P_PORT",
-    "OUTBE_RETH_DISCOVERY_PORT",
-    "OUTBE_CONSENSUS_PORT",
-    "OUTBE_RADICLE_PORT",
+const VM_STATIC_NET_KEYS: &[&str] = &[
+    "OUTBE_VM_IP",
+    "OUTBE_VM_PREFIX",
+    "OUTBE_VM_GATEWAY",
+    "OUTBE_VM_DNS",
 ];
 
 pub fn run() -> Result<()> {
@@ -181,13 +182,8 @@ fn read_environment_with_keys(
         if *name == "OUTBE_CONSENSUS_EXTRA_ARGS" {
             return false;
         }
-        if require_vm_static_net {
-            if matches!(*name, "OUTBE_RETH_P2P_PORT" | "OUTBE_RETH_DISCOVERY_PORT") {
-                return false;
-            }
-        } else if *name == "OUTBE_NODE_ROLE"
-            || VM_STATIC_NET_KEYS.contains(name)
-            || matches!(*name, "OUTBE_RETH_PORT" | "OUTBE_DISCV5_PORT")
+        if !require_vm_static_net
+            && (*name == "OUTBE_NODE_ROLE" || VM_STATIC_NET_KEYS.contains(name))
         {
             return false;
         }
@@ -240,22 +236,14 @@ fn validate_environment_inner(
     );
     let any_vm_net = VM_STATIC_NET_KEYS.iter().any(|k| values.contains_key(*k));
     if require_vm_static_net || any_vm_net {
-        let _ = crate::vm_network::StaticVmNetworkConfig::from_env(values)?;
+        let static_net = crate::vm_network::StaticVmNetworkConfig::from_env(values)?;
+        ensure!(
+            rpc_bind == std::net::Ipv4Addr::LOCALHOST || rpc_bind == static_net.address,
+            "OUTBE_RPC_BIND_IP ({rpc_bind}) must be 127.0.0.1 or equal to OUTBE_VM_IP ({}) for VM roles",
+            static_net.address
+        );
     }
-    let any_vm_only_port =
-        values.contains_key("OUTBE_RETH_PORT") || values.contains_key("OUTBE_DISCV5_PORT");
-    if require_vm_static_net || any_vm_only_port {
-        let _ = crate::vm_network::VmPortsConfig::from_env(values)?;
-    } else {
-        for name in HOST_PORT_KEYS {
-            ensure!(
-                values
-                    .get(*name)
-                    .is_some_and(|v| v.parse::<u16>().is_ok_and(|port| port > 0)),
-                "{name} must be a positive TCP/UDP port"
-            );
-        }
-    }
+    let _ = crate::vm_network::VmPortsConfig::from_env(values)?;
     let rpc = &values["OUTBE_CERTIFIED_RPC"];
     ensure!(
         (rpc.starts_with("http://") || rpc.starts_with("https://"))

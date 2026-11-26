@@ -13,7 +13,7 @@
 //! - Zero host-config writes; `deploy` exits with code 2 when `outbe-up host check --json` reports
 //!   missing host prerequisites (no wait loop, no DHCP reservation strategies).
 //! - SSH ControlMaster multiplexes one connection per host (`0700` per-run socket dir, `ssh -O exit`
-//!   on drop); guest JSON-RPC is batched over stdin to each VM's service IP (`bridge_ip:8545`).
+//!   on drop); guest JSON-RPC is batched over stdin to each VM's service IP (`OUTBE_VM_IP:<rpc_port>`).
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -374,6 +374,7 @@ pub(crate) struct DesiredMember {
     pub(crate) bridge: String,
     pub(crate) service_ip: Ipv4Addr,
     pub(crate) advertise_ip: Ipv4Addr,
+    pub(crate) rpc_port: u16,
     pub(crate) port_offset: u16,
     pub(crate) vcpu: u32,
     pub(crate) memory_gib: u32,
@@ -558,7 +559,12 @@ pub(crate) fn classify_host_vm(
 // ---------------------------------------------------------------------------
 
 pub async fn deploy(options: DeployOptions<'_>) -> Result<()> {
-    let session = Arc::new(SshControlSession::new(options.ssh_key, options.ssh_config)?);
+    let build = NetworkArtifacts::load(options.artifacts)?;
+    let session = Arc::new(SshControlSession::new_for_network(
+        options.ssh_key,
+        options.ssh_config,
+        &build.manifest.genesis.final_sha256,
+    )?);
     let exec: Arc<dyn HostExec> = session.clone();
     let res = deploy_with_exec(&options, exec).await;
     session.close_all();
@@ -566,7 +572,12 @@ pub async fn deploy(options: DeployOptions<'_>) -> Result<()> {
 }
 
 pub async fn start(options: StartOptions<'_>) -> Result<()> {
-    let session = Arc::new(SshControlSession::new(options.ssh_key, options.ssh_config)?);
+    let build = NetworkArtifacts::load(options.artifacts)?;
+    let session = Arc::new(SshControlSession::new_for_network(
+        options.ssh_key,
+        options.ssh_config,
+        &build.manifest.genesis.final_sha256,
+    )?);
     let exec: Arc<dyn HostExec> = session.clone();
     let res = start_with_exec(&options, exec).await;
     session.close_all();
@@ -574,7 +585,12 @@ pub async fn start(options: StartOptions<'_>) -> Result<()> {
 }
 
 pub async fn stop(options: StopOptions<'_>) -> Result<()> {
-    let session = Arc::new(SshControlSession::new(options.ssh_key, options.ssh_config)?);
+    let build = NetworkArtifacts::load(options.artifacts)?;
+    let session = Arc::new(SshControlSession::new_for_network(
+        options.ssh_key,
+        options.ssh_config,
+        &build.manifest.genesis.final_sha256,
+    )?);
     let exec: Arc<dyn HostExec> = session.clone();
     let res = stop_with_exec(&options, exec).await;
     session.close_all();
@@ -582,7 +598,12 @@ pub async fn stop(options: StopOptions<'_>) -> Result<()> {
 }
 
 pub async fn status(options: StatusOptions<'_>) -> Result<()> {
-    let session = Arc::new(SshControlSession::new(options.ssh_key, options.ssh_config)?);
+    let build = NetworkArtifacts::load(options.artifacts)?;
+    let session = Arc::new(SshControlSession::new_for_network(
+        options.ssh_key,
+        options.ssh_config,
+        &build.manifest.genesis.final_sha256,
+    )?);
     let exec: Arc<dyn HostExec> = session.clone();
     let res = status_with_exec(&options, exec).await;
     session.close_all();
@@ -590,7 +611,12 @@ pub async fn status(options: StatusOptions<'_>) -> Result<()> {
 }
 
 pub async fn remove(options: RemoveOptions<'_>) -> Result<()> {
-    let session = Arc::new(SshControlSession::new(options.ssh_key, options.ssh_config)?);
+    let build = NetworkArtifacts::load(options.artifacts)?;
+    let session = Arc::new(SshControlSession::new_for_network(
+        options.ssh_key,
+        options.ssh_config,
+        &build.manifest.genesis.final_sha256,
+    )?);
     let exec: Arc<dyn HostExec> = session.clone();
     let res = remove_with_exec(&options, exec).await;
     session.close_all();
@@ -601,6 +627,119 @@ pub async fn remove(options: RemoveOptions<'_>) -> Result<()> {
 // Deploy (host-authoritative reconcile, pinned outbe-up, stdin tar, exit 2 on host check)
 // ---------------------------------------------------------------------------
 
+pub(super) fn ensure_vm_rpc_reachable_for_orchestration(build: &NetworkArtifacts) -> Result<()> {
+    for founder in &build.config.founders {
+        let resolved = build.config.resolve_founder_vm(founder)?;
+        let rpc_bind_ip = build.config.founder_rpc_bind_ip(founder)?;
+        ensure!(
+            rpc_bind_ip == resolved.vm_ip,
+            "refusing VM orchestration: founder `{}` sets rpc_bind_ip={rpc_bind_ip} != vm.vm_ip={}; \
+             RPC-based readiness checks require rpc_bind_ip to match vm_ip (omit rpc_bind_ip or set it to {})",
+            founder.name,
+            resolved.vm_ip,
+            resolved.vm_ip
+        );
+    }
+    Ok(())
+}
+
+/// Extract the host component from an HTTP(S) URL and determine whether it is a private/loopback/
+/// link-local address that must be queried via SSH from the first VMM host rather than locally.
+pub(super) fn is_private_rpc_url(url: &str) -> Result<bool> {
+    let rest = url
+        .strip_prefix("http://")
+        .or_else(|| url.strip_prefix("https://"))
+        .ok_or_else(|| eyre::eyre!("certified_rpc must be an HTTP(S) URL: `{url}`"))?;
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let host_port = authority.rsplit_once('@').map_or(authority, |(_, hp)| hp);
+    let host = if let Some(bracketed) = host_port.strip_prefix('[') {
+        bracketed
+            .split(']')
+            .next()
+            .ok_or_else(|| eyre::eyre!("invalid IPv6 host in certified_rpc `{url}`"))?
+    } else {
+        host_port.split(':').next().unwrap_or("")
+    };
+    ensure!(!host.is_empty(), "certified_rpc `{url}` has an empty host");
+    if host.eq_ignore_ascii_case("localhost") {
+        return Ok(true);
+    }
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        let is_private = match ip {
+            std::net::IpAddr::V4(v4) => v4.is_private() || v4.is_loopback() || v4.is_link_local(),
+            std::net::IpAddr::V6(v6) => {
+                v6.is_loopback()
+                    || (v6.segments()[0] & 0xfe00) == 0xfc00
+                    || (v6.segments()[0] & 0xffc0) == 0xfe80
+            }
+        };
+        return Ok(is_private);
+    }
+    Ok(false)
+}
+
+async fn query_certified_rpc_chain_id_local(url: &str) -> Result<u64> {
+    let client = outbe_operator_node_role::rpc::RpcClient::new(url)?;
+    client.chain_id().await
+}
+
+fn query_certified_rpc_chain_id_via_host(exec: &dyn HostExec, ssh: &Ssh, url: &str) -> Result<u64> {
+    let req = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "eth_chainId",
+        "params": []
+    });
+    let payload = serde_json::to_vec(&req)?;
+    let cmd = format!(
+        "curl -fsS --connect-timeout 5 --max-time 15 -H 'content-type: application/json' --data-binary @- {}",
+        shell_quote(url)
+    );
+    let raw = exec.capture_stdin(ssh, "certified-rpc", &cmd, &payload)?;
+    let resp: Value = serde_json::from_str(&raw)
+        .wrap_err_with(|| format!("parse eth_chainId response from {url}"))?;
+    if let Some(err) = resp.get("error").filter(|e| !e.is_null()) {
+        bail!("RPC error from {url}: {err}");
+    }
+    resp.get("result")
+        .and_then(parse_hex_u64)
+        .ok_or_else(|| eyre::eyre!("missing hex chain_id result from {url}"))
+}
+
+/// Verify `certified_rpc` answers `eth_chainId` with `build.config.chain_id` (directly from this
+/// machine for public endpoints, or via SSH through `first_host` when `certified_rpc` uses a
+/// private/loopback/link-local address).
+pub(super) async fn verify_certified_rpc_chain_id(
+    build: &NetworkArtifacts,
+    first_host: &Ssh,
+    exec: &dyn HostExec,
+) -> Result<()> {
+    let url = &build.config.certified_rpc;
+    let expected = build.config.chain_id;
+    let use_first_host = is_private_rpc_url(url)?;
+    let via = if use_first_host {
+        format!("first host {}", first_host.host)
+    } else {
+        "local machine".to_owned()
+    };
+    let actual = if use_first_host {
+        query_certified_rpc_chain_id_via_host(exec, first_host, url)
+    } else {
+        query_certified_rpc_chain_id_local(url).await
+    }
+    .wrap_err_with(|| {
+        format!(
+            "certified_rpc ({url}) did not answer eth_chainId (checked via {via}); \
+             verify certified_rpc in network.yaml is reachable and serving chain_id {expected}"
+        )
+    })?;
+    ensure!(
+        actual == expected,
+        "certified_rpc ({url}) returned chain_id {actual}, expected {expected} (checked via {via})"
+    );
+    Ok(())
+}
+
 pub(crate) async fn deploy_with_exec(
     options: &DeployOptions<'_>,
     exec: Arc<dyn HostExec>,
@@ -609,6 +748,7 @@ pub(crate) async fn deploy_with_exec(
     progress.stage("verifying VM network artifacts, bundles, and image source");
     let build = NetworkArtifacts::load(options.artifacts)?;
     ensure_vm_deployment(&build)?;
+    ensure_vm_rpc_reachable_for_orchestration(&build)?;
 
     let local_op_bundle = build.root.join(&build.manifest.joining.bundle);
     ensure!(
@@ -758,6 +898,24 @@ pub(crate) async fn deploy_with_exec(
             .collect();
         host_vms.insert(hkey.clone(), vms);
         host_staged.insert(hkey.clone(), map);
+    }
+
+    // Check `certified_rpc` answers `eth_chainId == chain_id` when the network already has
+    // running VMs (skipped on a brand-new founding network where no chain is live yet; `start`
+    // verifies it once the network is up).
+    let any_network_vm_running = host_vms.values().flatten().any(|vm| {
+        vm.running
+            && vm
+                .owner_tag
+                .as_deref()
+                .is_some_and(|tag| tag.starts_with(&tag_prefix))
+    });
+    if any_network_vm_running {
+        progress.stage(&format!(
+            "verifying certified_rpc ({}) answers eth_chainId == {}",
+            build.config.certified_rpc, build.config.chain_id
+        ));
+        verify_certified_rpc_chain_id(&build, &desired_members[0].vmm_host, exec.as_ref()).await?;
     }
 
     let mut expected_names: BTreeSet<&str> =
@@ -1124,6 +1282,7 @@ pub(crate) async fn start_with_exec(
     progress.stage("loading network artifacts and reconciling hosts");
     let build = NetworkArtifacts::load(options.artifacts)?;
     ensure_vm_deployment(&build)?;
+    ensure_vm_rpc_reachable_for_orchestration(&build)?;
 
     let state_lock = NetworkVmState::lock(options.artifacts)?;
     let mut state = NetworkVmState::load_optional_locked(&state_lock, options.artifacts)?;
@@ -1297,6 +1456,12 @@ pub(crate) async fn start_with_exec(
         if sample_ready {
             consecutive_ready += 1;
             if consecutive_ready >= READY_CONSECUTIVE_SAMPLES {
+                progress.stage(&format!(
+                    "verifying certified_rpc ({}) answers eth_chainId == {}",
+                    build.config.certified_rpc, build.config.chain_id
+                ));
+                verify_certified_rpc_chain_id(&build, &desired_members[0].vmm_host, exec.as_ref())
+                    .await?;
                 progress.done(&format!(
                     "VM network {} finalized (baseline B={}, growth >= +{}, {} consecutive ready samples)",
                     build.config.name,
@@ -2084,6 +2249,7 @@ fn build_member_state(
         bridge: member.bridge.clone(),
         service_ip: member.service_ip,
         advertise_ip: member.advertise_ip,
+        rpc_port: member.rpc_port,
         port_offset: member.port_offset,
         vcpu: member.vcpu,
         memory_gib: member.memory_gib,
@@ -2145,8 +2311,9 @@ fn build_desired_members(
             vmm_host: resolved.vmm_host,
             vmm_home: resolved.vmm_home,
             bridge: resolved.bridge,
-            service_ip: resolved.bridge_ip,
+            service_ip: resolved.vm_ip,
             advertise_ip: founder.advertise_ip,
+            rpc_port: founder.rpc_port(),
             port_offset: resolved.port_offset,
             vcpu: resolved.vcpu,
             memory_gib: resolved.memory_gib,
@@ -2195,6 +2362,7 @@ fn build_all_desired_members(
                 bridge: m.bridge.clone(),
                 service_ip: m.service_ip,
                 advertise_ip: m.advertise_ip,
+                rpc_port: m.rpc_port,
                 port_offset: m.port_offset,
                 vcpu: m.vcpu,
                 memory_gib: m.memory_gib,
@@ -2541,13 +2709,11 @@ impl PublishContext {
             return Ok(Vec::new());
         }
         let ports = FounderPublishedPorts::from_offset(member.port_offset)?;
-        Ok(vec![
-            format!("{}/tcp", ports.reth_p2p_tcp),
-            format!("{}/udp", ports.reth_p2p_udp),
-            format!("{}/tcp", ports.consensus_p2p_tcp),
-            format!("{}/udp", ports.reth_discv5_udp),
-            format!("{}/tcp", ports.radicle_tcp),
-        ])
+        Ok(ports
+            .dnat_ports()
+            .into_iter()
+            .map(|(public_port, _vm_port, proto, _purpose)| format!("{public_port}/{proto}"))
+            .collect())
     }
 }
 
@@ -2682,14 +2848,15 @@ struct BatchedRpcResult {
 }
 
 /// Issue all 4 consensus/execution JSON-RPC queries in a single HTTP JSON-RPC batch request over
-/// stdin to the VM's service IP (`http://<service_ip>:8545`, never DHCP IP).
+/// stdin to the VM's service IP (`http://<service_ip>:<rpc_port>`, never DHCP IP).
 fn query_vm_rpc_batch(
     exec: &dyn HostExec,
     ssh: &Ssh,
     label: &str,
     service_ip: Ipv4Addr,
+    rpc_port: u16,
 ) -> Result<BatchedRpcResult> {
-    let url = format!("http://{service_ip}:8545");
+    let url = format!("http://{service_ip}:{rpc_port}");
     let batch_req = json!([
         {"jsonrpc": "2.0", "id": 1, "method": "eth_chainId", "params": []},
         {"jsonrpc": "2.0", "id": 2, "method": "eth_getBlockByNumber", "params": ["finalized", false]},
@@ -2744,9 +2911,10 @@ fn query_vm_block_hash(
     ssh: &Ssh,
     label: &str,
     service_ip: Ipv4Addr,
+    rpc_port: u16,
     height: u64,
 ) -> Result<String> {
-    let url = format!("http://{service_ip}:8545");
+    let url = format!("http://{service_ip}:{rpc_port}");
     let req = json!({
         "jsonrpc": "2.0",
         "id": 1,
@@ -2778,13 +2946,14 @@ pub(super) fn query_validators_missed_votes(
     ssh: &Ssh,
     label: &str,
     service_ip: Ipv4Addr,
+    rpc_port: u16,
 ) -> Result<BTreeMap<String, u64>> {
     use outbe_operator_node_role::rpc::{
         decode_get_active_validators, decode_validator_missed_votes, encode_get_active_validators,
         encode_validator_by_address, VALIDATOR_SET,
     };
 
-    let url = format!("http://{service_ip}:8545");
+    let url = format!("http://{service_ip}:{rpc_port}");
     let cmd = format!(
         "curl -fsS --connect-timeout 5 --max-time 30 -H 'content-type: application/json' --data-binary @- {}",
         shell_quote(&url)
@@ -3071,12 +3240,21 @@ fn build_member_status(
         };
     }
 
-    let rpc = match query_vm_rpc_batch(exec, &member.vmm_host, &member.name, service_ip) {
+    let rpc = match query_vm_rpc_batch(
+        exec,
+        &member.vmm_host,
+        &member.name,
+        service_ip,
+        member.rpc_port,
+    ) {
         Ok(res) => res,
         Err(err) => {
             if error.is_none() {
                 error = Some(format_rpc_error_with_boot_warning(
-                    format!("RPC unreachable on service IP {service_ip}: {err:#}"),
+                    format!(
+                        "RPC unreachable on service IP {service_ip}:{}: {err:#}",
+                        member.rpc_port
+                    ),
                     boot_warning.as_deref(),
                 ));
             }
@@ -3085,7 +3263,10 @@ fn build_member_status(
     };
     if (rpc.chain_id.is_none() || rpc.finalized.is_none()) && error.is_none() {
         error = Some(format_rpc_error_with_boot_warning(
-            format!("RPC unreachable on service IP {service_ip}"),
+            format!(
+                "RPC unreachable on service IP {service_ip}:{}",
+                member.rpc_port
+            ),
             boot_warning.as_deref(),
         ));
     }

@@ -177,12 +177,14 @@ fn build_founder_tree(tree: &Path, chain_id: u64, ip: Ipv4Addr) {
                 "OUTBE_NODE_ROLE=\"founder\"\n",
                 "OUTBE_EXTERNAL_IP=\"{ip}\"\n",
                 "OUTBE_RPC_BIND_IP=\"{ip}\"\n",
+                "OUTBE_VM_IP=\"{ip}\"\n",
                 "OUTBE_VM_PREFIX=\"24\"\n",
                 "OUTBE_VM_GATEWAY=\"10.77.0.1\"\n",
                 "OUTBE_VM_DNS=\"1.1.1.1,8.8.8.8\"\n",
+                "OUTBE_RPC_PORT=\"8545\"\n",
                 "OUTBE_CONSENSUS_PORT=\"30400\"\n",
-                "OUTBE_RETH_PORT=\"30303\"\n",
-                "OUTBE_DISCV5_PORT=\"31303\"\n",
+                "OUTBE_RETH_P2P_PORT=\"30303\"\n",
+                "OUTBE_RETH_DISCOVERY_PORT=\"31303\"\n",
                 "OUTBE_RADICLE_PORT=\"8776\"\n",
                 "OUTBE_CERTIFIED_RPC=\"http://{ip}:8545\"\n",
                 "OUTBE_VALIDATOR_ADDRESS=\"0x1111111111111111111111111111111111111111\"\n",
@@ -326,7 +328,7 @@ fn build_test_vm_artifacts(
         let rel = format!("vm/validator-{idx}");
         build_founder_tree(&root.join(&rel), chain_id, ip);
         founders_yaml.push_str(&format!(
-            "  - name: validator-{idx}\n    advertise_ip: {ip}\n    rpc_bind_ip: {ip}\n    hyperlane_public_url: http://{ip}:9000\n    vm:\n      bridge_ip: {ip}\n"
+            "  - name: validator-{idx}\n    advertise_ip: {ip}\n    hyperlane_public_url: http://{ip}:9000\n    vm:\n      vm_ip: {ip}\n"
         ));
         founders_manifest.push(json!({
             "index": idx,
@@ -340,7 +342,7 @@ fn build_test_vm_artifacts(
                 "vmm_host": "192.0.2.50",
                 "vmm_user": "ubuntu",
                 "vmm_port": 22,
-                "bridge_ip": ip.to_string(),
+                "vm_ip": ip.to_string(),
                 "port_offset": 0,
                 "vcpu": 3,
                 "memory_gib": 5,
@@ -515,6 +517,7 @@ struct FakeHostState {
     rpc_participation_persistent_step: u64,
     rpc_participation_calls: usize,
     rpc_fail_participation: bool,
+    certified_rpc_chain_id_override: Option<std::result::Result<u64, String>>,
     version_bins_queried: Vec<String>,
 }
 
@@ -1146,6 +1149,19 @@ impl HostExec for FakeHostExec {
             let parsed: Value = serde_json::from_slice(stdin_bytes)?;
             if parsed.is_object() {
                 let method = parsed.get("method").and_then(Value::as_str).unwrap_or("");
+                if method == "eth_chainId" {
+                    let cid = match &g.certified_rpc_chain_id_override {
+                        Some(Ok(cid)) => *cid,
+                        Some(Err(msg)) => return Err(eyre::eyre!("{msg}")),
+                        None => 424_242,
+                    };
+                    return Ok(json!({
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "result": format!("0x{cid:x}"),
+                    })
+                    .to_string());
+                }
                 if method == "eth_call" {
                     let addrs: Vec<alloy_primitives::Address> = g
                         .vms
@@ -1800,6 +1816,7 @@ fn c2_classification_distinguishes_stale_foreign_partial_and_ours() {
         bridge: "obr0".to_owned(),
         service_ip: Ipv4Addr::new(10, 77, 0, 10),
         advertise_ip: Ipv4Addr::new(10, 77, 0, 10),
+        rpc_port: 8545,
         port_offset: 0,
         vcpu: 3,
         memory_gib: 5,
@@ -2052,6 +2069,7 @@ fn host_check_port_specs_include_p2p_and_radicle_1to1_ports() {
                 bridge: "obr0".to_owned(),
                 service_ip: bridge_ip,
                 advertise_ip: pub_ip,
+                rpc_port: 8545,
                 port_offset: offset,
                 vcpu: 3,
                 memory_gib: 5,
@@ -2066,29 +2084,29 @@ fn host_check_port_specs_include_p2p_and_radicle_1to1_ports() {
     let members = vec![
         make_member(
             0,
-            "162.19.107.121",
-            Ipv4Addr::new(162, 19, 107, 121),
+            "198.51.100.10",
+            Ipv4Addr::new(198, 51, 100, 10),
             Ipv4Addr::new(10, 77, 0, 11),
             0,
         ),
         make_member(
             1,
-            "162.19.107.121",
-            Ipv4Addr::new(162, 19, 107, 121),
+            "198.51.100.10",
+            Ipv4Addr::new(198, 51, 100, 10),
             Ipv4Addr::new(10, 77, 0, 12),
             1,
         ),
         make_member(
             2,
-            "141.95.168.110",
-            Ipv4Addr::new(141, 95, 168, 110),
+            "203.0.113.20",
+            Ipv4Addr::new(203, 0, 113, 20),
             Ipv4Addr::new(10, 77, 0, 11),
             0,
         ),
         make_member(
             3,
-            "141.95.168.110",
-            Ipv4Addr::new(141, 95, 168, 110),
+            "203.0.113.20",
+            Ipv4Addr::new(203, 0, 113, 20),
             Ipv4Addr::new(10, 77, 0, 12),
             1,
         ),
@@ -2461,31 +2479,40 @@ fn spawn_fake_rpc_http_server() -> (u16, Arc<AtomicBool>, thread::JoinHandle<()>
                     let _ = stream.set_nonblocking(false);
                     let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
                     let mut buf = [0u8; 4096];
-                    let _ = stream.read(&mut buf);
-                    let mut cnt = call_count.lock().unwrap();
-                    let poll = *cnt / 4;
-                    *cnt += 1;
-                    let height = match poll {
-                        0 => 10_u64,
-                        1 => 20_u64,
-                        _ => 21_u64,
+                    let n = stream.read(&mut buf).unwrap_or(0);
+                    let req_text = String::from_utf8_lossy(&buf[..n]);
+                    let req_body = req_text
+                        .split_once("\r\n\r\n")
+                        .map_or("", |(_, b)| b.trim());
+                    let body = if req_body.starts_with('{') && req_body.contains("eth_chainId") {
+                        json!({"jsonrpc": "2.0", "id": 1, "result": format!("0x{:x}", 424_242_u64)})
+                            .to_string()
+                    } else {
+                        let mut cnt = call_count.lock().unwrap();
+                        let poll = *cnt / 4;
+                        *cnt += 1;
+                        let height = match poll {
+                            0 => 10_u64,
+                            1 => 20_u64,
+                            _ => 21_u64,
+                        };
+                        json!([
+                            {"jsonrpc": "2.0", "id": 1, "result": format!("0x{:x}", 424_242_u64)},
+                            {"jsonrpc": "2.0", "id": 2, "result": {"number": format!("0x{height:x}"), "hash": "0x01"}},
+                            {"jsonrpc": "2.0", "id": 3, "result": "0x3"},
+                            {"jsonrpc": "2.0", "id": 4, "result": {
+                                "connectedPeers": 3,
+                                "hasThresholdShares": true,
+                                "lastFinalizedBlock": height,
+                                "vrfMaterialVersion": 1,
+                                "nextPlannedActivationHeight": 1200,
+                                "isValidator": true,
+                                "mode": "signer",
+                                "enclave": {"state": "ready", "ready": true, "offerKeyReady": true}
+                            }}
+                        ])
+                        .to_string()
                     };
-                    let body = json!([
-                        {"jsonrpc": "2.0", "id": 1, "result": format!("0x{:x}", 424_242_u64)},
-                        {"jsonrpc": "2.0", "id": 2, "result": {"number": format!("0x{height:x}"), "hash": "0x01"}},
-                        {"jsonrpc": "2.0", "id": 3, "result": "0x3"},
-                        {"jsonrpc": "2.0", "id": 4, "result": {
-                            "connectedPeers": 3,
-                            "hasThresholdShares": true,
-                            "lastFinalizedBlock": height,
-                            "vrfMaterialVersion": 1,
-                            "nextPlannedActivationHeight": 1200,
-                            "isValidator": true,
-                            "mode": "signer",
-                            "enclave": {"state": "ready", "ready": true, "offerKeyReady": true}
-                        }}
-                    ])
-                    .to_string();
                     let resp = format!(
                         "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
                         body.len()
@@ -2911,8 +2938,10 @@ async fn s4_add_validator_and_add_full_node_full_lifecycle_and_exit2_gate() {
         port: 22,
         vmm_home: None,
         bridge: None,
-        bridge_ip: Ipv4Addr::new(10, 77, 0, 20),
+        vm_ip: Ipv4Addr::new(10, 77, 0, 20),
+        rpc_bind_ip: None,
         advertise_ip: Ipv4Addr::new(198, 51, 100, 20),
+        rpc_port: 8545,
         port_offset: 2,
         image_source: None,
         vcpu: None,
@@ -3002,8 +3031,10 @@ async fn s4_add_validator_and_add_full_node_full_lifecycle_and_exit2_gate() {
             port: 22,
             vmm_home: None,
             bridge: None,
-            bridge_ip: Ipv4Addr::new(10, 77, 0, 30),
+            vm_ip: Ipv4Addr::new(10, 77, 0, 30),
+            rpc_bind_ip: None,
             advertise_ip: None,
+            rpc_port: 8545,
             image_source: None,
             vcpu: None,
             memory_gib: None,
@@ -3177,6 +3208,7 @@ fn s4_boot_error_warning_vs_live_unhealthy() {
         bridge: "obr0".to_owned(),
         service_ip: Ipv4Addr::new(10, 77, 0, 12),
         advertise_ip: Ipv4Addr::new(192, 0, 2, 50),
+        rpc_port: 8545,
         port_offset: 1,
         vcpu: 3,
         memory_gib: 5,
@@ -3355,8 +3387,10 @@ async fn s7_rolling_update_one_by_one_dkg_guard_software_bundle_and_boundary_cro
             port: 22,
             vmm_home: Some("~/.dstack-vmm"),
             bridge: Some("obr0"),
-            bridge_ip: Ipv4Addr::new(10, 77, 0, 30),
+            vm_ip: Ipv4Addr::new(10, 77, 0, 30),
+            rpc_bind_ip: None,
             advertise_ip: None,
+            rpc_port: 8545,
             image_source: None,
             vcpu: None,
             memory_gib: None,
@@ -4813,4 +4847,478 @@ fn s10_member_node_ready_requires_execution_peers_ge_1_and_consensus_peers_ge_n_
     assert!(member_node_ready(&mk_val(Some(3), 4), 424_242, 4));
     // consensus_peers < 4 STILL fails closed even with plenty of execution peers!
     assert!(!member_node_ready(&mk_val(Some(5), 3), 424_242, 4));
+}
+
+#[test]
+fn vm_rpc_queries_use_configured_non_default_rpc_port() {
+    struct CapturingExec {
+        commands: Mutex<Vec<String>>,
+    }
+
+    impl HostExec for CapturingExec {
+        fn capture(&self, _ssh: &Ssh, _label: &str, _command: &str) -> Result<String> {
+            Ok(String::new())
+        }
+        fn capture_raw(&self, _ssh: &Ssh, _label: &str, _command: &str) -> Result<String> {
+            Ok(String::new())
+        }
+        fn capture_stdin(
+            &self,
+            _ssh: &Ssh,
+            _label: &str,
+            command: &str,
+            stdin: &[u8],
+        ) -> Result<String> {
+            self.commands.lock().unwrap().push(command.to_owned());
+            let body = String::from_utf8_lossy(stdin);
+            if body.contains("outbe_consensusStatus") {
+                Ok(serde_json::json!([
+                    {"jsonrpc": "2.0", "id": 1, "result": "0x67932"},
+                    {"jsonrpc": "2.0", "id": 2, "result": {"number": "0x10", "hash": "0xabc"}},
+                    {"jsonrpc": "2.0", "id": 3, "result": "0x3"},
+                    {"jsonrpc": "2.0", "id": 4, "result": null}
+                ])
+                .to_string())
+            } else {
+                Ok(serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {"hash": "0xdeadbeef"}
+                })
+                .to_string())
+            }
+        }
+        fn run(&self, _ssh: &Ssh, _label: &str, _command: &str) -> Result<()> {
+            Ok(())
+        }
+        fn run_quiet(&self, _ssh: &Ssh, _label: &str, _command: &str) -> Result<()> {
+            Ok(())
+        }
+        fn copy_to(
+            &self,
+            _ssh: &Ssh,
+            _label: &str,
+            _sources: &[&Path],
+            _destination: &str,
+            _recursive: bool,
+        ) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    let exec = CapturingExec {
+        commands: Mutex::new(Vec::new()),
+    };
+    let ssh = Ssh {
+        host: "198.51.100.10".to_owned(),
+        user: "ubuntu".to_owned(),
+        port: 22,
+    };
+    let ip = Ipv4Addr::new(10, 77, 0, 11);
+
+    let batch = query_vm_rpc_batch(&exec, &ssh, "validator-0", ip, 18_545).unwrap();
+    assert_eq!(batch.chain_id, Some(0x67932));
+    assert_eq!(batch.finalized, Some(0x10));
+
+    let hash = query_vm_block_hash(&exec, &ssh, "validator-0", ip, 18_545, 16).unwrap();
+    assert_eq!(hash, "0xdeadbeef");
+
+    let recorded = exec.commands.lock().unwrap();
+    assert_eq!(recorded.len(), 2);
+    for cmd in recorded.iter() {
+        assert!(
+            cmd.contains("http://10.77.0.11:18545"),
+            "expected custom RPC port 18545 in command: {cmd}"
+        );
+        assert!(
+            !cmd.contains(":8545"),
+            "command must never hardcode :8545: {cmd}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn deploy_start_and_update_refuse_when_rpc_bind_ip_differs_from_vm_ip() {
+    let tmp = tempfile::tempdir().unwrap();
+    let fixture = build_test_vm_artifacts(tmp.path(), "loopbackrpc", "~/.dstack-vmm", b"outbe-up");
+
+    // Rewrite network.yaml so founder-0 binds RPC to 127.0.0.1 instead of vm.vm_ip (10.77.0.10),
+    // and update config_sha256 in network-manifest.json so NetworkArtifacts::load succeeds.
+    let yaml_path = fixture.root.join("network.yaml");
+    let raw_yaml = fs::read_to_string(&yaml_path).unwrap().replace(
+        "  - name: validator-0\n    advertise_ip: 10.77.0.10\n",
+        "  - name: validator-0\n    advertise_ip: 10.77.0.10\n    rpc_bind_ip: 127.0.0.1\n",
+    );
+    fs::write(&yaml_path, &raw_yaml).unwrap();
+    let new_sha = sha256_file(&yaml_path).unwrap();
+    let manifest_path = fixture.root.join("network-manifest.json");
+    let mut manifest: Value = serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+    manifest["config_sha256"] = json!(new_sha);
+    fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest).unwrap(),
+    )
+    .unwrap();
+
+    let fake = Arc::new(FakeHostExec::new());
+    let exec: Arc<dyn HostExec> = fake;
+    let fake_image = tmp.path().join("img.tar.zst");
+    fs::write(&fake_image, b"img").unwrap();
+
+    let deploy_err = deploy_with_exec(
+        &DeployOptions {
+            artifacts: &fixture.root,
+            image_source: ImageSource::Archive {
+                path: fake_image.clone(),
+                sha256: None,
+            },
+            ssh_key: None,
+            ssh_config: None,
+            no_tee: true,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        deploy_err
+            .to_string()
+            .contains("rpc_bind_ip=127.0.0.1 != vm.vm_ip=10.77.0.10"),
+        "{deploy_err}"
+    );
+
+    let start_err = start_with_exec(
+        &StartOptions {
+            artifacts: &fixture.root,
+            ssh_key: None,
+            ssh_config: None,
+            timeout: Duration::from_secs(10),
+            max_lag: 20,
+            min_finalized_blocks: 1,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        start_err
+            .to_string()
+            .contains("rpc_bind_ip=127.0.0.1 != vm.vm_ip=10.77.0.10"),
+        "{start_err}"
+    );
+
+    let update_err = update_with_exec(
+        &UpdateOptions {
+            artifacts: &fixture.root,
+            image_source: ImageSource::Archive {
+                path: fake_image,
+                sha256: None,
+            },
+            software_bundle: None,
+            ssh_key: None,
+            ssh_config: None,
+            timeout: Duration::from_secs(10),
+            stop_timeout: Duration::from_secs(10),
+            max_lag: 20,
+            min_finalized_blocks: 1,
+            dkg_guard_blocks: 30,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        update_err
+            .to_string()
+            .contains("rpc_bind_ip=127.0.0.1 != vm.vm_ip=10.77.0.10"),
+        "{update_err}"
+    );
+}
+
+#[tokio::test]
+async fn certified_rpc_preflight_skips_brand_new_deploy_checks_end_of_start_and_gates_existing_ops()
+{
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    // 1. Verify private vs public URL classification.
+    assert!(is_private_rpc_url("http://10.77.0.10:8545").unwrap());
+    assert!(is_private_rpc_url("http://192.168.1.5:18545").unwrap());
+    assert!(is_private_rpc_url("http://172.16.0.2:8545").unwrap());
+    assert!(is_private_rpc_url("http://127.0.0.1:8545").unwrap());
+    assert!(is_private_rpc_url("http://localhost:8545").unwrap());
+    assert!(is_private_rpc_url("http://169.254.1.2:8545").unwrap());
+    assert!(!is_private_rpc_url("https://rpc.testnet.outbe.net").unwrap());
+    assert!(!is_private_rpc_url("http://198.51.100.10:8545").unwrap());
+
+    // 2. Verify local direct HTTP eth_chainId helper against a real ephemeral HTTP listener.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let local_addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut buf = [0u8; 1024];
+        let _ = stream.read(&mut buf).await;
+        let body = r#"{"jsonrpc":"2.0","id":1,"result":"0x67932"}"#;
+        let resp = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        stream.write_all(resp.as_bytes()).await.unwrap();
+    });
+    let got_cid = query_certified_rpc_chain_id_local(&format!("http://{local_addr}"))
+        .await
+        .unwrap();
+    assert_eq!(got_cid, 424_242);
+    server.await.unwrap();
+
+    // 3. Brand-new founding deploy succeeds even when certified_rpc is unreachable (no chain yet).
+    let tmp = tempfile::tempdir().unwrap();
+    let fixture = build_test_vm_artifacts(tmp.path(), "crpc", "~/.dstack-vmm", b"outbe-up");
+    let fake_image = tmp.path().join("img.tar.zst");
+    fs::write(&fake_image, b"img").unwrap();
+    let fake = Arc::new(FakeHostExec::new());
+    fake.state.lock().unwrap().certified_rpc_chain_id_override =
+        Some(Err("connection refused".to_owned()));
+    let exec: Arc<dyn HostExec> = fake.clone();
+
+    deploy_with_exec(
+        &DeployOptions {
+            artifacts: &fixture.root,
+            image_source: ImageSource::Archive {
+                path: fake_image.clone(),
+                sha256: None,
+            },
+            ssh_key: None,
+            ssh_config: None,
+            no_tee: true,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .expect("brand-new deploy must skip certified_rpc check when no VMs are running yet");
+
+    // 4. `start` checks certified_rpc at the end and fails on mismatched chain_id.
+    fake.state.lock().unwrap().certified_rpc_chain_id_override = Some(Ok(999_999));
+    let start_err = start_with_exec(
+        &StartOptions {
+            artifacts: &fixture.root,
+            ssh_key: None,
+            ssh_config: None,
+            timeout: Duration::from_secs(15),
+            max_lag: 20,
+            min_finalized_blocks: 1,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .expect_err("start must fail at the end when certified_rpc returns wrong chain_id");
+    assert!(
+        start_err
+            .to_string()
+            .contains("returned chain_id 999999, expected 424242"),
+        "{start_err}"
+    );
+
+    // 5. With VMs now running, re-running `deploy`, `add_validator`, `add_full_node`, and `update`
+    //    must ALL fail closed before mutations when certified_rpc returns wrong chain_id.
+    let redeploy_err = deploy_with_exec(
+        &DeployOptions {
+            artifacts: &fixture.root,
+            image_source: ImageSource::Archive {
+                path: fake_image.clone(),
+                sha256: None,
+            },
+            ssh_key: None,
+            ssh_config: None,
+            no_tee: true,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .expect_err("deploy against running network must check certified_rpc");
+    assert!(
+        redeploy_err
+            .to_string()
+            .contains("returned chain_id 999999, expected 424242"),
+        "{redeploy_err}"
+    );
+
+    let add_fn_err = add_full_node_with_exec(
+        &AddFullNodeOptions {
+            artifacts: &fixture.root,
+            name: "fullnode-0",
+            host: "192.0.2.50",
+            user: None,
+            port: 22,
+            vmm_home: None,
+            bridge: None,
+            vm_ip: Ipv4Addr::new(10, 77, 0, 30),
+            rpc_bind_ip: None,
+            advertise_ip: None,
+            rpc_port: 8545,
+            image_source: None,
+            vcpu: None,
+            memory_gib: None,
+            disk_gib: None,
+            no_tee: true,
+            ssh_key: None,
+            ssh_config: None,
+            timeout: Duration::from_secs(10),
+            max_lag: 20,
+            min_finalized_blocks: 1,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .expect_err("add-full-node must fail before provisioning on wrong certified_rpc chain_id");
+    assert!(
+        add_fn_err
+            .to_string()
+            .contains("returned chain_id 999999, expected 424242"),
+        "{add_fn_err}"
+    );
+
+    let update_err = update_with_exec(
+        &UpdateOptions {
+            artifacts: &fixture.root,
+            image_source: ImageSource::Archive {
+                path: fake_image,
+                sha256: None,
+            },
+            software_bundle: None,
+            ssh_key: None,
+            ssh_config: None,
+            timeout: Duration::from_secs(10),
+            stop_timeout: Duration::from_secs(10),
+            max_lag: 20,
+            min_finalized_blocks: 1,
+            dkg_guard_blocks: 30,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .expect_err("update must fail before rolling on wrong certified_rpc chain_id");
+    assert!(
+        update_err
+            .to_string()
+            .contains("returned chain_id 999999, expected 424242"),
+        "{update_err}"
+    );
+
+    // 6. Once certified_rpc answers with expected chain_id (424242), `start` succeeds.
+    fake.state.lock().unwrap().certified_rpc_chain_id_override = Some(Ok(424_242));
+    fake.state.lock().unwrap().rpc_poll_counter = 0;
+    start_with_exec(
+        &StartOptions {
+            artifacts: &fixture.root,
+            ssh_key: None,
+            ssh_config: None,
+            timeout: Duration::from_secs(15),
+            max_lag: 20,
+            min_finalized_blocks: 1,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .expect("start must succeed once certified_rpc answers expected chain_id");
+}
+
+#[test]
+fn manifest_firewall_mappings_match_host_check_p2p_port_specs() {
+    let mixed: crate::network::config::NetworkConfig = serde_yaml_ng::from_str(
+        r#"
+version: 1
+name: fw-align
+network: testnet
+chain_id: 54322345
+certified_rpc: "http://10.77.0.10:8545"
+vm:
+  vmm_host:
+    host: 198.51.100.10
+  prefix: 24
+  gateway: 10.77.0.1
+  dns: [1.1.1.1, 8.8.8.8]
+founders:
+  - name: validator-0
+    advertise_ip: 198.51.100.10
+    hyperlane_public_url: http://198.51.100.10:9000
+    vm:
+      vm_ip: 10.77.0.10
+      port_offset: 0
+  - name: validator-1
+    advertise_ip: 198.51.100.10
+    hyperlane_public_url: http://198.51.100.10:9001
+    vm:
+      vm_ip: 10.77.0.11
+      port_offset: 1
+  - name: validator-2
+    advertise_ip: 203.0.113.20
+    hyperlane_public_url: http://203.0.113.20:9000
+    vm:
+      vm_ip: 10.77.0.10
+      port_offset: 0
+      vmm_host:
+        host: 203.0.113.20
+  - name: validator-3
+    advertise_ip: 203.0.113.20
+    hyperlane_public_url: http://203.0.113.20:9001
+    vm:
+      vm_ip: 10.77.0.11
+      port_offset: 1
+      vmm_host:
+        host: 203.0.113.20
+hyperlane:
+  gasless: true
+topology:
+  use_local_defaults: false
+genesis:
+  prefunded_accounts: {}
+"#,
+    )
+    .unwrap();
+    mixed.validate().unwrap();
+    let mappings = crate::network::build::build_vm_firewall_mappings(&mixed).unwrap();
+    let members: Vec<DesiredMember> = mixed
+        .founders
+        .iter()
+        .enumerate()
+        .map(|(index, founder)| {
+            let r = mixed.resolve_founder_vm(founder).unwrap();
+            DesiredMember {
+                index,
+                role: MemberRole::Founder,
+                name: founder.name.clone(),
+                vm_name: format!("fw-align-{}", founder.name),
+                owner_tag: format!("outbe-net:fw-align:01234567:{}", founder.name),
+                vmm_host: r.vmm_host,
+                vmm_home: r.vmm_home,
+                bridge: r.bridge,
+                service_ip: r.vm_ip,
+                advertise_ip: founder.advertise_ip,
+                rpc_port: founder.rpc_port(),
+                port_offset: r.port_offset,
+                vcpu: r.vcpu,
+                memory_gib: r.memory_gib,
+                disk_gib: r.disk_gib,
+                flavor: r.flavor,
+                no_tee: false,
+                image_name: None,
+                image_hash: None,
+                recorded_disk_sha256: None,
+            }
+        })
+        .collect();
+    let ctx = PublishContext::from_members(&members);
+    for member in &members {
+        let from_manifest: Vec<String> = mappings
+            .iter()
+            .filter(|e| e.member == member.name)
+            .map(|e| format!("{}/{}", e.public_port, e.proto))
+            .collect();
+        let from_host_check = ctx.p2p_port_specs(member).unwrap();
+        assert_eq!(
+            from_manifest, from_host_check,
+            "manifest firewall_mappings must match host check port specs for {}",
+            member.name
+        );
+    }
 }

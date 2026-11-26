@@ -13,6 +13,8 @@ founders:
       port: 22
     advertise_ip: 10.0.0.10
     rpc_bind_ip: 10.0.0.10
+    # Optional per-member HTTP JSON-RPC port (defaults to 8545; written to OUTBE_RPC_PORT).
+    # rpc_port: 8545
     hyperlane_public_url: "http://192.0.2.10:9000"
   - name: validator-1
     ssh:
@@ -77,8 +79,13 @@ genesis:
   overrides: {}
 
 # Optional VM deployment (devnet and testnet only). When present, replace each
-# founder's `ssh` block with a `vm` block (`bridge_ip`, optional `port_offset`
+# founder's `ssh` block with a `vm` block (`vm_ip`, optional `port_offset`
 # for multi-host / published deploys, plus optional host/resource overrides).
+# Three addresses are kept distinct in VM mode:
+#   - `vm.vm_ip` (`OUTBE_VM_IP`): static guest IPv4 on the host bridge (`eth0`)
+#   - `rpc_bind_ip` (`OUTBE_RPC_BIND_IP`, optional): defaults to `vm.vm_ip`; if set to `127.0.0.1`,
+#     `network build` warns and `deploy`/`start`/`update` refuse because host RPC readiness cannot work
+#   - `advertise_ip` (`OUTBE_EXTERNAL_IP`): external IPv4 advertised for P2P and on-chain registration
 # For a local VM devnet with two Hyperlane origins (the local Outbe node plus
 # host-side anvil), omit `hyperlane.origins` and configure `hyperlane.local_evm`:
 # hyperlane:

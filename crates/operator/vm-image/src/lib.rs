@@ -405,7 +405,7 @@ pub fn stage_overlay(
     )?;
 
     // 7b. Unit drop-ins for `outbe-*` services and `dstack-guest-agent.service`: console output
-    //     plus `${OUTBE_RPC_BIND_IP}:9101` metrics binding on node units.
+    //     plus `${OUTBE_VM_IP}:9101` metrics binding on node units.
     let dev_systemd_dir = dev_only.join("usr/lib/systemd/system");
     for dropin in vm_dev_dropins() {
         write_overlay_file(&dev_systemd_dir.join(dropin.name), &dropin.content, 0o644)?;
@@ -713,7 +713,7 @@ fn render_dev_diag_script() -> String {
         "fi\n",
         "\n",
         "cport=\"${OUTBE_CONSENSUS_PORT:-30400}\"\n",
-        "rport=\"${OUTBE_RETH_PORT:-30303}\"\n",
+        "rport=\"${OUTBE_RETH_P2P_PORT:-30303}\"\n",
         "radport=\"${OUTBE_RADICLE_PORT:-8776}\"\n",
         "if command -v ss >/dev/null 2>&1; then\n",
         "    ss_out=\"$(ss -H -tnap 2>/dev/null | grep -E \"outbe-chain|outbe-radicle|:(${cport}|${rport}|${radport})([^0-9]|$)\" | head -n 50 || true)\"\n",
@@ -729,8 +729,8 @@ fn render_dev_diag_script() -> String {
         "if [ -n \"$metrics_url\" ]; then\n",
         "    metrics_body=\"$(curl -fsS --max-time 3 \"$metrics_url\" 2>/dev/null || true)\"\n",
         "else\n",
-        "    if [ -n \"${OUTBE_RPC_BIND_IP:-}\" ]; then\n",
-        "        metrics_body=\"$(curl -fsS --max-time 3 \"http://${OUTBE_RPC_BIND_IP}:9101/metrics\" 2>/dev/null || true)\"\n",
+        "    if [ -n \"${OUTBE_VM_IP:-}\" ]; then\n",
+        "        metrics_body=\"$(curl -fsS --max-time 3 \"http://${OUTBE_VM_IP}:9101/metrics\" 2>/dev/null || true)\"\n",
         "    fi\n",
         "    if [ -z \"$metrics_body\" ]; then\n",
         "        metrics_body=\"$(curl -fsS --max-time 3 \"http://127.0.0.1:9101/metrics\" 2>/dev/null || true)\"\n",
@@ -1493,7 +1493,7 @@ mod tests {
         ] {
             let content = fs::read_to_string(systemd.join(node_unit)).unwrap();
             assert!(content.contains("  --metrics 127.0.0.1:9101 \\"));
-            assert!(!content.contains("--metrics ${OUTBE_RPC_BIND_IP}:9101"));
+            assert!(!content.contains("--metrics ${OUTBE_VM_IP}:9101"));
             assert!(!content.contains("--log.stdout.filter"));
             assert!(!content.contains("StandardOutput=journal+console"));
         }
@@ -1537,7 +1537,7 @@ mod tests {
             let dropin =
                 fs::read_to_string(dev_systemd.join(format!("{node_unit}.d/20-outbe-dev.conf")))
                     .unwrap();
-            assert!(dropin.contains("--metrics ${OUTBE_RPC_BIND_IP}:9101"));
+            assert!(dropin.contains("--metrics ${OUTBE_VM_IP}:9101"));
             assert!(dropin.contains("--log.stdout.filter info,commonware_p2p=debug"));
             assert!(!dropin.contains("127.0.0.1:9101"));
         }

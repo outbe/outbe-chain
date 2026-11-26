@@ -9339,10 +9339,7 @@ dependencies = [
  "alloy-primitives",
  "clap",
  "eyre",
- "hex",
- "outbe-genesis-cli",
  "outbe-operator-node-role",
- "outbe-operator-remote",
  "outbe-operator-vm",
  "outbe-operator-vm-image",
  "outbe-primitives",
@@ -9353,10 +9350,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
- "toml 0.8.23",
  "url",
- "walkdir",
- "yaml_serde",
 ]
 
 [[package]]

@@ -113,7 +113,7 @@ chain_id: 424242
 certified_rpc: "http://10.77.0.68:8545"
 vm:
   vmm_host:
-    host: 162.19.107.121
+    host: 198.51.100.10
   prefix: 24
   gateway: 10.77.0.1
   dns: [1.1.1.1, 8.8.8.8]
@@ -128,8 +128,7 @@ genesis:
 "#,
             (0..4)
                 .map(|i| format!(
-                    "  - name: validator-{i}\n    advertise_ip: 10.77.0.{}\n    rpc_bind_ip: 10.77.0.{}\n    hyperlane_public_url: http://10.77.0.{}:9000\n    vm:\n      bridge_ip: 10.77.0.{}",
-                    68 + i,
+                    "  - name: validator-{i}\n    advertise_ip: 10.77.0.{}\n    hyperlane_public_url: http://10.77.0.{}:9000\n    vm:\n      vm_ip: 10.77.0.{}",
                     68 + i,
                     68 + i,
                     68 + i
@@ -180,43 +179,39 @@ chain_id: 54322345
 certified_rpc: "http://10.77.0.80:8545"
 vm:
   vmm_host:
-    host: 162.19.107.121
+    host: 198.51.100.10
   prefix: 24
   gateway: 10.77.0.1
   dns: [1.1.1.1, 8.8.8.8]
 founders:
   - name: validator-0
-    advertise_ip: 162.19.107.121
-    rpc_bind_ip: 10.77.0.80
-    hyperlane_public_url: http://162.19.107.121:9000
+    advertise_ip: 198.51.100.10
+    hyperlane_public_url: http://198.51.100.10:9000
     vm:
-      bridge_ip: 10.77.0.80
+      vm_ip: 10.77.0.80
       port_offset: 0
   - name: validator-1
-    advertise_ip: 162.19.107.121
-    rpc_bind_ip: 10.77.0.81
-    hyperlane_public_url: http://162.19.107.121:9001
+    advertise_ip: 198.51.100.10
+    hyperlane_public_url: http://198.51.100.10:9001
     vm:
-      bridge_ip: 10.77.0.81
+      vm_ip: 10.77.0.81
       port_offset: 1
   - name: validator-2
-    advertise_ip: 141.95.168.110
-    rpc_bind_ip: 10.77.0.80
-    hyperlane_public_url: http://141.95.168.110:9000
+    advertise_ip: 203.0.113.20
+    hyperlane_public_url: http://203.0.113.20:9000
     vm:
-      bridge_ip: 10.77.0.80
+      vm_ip: 10.77.0.80
       port_offset: 0
       vmm_host:
-        host: 141.95.168.110
+        host: 203.0.113.20
   - name: validator-3
-    advertise_ip: 141.95.168.110
-    rpc_bind_ip: 10.77.0.81
-    hyperlane_public_url: http://141.95.168.110:9001
+    advertise_ip: 203.0.113.20
+    hyperlane_public_url: http://203.0.113.20:9001
     vm:
-      bridge_ip: 10.77.0.81
+      vm_ip: 10.77.0.81
       port_offset: 1
       vmm_host:
-        host: 141.95.168.110
+        host: 203.0.113.20
 hyperlane:
   gasless: true
 topology:
@@ -253,35 +248,61 @@ genesis:
     assert_eq!(test_manifest["founders"][1]["vm"]["port_offset"], 1);
     assert_eq!(test_manifest["founders"][2]["vm"]["port_offset"], 0);
     assert_eq!(test_manifest["founders"][3]["vm"]["port_offset"], 1);
+    let fw = test_manifest["firewall_mappings"]
+        .as_array()
+        .expect("mixed-host manifest must include firewall_mappings");
+    assert_eq!(fw.len(), 20);
+    assert_eq!(fw[0]["member"], "validator-0");
+    assert_eq!(fw[0]["host"], "198.51.100.10");
+    assert_eq!(fw[0]["public_ip"], "198.51.100.10");
+    assert_eq!(fw[0]["public_port"], 30303);
+    assert_eq!(fw[0]["proto"], "tcp");
+    assert_eq!(fw[0]["vm_ip"], "10.77.0.80");
+    assert_eq!(fw[0]["vm_port"], 30303);
+    assert_eq!(fw[0]["purpose"], "reth-p2p");
+    let build_stdout = String::from_utf8_lossy(&build_test.stdout);
+    assert!(
+        build_stdout.contains("DNAT / firewall mappings:")
+            && build_stdout.contains("consensus-p2p")
+            && build_stdout.contains("reth-discovery"),
+        "build stdout must print DNAT / firewall mappings table:\n{build_stdout}"
+    );
 
     let bootnodes = fs::read_to_string(testnet_out.join("reth-bootnodes.txt")).unwrap();
-    assert!(bootnodes.contains("@162.19.107.121:30303"), "{bootnodes}");
-    assert!(bootnodes.contains("@162.19.107.121:30304"), "{bootnodes}");
-    assert!(bootnodes.contains("@141.95.168.110:30303"), "{bootnodes}");
-    assert!(bootnodes.contains("@141.95.168.110:30304"), "{bootnodes}");
+    assert!(bootnodes.contains("@198.51.100.10:30303"), "{bootnodes}");
+    assert!(bootnodes.contains("@198.51.100.10:30304"), "{bootnodes}");
+    assert!(bootnodes.contains("@203.0.113.20:30303"), "{bootnodes}");
+    assert!(bootnodes.contains("@203.0.113.20:30304"), "{bootnodes}");
 
     let env0 = fs::read_to_string(testnet_out.join("vm/validator-0/validator.env")).unwrap();
     assert!(
-        env0.contains("OUTBE_EXTERNAL_IP=\"162.19.107.121\""),
+        env0.contains("OUTBE_EXTERNAL_IP=\"198.51.100.10\""),
         "{env0}"
     );
     assert!(env0.contains("OUTBE_RPC_BIND_IP=\"10.77.0.80\""), "{env0}");
+    assert!(env0.contains("OUTBE_VM_IP=\"10.77.0.80\""), "{env0}");
     assert!(env0.contains("OUTBE_VM_PREFIX=\"24\""), "{env0}");
     assert!(env0.contains("OUTBE_VM_GATEWAY=\"10.77.0.1\""), "{env0}");
     assert!(env0.contains("OUTBE_VM_DNS=\"1.1.1.1,8.8.8.8\""), "{env0}");
     assert!(env0.contains("OUTBE_CONSENSUS_PORT=\"30400\""), "{env0}");
-    assert!(env0.contains("OUTBE_RETH_PORT=\"30303\""), "{env0}");
-    assert!(env0.contains("OUTBE_DISCV5_PORT=\"31303\""), "{env0}");
+    assert!(env0.contains("OUTBE_RETH_P2P_PORT=\"30303\""), "{env0}");
+    assert!(
+        env0.contains("OUTBE_RETH_DISCOVERY_PORT=\"31303\""),
+        "{env0}"
+    );
     assert!(env0.contains("OUTBE_RADICLE_PORT=\"8776\""), "{env0}");
-    assert!(env0.contains("162.19.107.121:30400"), "{env0}");
-    assert!(env0.contains("162.19.107.121:30401"), "{env0}");
-    assert!(env0.contains("141.95.168.110:30400"), "{env0}");
-    assert!(env0.contains("141.95.168.110:30401"), "{env0}");
+    assert!(env0.contains("198.51.100.10:30400"), "{env0}");
+    assert!(env0.contains("198.51.100.10:30401"), "{env0}");
+    assert!(env0.contains("203.0.113.20:30400"), "{env0}");
+    assert!(env0.contains("203.0.113.20:30401"), "{env0}");
 
     let env1 = fs::read_to_string(testnet_out.join("vm/validator-1/validator.env")).unwrap();
     assert!(env1.contains("OUTBE_CONSENSUS_PORT=\"30401\""), "{env1}");
-    assert!(env1.contains("OUTBE_RETH_PORT=\"30304\""), "{env1}");
-    assert!(env1.contains("OUTBE_DISCV5_PORT=\"31304\""), "{env1}");
+    assert!(env1.contains("OUTBE_RETH_P2P_PORT=\"30304\""), "{env1}");
+    assert!(
+        env1.contains("OUTBE_RETH_DISCOVERY_PORT=\"31304\""),
+        "{env1}"
+    );
     assert!(env1.contains("OUTBE_RADICLE_PORT=\"8777\""), "{env1}");
 
     let feeder0 =

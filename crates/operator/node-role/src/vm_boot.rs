@@ -840,12 +840,14 @@ mod tests {
                 "OUTBE_NODE_ROLE=\"{role}\"\n",
                 "OUTBE_EXTERNAL_IP=\"10.0.0.1\"\n",
                 "OUTBE_RPC_BIND_IP=\"10.77.0.10\"\n",
+                "OUTBE_VM_IP=\"10.77.0.10\"\n",
                 "OUTBE_VM_PREFIX=\"24\"\n",
                 "OUTBE_VM_GATEWAY=\"10.77.0.1\"\n",
                 "OUTBE_VM_DNS=\"1.1.1.1,8.8.8.8\"\n",
+                "OUTBE_RPC_PORT=\"8545\"\n",
                 "OUTBE_CONSENSUS_PORT=\"30400\"\n",
-                "OUTBE_RETH_PORT=\"30303\"\n",
-                "OUTBE_DISCV5_PORT=\"31303\"\n",
+                "OUTBE_RETH_P2P_PORT=\"30303\"\n",
+                "OUTBE_RETH_DISCOVERY_PORT=\"31303\"\n",
                 "OUTBE_RADICLE_PORT=\"8776\"\n",
                 "OUTBE_CERTIFIED_RPC=\"http://127.0.0.1:8545\"\n",
                 "OUTBE_VALIDATOR_ADDRESS=\"0x1111111111111111111111111111111111111111\"\n",
@@ -1188,12 +1190,14 @@ mod tests {
                 "OUTBE_NODE_ROLE=\"full-node\"\n",
                 "OUTBE_EXTERNAL_IP=\"10.0.0.2\"\n",
                 "OUTBE_RPC_BIND_IP=\"10.77.0.20\"\n",
+                "OUTBE_VM_IP=\"10.77.0.20\"\n",
                 "OUTBE_VM_PREFIX=\"24\"\n",
                 "OUTBE_VM_GATEWAY=\"10.77.0.1\"\n",
                 "OUTBE_VM_DNS=\"1.1.1.1,8.8.8.8\"\n",
+                "OUTBE_RPC_PORT=\"8545\"\n",
                 "OUTBE_CONSENSUS_PORT=\"30400\"\n",
-                "OUTBE_RETH_PORT=\"30303\"\n",
-                "OUTBE_DISCV5_PORT=\"31303\"\n",
+                "OUTBE_RETH_P2P_PORT=\"30303\"\n",
+                "OUTBE_RETH_DISCOVERY_PORT=\"31303\"\n",
                 "OUTBE_RADICLE_PORT=\"8776\"\n",
                 "OUTBE_CERTIFIED_RPC=\"http://10.0.0.1:8545\"\n",
                 "OUTBE_BOOTNODES=\"enode://abcd@10.0.0.1:30303\"\n",
@@ -1345,9 +1349,10 @@ mod tests {
             verify_static_tree_for_role(with_legacy_file.path(), NodeRole::FullNode, None).is_err()
         );
 
-        // 5. Loopback OUTBE_RPC_BIND_IP is refused for all VM roles (founder, joining-validator, full-node).
+        // 5. Loopback OUTBE_VM_IP is refused for all VM roles, while OUTBE_RPC_BIND_IP=127.0.0.1
+        //    is accepted (distinct from OUTBE_VM_IP) and unrelated private OUTBE_RPC_BIND_IP is refused.
         let loopback_founder = build_valid_root();
-        let env_lb = valid_env().replace("10.77.0.10", "127.0.0.1");
+        let env_lb = valid_env().replace("OUTBE_VM_IP=\"10.77.0.10\"", "OUTBE_VM_IP=\"127.0.0.1\"");
         write_file_mode(
             &loopback_founder.path().join("validator.env"),
             env_lb.as_bytes(),
@@ -1360,10 +1365,40 @@ mod tests {
             "{err}"
         );
 
+        let loopback_rpc_founder = build_valid_root();
+        let env_lb_rpc = valid_env().replace(
+            "OUTBE_RPC_BIND_IP=\"10.77.0.10\"",
+            "OUTBE_RPC_BIND_IP=\"127.0.0.1\"",
+        );
+        write_file_mode(
+            &loopback_rpc_founder.path().join("validator.env"),
+            env_lb_rpc.as_bytes(),
+            0o640,
+        );
+        verify_static_tree_for_role(loopback_rpc_founder.path(), NodeRole::Founder, None).unwrap();
+
+        let mismatch_rpc_founder = build_valid_root();
+        let env_mismatch_rpc = valid_env().replace(
+            "OUTBE_RPC_BIND_IP=\"10.77.0.10\"",
+            "OUTBE_RPC_BIND_IP=\"10.77.0.99\"",
+        );
+        write_file_mode(
+            &mismatch_rpc_founder.path().join("validator.env"),
+            env_mismatch_rpc.as_bytes(),
+            0o640,
+        );
+        let err = verify_static_tree_for_role(mismatch_rpc_founder.path(), NodeRole::Founder, None)
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("must be 127.0.0.1 or equal to OUTBE_VM_IP"),
+            "{err}"
+        );
+
         let loopback_full = build_valid_full_node_root();
         let full_env_lb = fs::read_to_string(loopback_full.path().join("validator.env"))
             .unwrap()
-            .replace("10.77.0.20", "127.0.0.1");
+            .replace("OUTBE_VM_IP=\"10.77.0.20\"", "OUTBE_VM_IP=\"127.0.0.1\"");
         write_file_mode(
             &loopback_full.path().join("validator.env"),
             full_env_lb.as_bytes(),

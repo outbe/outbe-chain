@@ -142,7 +142,12 @@ enum PollStep<T> {
 }
 
 pub async fn update(options: UpdateOptions<'_>) -> Result<()> {
-    let session = Arc::new(SshControlSession::new(options.ssh_key, options.ssh_config)?);
+    let build = NetworkArtifacts::load(options.artifacts)?;
+    let session = Arc::new(SshControlSession::new_for_network(
+        options.ssh_key,
+        options.ssh_config,
+        &build.manifest.genesis.final_sha256,
+    )?);
     let exec: Arc<dyn HostExec> = session.clone();
     let res = update_with_exec(&options, exec).await;
     session.close_all();
@@ -163,6 +168,16 @@ pub(crate) async fn update_with_exec(
 
     let build = NetworkArtifacts::load(options.artifacts)?;
     ensure_vm_deployment(&build)?;
+    super::ensure_vm_rpc_reachable_for_orchestration(&build)?;
+    let first_host = build
+        .config
+        .resolve_founder_vm(&build.config.founders[0])?
+        .vmm_host;
+    progress.stage(&format!(
+        "verifying certified_rpc ({}) answers eth_chainId == {}",
+        build.config.certified_rpc, build.config.chain_id
+    ));
+    super::verify_certified_rpc_chain_id(&build, &first_host, exec.as_ref()).await?;
 
     let bundle_path = options
         .software_bundle
@@ -1170,6 +1185,7 @@ async fn observe_zero_missed_votes_window(
         &probe.vmm_host,
         &probe.name,
         probe.service_ip,
+        probe.rpc_port,
     )
     .wrap_err_with(|| {
         format!(
@@ -1268,6 +1284,7 @@ async fn observe_zero_missed_votes_window(
                 &probe.vmm_host,
                 &probe.name,
                 probe.service_ip,
+                probe.rpc_port,
             )
             .wrap_err_with(|| {
                 format!(
@@ -1294,6 +1311,7 @@ async fn observe_zero_missed_votes_window(
             &probe.vmm_host,
             &probe.name,
             probe.service_ip,
+            probe.rpc_port,
         )
         .wrap_err_with(|| {
             format!(

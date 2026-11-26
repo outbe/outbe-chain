@@ -12,7 +12,7 @@ Prepare each VMM host once before running `network deploy`:
 - Run `dstack-vmm` with `<vmm_home>/run/vmm.sock` reachable by the SSH user, and install `qemu-img`.
 - Run a working Quote Generation Service (QGS) on Intel TDX hosts.
 - Reserve static guest IPv4 addresses on the bridge subnet outside the host DHCP pool (for example `10.77.0.11`, `.12`, and `.13` on `10.77.0.0/24`).
-- For multi-host networks, add 1:1 DNAT and forward rules in `/etc/host-firewall.nft`. Forward each validator's public `advertise_ip` port `base + port_offset` to the same port on its `bridge_ip`:
+- For multi-host networks, add 1:1 DNAT and forward rules in `/etc/host-firewall.nft`. Forward each validator's public `advertise_ip` port `base + port_offset` to the same port on its `vm.vm_ip`:
   - `30303 + port_offset` (TCP and UDP, execution P2P)
   - `30400 + port_offset` (TCP, consensus P2P)
   - `31303 + port_offset` (UDP, discv5)
@@ -57,39 +57,35 @@ vm:
 founders:
   - name: validator-0
     advertise_ip: 198.51.100.10
-    rpc_bind_ip: 10.77.0.11
     hyperlane_public_url: "http://198.51.100.10:9000"
     vm:
-      bridge_ip: 10.77.0.11
+      vm_ip: 10.77.0.11
       port_offset: 0
   - name: validator-1
     advertise_ip: 198.51.100.10
-    rpc_bind_ip: 10.77.0.12
     hyperlane_public_url: "http://198.51.100.10:9001"
     vm:
-      bridge_ip: 10.77.0.12
+      vm_ip: 10.77.0.12
       port_offset: 1
   - name: validator-2
     advertise_ip: 203.0.113.20
-    rpc_bind_ip: 10.77.0.11
     hyperlane_public_url: "http://203.0.113.20:9000"
     vm:
       vmm_host:
         host: 203.0.113.20
         user: ubuntu
         port: 22
-      bridge_ip: 10.77.0.11
+      vm_ip: 10.77.0.11
       port_offset: 0
   - name: validator-3
     advertise_ip: 203.0.113.20
-    rpc_bind_ip: 10.77.0.12
     hyperlane_public_url: "http://203.0.113.20:9001"
     vm:
       vmm_host:
         host: 203.0.113.20
         user: ubuntu
         port: 22
-      bridge_ip: 10.77.0.12
+      vm_ip: 10.77.0.12
       port_offset: 1
 hyperlane:
   gasless: true
@@ -104,15 +100,19 @@ genesis:
 
 Configuration rules:
 
+- Three distinct per-member addresses:
+  - `vm.vm_ip` (`OUTBE_VM_IP`): static private IPv4 configured on the guest VM's `eth0` bridge interface (VM mode only). `outbe-net-up` and `outbe-up` (`vm status service_ip`, `host check --ip`, readiness, join driver) reach the VM at `<vm_ip>:<rpc_port>`.
+  - `rpc_bind_ip` (`OUTBE_RPC_BIND_IP`, optional): HTTP JSON-RPC listen address (`--http.addr`). Defaults to `vm.vm_ip` in VM mode and `127.0.0.1` on bare hosts. If set to a value other than `vm.vm_ip` (such as `127.0.0.1`) in VM mode, `network build` warns that RPC-based readiness cannot work, and `network deploy`, `network start`, and `network update` refuse the config.
+  - `advertise_ip` (`OUTBE_EXTERNAL_IP`): external/public IPv4 advertised for P2P, Radicle, and on-chain consensus registration.
 - Set `vm.memory_gib` to at least `8` on active validator VMs to avoid OOM kills.
-- Keep `rpc_bind_ip` equal to `vm.bridge_ip` for every founder.
+- Optionally set per-founder `rpc_port` (default `8545`, written to `OUTBE_RPC_PORT`) or pass `--rpc-port` to `add-validator` / `add-full-node`; RPC ports must be in `1..=65535` and distinct from all other configurable ports and fixed service ports (`8551`, `8876`, `9000`, `9002`, `9003`, `9101`).
 - Set `topology.use_local_defaults: false` when founders advertise public IPs across hosts.
 - When `genesis.base` is not set, `network build` defaults omitted epoch and DKG fields to `1200 / 300 / 300`.
 - `network build` refuses `dkg_prepare_window_blocks < 120` or `dkg_activation_grace_blocks < 120`. Shorter windows risk starving DKG `ACK_COLLECTION_GRACE` (30s) at ~4 blocks/s.
 
 ## Build, deploy, start, and inspect
 
-Build immutable network artifacts, founder keys, genesis, and the joining operator bundle:
+Build immutable network artifacts, founder keys, genesis, the static DNAT/firewall mapping table (`firewall_mappings` in `network-manifest.json`, also printed to stdout for published/multi-host VM networks), and the joining operator bundle:
 
 ```bash
 outbe-net-up network build \
@@ -121,7 +121,7 @@ outbe-net-up network build \
   --output ./out/network
 ```
 
-Deploy stopped founder VMs across all hosts (upload or fetch the guest image, stage disks, create VMs, and run `outbe-up host check`):
+Deploy stopped founder VMs across all hosts (upload or fetch the guest image, stage disks, create VMs, and run `outbe-up host check`). `deploy` (against an already-running network), `add-validator`, `add-full-node`, and `update` verify that `certified_rpc` answers `eth_chainId` with the network `chain_id` (directly from this machine for public URLs, or via the first VMM host for private addresses); on a brand-new founding network `deploy` skips that check and `start` verifies it once the network is live:
 
 ```bash
 outbe-net-up network deploy \
@@ -162,7 +162,7 @@ outbe-net-up network add-validator \
   --artifacts ./out/network \
   --name validator-joiner-0 \
   --host 203.0.113.20 \
-  --bridge-ip 10.77.0.13 \
+  --vm-ip 10.77.0.13 \
   --advertise-ip 203.0.113.20 \
   --port-offset 2 \
   --memory-gib 8 \
@@ -177,7 +177,7 @@ outbe-net-up network add-full-node \
   --artifacts ./out/network \
   --name full-node-0 \
   --host 198.51.100.10 \
-  --bridge-ip 10.77.0.13 \
+  --vm-ip 10.77.0.13 \
   --memory-gib 8 \
   --ssh-key ~/.ssh/id_ed25519 \
   --timeout 600
@@ -238,6 +238,7 @@ Do not SSH into guest VMs. Inspect networks from the operator machine and VMM ho
 
 - Run `outbe-net-up network status --artifacts ./out/network --json` for RPC, lag, VRF version, consensus peers, and TEE state.
 - Run `outbe-up vm logs --name <network>-<member> --lines 200` on the VMM host to read the guest serial log.
-- Query host-local JSON-RPC on `http://<bridge-ip>:8545` from the VMM host (for example `outbe_consensusStatus` or `eth_call` to `IValidatorSet`).
+- Query host-local JSON-RPC on `http://<vm-ip>:<rpc-port>` (default `8545`) from the VMM host (for example `outbe_consensusStatus` or `eth_call` to `IValidatorSet`).
 - Pass `--ssh-config /dev/null` on any SSH command to ignore local `~/.ssh/config` overrides.
+- SSH host fingerprints for VMM and bare-host targets are pinned per network in `$XDG_STATE_HOME/outbe-net-up/known-hosts-<genesis16>` (or `~/.local/state/outbe-net-up/known-hosts-<genesis16>`) using `StrictHostKeyChecking=accept-new`, isolated from `~/.ssh/known_hosts`.
 - Do not edit `<artifacts>/network-vm-state.json` by hand.

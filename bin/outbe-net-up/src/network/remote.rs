@@ -77,7 +77,8 @@ impl NetworkArtifacts {
             ensure!(
                 artifact.index == index
                     && artifact.name == founder.name
-                    && artifact.advertise_ip == founder.advertise_ip,
+                    && artifact.advertise_ip == founder.advertise_ip
+                    && artifact.rpc_port == founder.rpc_port(),
                 "founder {index} does not match its network manifest"
             );
             match manifest.deployment {
@@ -108,7 +109,7 @@ impl NetworkArtifacts {
                     ensure!(
                         vm.data_tree == expected
                             && vm.vmm_host == resolved.vmm_host.host
-                            && vm.bridge_ip == resolved.bridge_ip
+                            && vm.vm_ip == resolved.vm_ip
                             && vm.port_offset == resolved.port_offset
                             && root.join(&expected).is_dir(),
                         "founder {index} VM data tree does not match its network manifest"

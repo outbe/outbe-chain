@@ -2,8 +2,8 @@
 
 use std::{
     collections::BTreeMap,
-    fs,
-    os::unix::fs::PermissionsExt,
+    fs::{self, OpenOptions},
+    os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{Arc, Mutex},
@@ -29,10 +29,17 @@ pub fn validate_ssh(ssh: &Ssh, label: &str) -> Result<()> {
     Ok(())
 }
 
+#[derive(Clone, Debug)]
+struct KnownHostsPin {
+    path: PathBuf,
+    identity: String,
+}
+
 #[derive(Clone)]
 pub struct SshOptions {
     ssh_key: Option<PathBuf>,
     ssh_config: Option<PathBuf>,
+    known_hosts: Option<KnownHostsPin>,
 }
 
 impl SshOptions {
@@ -51,7 +58,25 @@ impl SshOptions {
         Ok(Self {
             ssh_key: ssh_key.map(Path::to_owned),
             ssh_config: ssh_config.map(Path::to_owned),
+            known_hosts: None,
         })
+    }
+
+    /// Pin SSH host keys per network inside `$XDG_STATE_HOME/outbe-net-up/known-hosts-<id16>`
+    /// (`0700` dir, `0600` file) with `StrictHostKeyChecking=accept-new` and per-network
+    /// `HostKeyAlias`, keeping operator SSH trust isolated from `~/.ssh/known_hosts`.
+    pub fn with_network_known_hosts(mut self, manifest_identity: &str) -> Result<Self> {
+        let state_dir = operator_state_dir("outbe-net-up")?;
+        let pin = prepare_known_hosts_in(&state_dir, manifest_identity)?;
+        self.known_hosts = Some(pin);
+        Ok(self)
+    }
+
+    /// Pin SSH host keys to an explicit `known_hosts` file path for one network identity.
+    pub fn with_known_hosts_file(mut self, path: PathBuf, manifest_identity: &str) -> Result<Self> {
+        let identity = sanitize_network_identity(manifest_identity)?;
+        self.known_hosts = Some(KnownHostsPin { path, identity });
+        Ok(self)
     }
 
     pub fn capture_ssh(&self, ssh: &Ssh, label: &str, command: &str) -> Result<String> {
@@ -210,6 +235,7 @@ impl SshOptions {
         }
         process.args(["-p", &ssh.port.to_string()]);
         process.args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]);
+        self.known_hosts_args(process, ssh);
         if let Some(ctrl) = control_path {
             process.args(["-o", "ControlMaster=auto", "-o", "ControlPersist=60s"]);
             process
@@ -217,6 +243,9 @@ impl SshOptions {
                 .arg(format!("ControlPath={}", ctrl.display()));
         }
         if let Some(ssh_key) = &self.ssh_key {
+            if self.known_hosts.is_some() {
+                process.args(["-o", "IdentitiesOnly=yes"]);
+            }
             process.arg("-i").arg(ssh_key);
         }
         process.arg(format!("{}@{}", ssh.user, ssh.host));
@@ -234,6 +263,7 @@ impl SshOptions {
         }
         process.args(["-P", &ssh.port.to_string()]);
         process.args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]);
+        self.known_hosts_args(process, ssh);
         if let Some(ctrl) = control_path {
             process.args(["-o", "ControlMaster=auto", "-o", "ControlPersist=60s"]);
             process
@@ -241,7 +271,28 @@ impl SshOptions {
                 .arg(format!("ControlPath={}", ctrl.display()));
         }
         if let Some(ssh_key) = &self.ssh_key {
+            if self.known_hosts.is_some() {
+                process.args(["-o", "IdentitiesOnly=yes"]);
+            }
             process.arg("-i").arg(ssh_key);
+        }
+    }
+
+    fn known_hosts_args(&self, process: &mut Command, ssh: &Ssh) {
+        if let Some(pin) = &self.known_hosts {
+            process.args([
+                "-o",
+                "StrictHostKeyChecking=accept-new",
+                "-o",
+                &format!("UserKnownHostsFile={}", pin.path.display()),
+                "-o",
+                &format!(
+                    "HostKeyAlias=outbe-{}-{}-{}",
+                    pin.identity,
+                    sanitize_host_alias(&ssh.host),
+                    ssh.port
+                ),
+            ]);
         }
     }
 }
@@ -259,6 +310,22 @@ pub struct SshControlSession {
 impl SshControlSession {
     pub fn new(ssh_key: Option<&Path>, ssh_config: Option<&Path>) -> Result<Self> {
         let options = SshOptions::new(ssh_key, ssh_config)?;
+        Self::from_options(options)
+    }
+
+    /// Create a ControlMaster session pinned to per-network `known_hosts` under
+    /// `$XDG_STATE_HOME/outbe-net-up/known-hosts-<id16>` (`0700`/`0600`).
+    pub fn new_for_network(
+        ssh_key: Option<&Path>,
+        ssh_config: Option<&Path>,
+        manifest_identity: &str,
+    ) -> Result<Self> {
+        let options =
+            SshOptions::new(ssh_key, ssh_config)?.with_network_known_hosts(manifest_identity)?;
+        Self::from_options(options)
+    }
+
+    fn from_options(options: SshOptions) -> Result<Self> {
         let control_dir = tempfile::Builder::new()
             .prefix("outbe-ssh-")
             .tempdir()
@@ -669,6 +736,67 @@ pub fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
+fn operator_state_dir(app_name: &str) -> Result<PathBuf> {
+    let base =
+        if let Some(path) = std::env::var_os("XDG_STATE_HOME").filter(|path| !path.is_empty()) {
+            PathBuf::from(path)
+        } else {
+            let home = std::env::var_os("HOME")
+                .filter(|path| !path.is_empty())
+                .ok_or_else(|| {
+                    eyre::eyre!("HOME is not set; cannot locate {app_name} operator state")
+                })?;
+            PathBuf::from(home).join(".local/state")
+        };
+    ensure!(
+        base.is_absolute(),
+        "{app_name} operator state directory must be absolute"
+    );
+    Ok(base.join(app_name))
+}
+
+fn sanitize_network_identity(manifest_identity: &str) -> Result<String> {
+    let trimmed = manifest_identity
+        .trim()
+        .strip_prefix("0x")
+        .unwrap_or(manifest_identity.trim());
+    let id: String = trimmed.chars().take(16).collect();
+    ensure!(
+        !id.is_empty()
+            && id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_')),
+        "invalid network identity for SSH known_hosts pinning: {manifest_identity:?}"
+    );
+    Ok(id)
+}
+
+fn sanitize_host_alias(host: &str) -> String {
+    host.chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+fn prepare_known_hosts_in(state_dir: &Path, manifest_identity: &str) -> Result<KnownHostsPin> {
+    let identity = sanitize_network_identity(manifest_identity)?;
+    fs::create_dir_all(state_dir)?;
+    fs::set_permissions(state_dir, fs::Permissions::from_mode(0o700))?;
+    let path = state_dir.join(format!("known-hosts-{identity}"));
+    OpenOptions::new()
+        .create(true)
+        .append(true)
+        .mode(0o600)
+        .open(&path)?;
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
+    Ok(KnownHostsPin { path, identity })
+}
+
 fn scp_host(host: &str) -> String {
     if host.contains(':') {
         format!("[{host}]")
@@ -875,5 +1003,74 @@ mod tests {
             msg.contains("outbe-up: staging lock busy"),
             "expected remote stderr to be surfaced, got: {msg}"
         );
+    }
+
+    #[test]
+    fn network_known_hosts_pins_accept_new_alias_and_permissions() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state_dir = tmp.path().join("outbe-net-up");
+        let pin = prepare_known_hosts_in(
+            &state_dir,
+            "0123456789abcdef999999999999999999999999999999999999999999999999",
+        )
+        .unwrap();
+        assert_eq!(pin.identity, "0123456789abcdef");
+        assert_eq!(pin.path, state_dir.join("known-hosts-0123456789abcdef"));
+        assert_eq!(
+            fs::metadata(&state_dir).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        assert_eq!(
+            fs::metadata(&pin.path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+
+        let key_file = tmp.path().join("id_ed25519");
+        fs::write(&key_file, b"fake-key").unwrap();
+
+        let endpoint = Ssh {
+            host: "198.51.100.10".into(),
+            user: "ubuntu".into(),
+            port: 2222,
+        };
+        let opts = SshOptions::new(Some(&key_file), None)
+            .unwrap()
+            .with_known_hosts_file(pin.path.clone(), &pin.identity)
+            .unwrap();
+
+        let mut ssh_cmd = Command::new("ssh");
+        opts.ssh_endpoint_args(&mut ssh_cmd, &endpoint);
+        let ssh_args: Vec<String> = ssh_cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert!(ssh_args.contains(&"StrictHostKeyChecking=accept-new".to_owned()));
+        assert!(ssh_args.contains(&format!("UserKnownHostsFile={}", pin.path.display())));
+        assert!(
+            ssh_args.contains(&"HostKeyAlias=outbe-0123456789abcdef-198.51.100.10-2222".to_owned())
+        );
+        assert!(ssh_args.contains(&"IdentitiesOnly=yes".to_owned()));
+
+        let mut scp_cmd = Command::new("scp");
+        opts.scp_endpoint_args(&mut scp_cmd, &endpoint);
+        let scp_args: Vec<String> = scp_cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert!(scp_args.contains(&"StrictHostKeyChecking=accept-new".to_owned()));
+        assert!(scp_args.contains(&format!("UserKnownHostsFile={}", pin.path.display())));
+        assert!(
+            scp_args.contains(&"HostKeyAlias=outbe-0123456789abcdef-198.51.100.10-2222".to_owned())
+        );
+        assert!(scp_args.contains(&"IdentitiesOnly=yes".to_owned()));
+
+        // Without --ssh-key, IdentitiesOnly is not forced so agent/default identities still work.
+        let agent_opts = SshOptions::new(None, None)
+            .unwrap()
+            .with_known_hosts_file(pin.path, &pin.identity)
+            .unwrap();
+        let mut agent_cmd = Command::new("ssh");
+        agent_opts.ssh_endpoint_args(&mut agent_cmd, &endpoint);
+        assert!(!agent_cmd.get_args().any(|arg| arg == "IdentitiesOnly=yes"));
     }
 }

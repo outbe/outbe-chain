@@ -52,9 +52,9 @@ const AMD_DHCP_LEASES: &str = "\
 0 5a:9a:a8:0f:91:46 10.77.0.12 validator-1 *
 ";
 
-const AMD_NFT_JSON: &str = r#"{"nftables":[{"metainfo":{"version":"1.1.6","json_schema_version":1}},{"table":{"family":"inet","name":"host_firewall","handle":66}},{"chain":{"family":"inet","table":"host_firewall","name":"input","handle":1,"type":"filter","hook":"input","prio":0,"policy":"drop"}},{"chain":{"family":"inet","table":"host_firewall","name":"forward","handle":2,"type":"filter","hook":"forward","prio":0,"policy":"drop"}},{"chain":{"family":"inet","table":"host_firewall","name":"output","handle":3,"type":"filter","hook":"output","prio":0,"policy":"accept"}},{"rule":{"family":"inet","table":"host_firewall","chain":"forward","handle":698,"expr":[{"match":{"op":"in","left":{"ct":{"key":"state"}},"right":["established","related"]}},{"accept":null}]}},{"rule":{"family":"inet","table":"host_firewall","chain":"forward","handle":699,"expr":[{"match":{"op":"in","left":{"ct":{"key":"state"}},"right":"invalid"}},{"drop":null}]}},{"rule":{"family":"inet","table":"host_firewall","chain":"forward","handle":700,"comment":"outbound:validator_vms","expr":[{"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"saddr"}},"right":{"prefix":{"addr":"10.77.0.0","len":24}}}},{"accept":null}]}},{"rule":{"family":"inet","table":"host_firewall","chain":"forward","handle":711,"comment":"validator-0-hyperlane","expr":[{"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"saddr"}},"right":"141.95.147.184"}},{"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":"10.77.0.11"}},{"match":{"op":"in","left":{"ct":{"key":"status"}},"right":"dnat"}},{"match":{"op":"==","left":{"payload":{"protocol":"tcp","field":"dport"}},"right":9000}},{"accept":null}]}},{"rule":{"family":"inet","table":"host_firewall","chain":"forward","handle":721,"comment":"validator-1-hyperlane","expr":[{"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"saddr"}},"right":"141.95.147.184"}},{"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":"10.77.0.12"}},{"match":{"op":"in","left":{"ct":{"key":"status"}},"right":"dnat"}},{"match":{"op":"==","left":{"payload":{"protocol":"tcp","field":"dport"}},"right":9000}},{"accept":null}]}},{"table":{"family":"ip","name":"host_firewall_nat","handle":67}},{"chain":{"family":"ip","table":"host_firewall_nat","name":"prerouting","handle":1,"type":"nat","hook":"prerouting","prio":-100,"policy":"accept"}},{"chain":{"family":"ip","table":"host_firewall_nat","name":"postrouting","handle":2,"type":"nat","hook":"postrouting","prio":100,"policy":"accept"}},{"rule":{"family":"ip","table":"host_firewall_nat","chain":"prerouting","handle":456,"comment":"validator-0-hyperlane","expr":[{"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":"162.19.107.121"}},{"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"saddr"}},"right":"141.95.147.184"}},{"match":{"op":"==","left":{"payload":{"protocol":"tcp","field":"dport"}},"right":9000}},{"dnat":{"addr":"10.77.0.11"}}]}},{"rule":{"family":"ip","table":"host_firewall_nat","chain":"prerouting","handle":466,"comment":"validator-1-hyperlane","expr":[{"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":"162.19.107.121"}},{"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"saddr"}},"right":"141.95.147.184"}},{"match":{"op":"==","left":{"payload":{"protocol":"tcp","field":"dport"}},"right":9001}},{"dnat":{"addr":"10.77.0.12","port":9000}}]}},{"rule":{"family":"ip","table":"host_firewall_nat","chain":"postrouting","handle":467,"comment":"hairpin:validator_vms","expr":[{"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"saddr"}},"right":{"prefix":{"addr":"10.77.0.0","len":24}}}},{"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":{"prefix":{"addr":"10.77.0.0","len":24}}}},{"match":{"op":"in","left":{"ct":{"key":"status"}},"right":"dnat"}},{"snat":{"addr":"162.19.107.121"}}]}},{"rule":{"family":"ip","table":"host_firewall_nat","chain":"postrouting","handle":468,"comment":"outbound:validator_vms","expr":[{"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"saddr"}},"right":{"prefix":{"addr":"10.77.0.0","len":24}}}},{"match":{"op":"!=","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":{"prefix":{"addr":"10.77.0.0","len":24}}}},{"masquerade":null}]}}]}"#;
+const AMD_NFT_JSON: &str = r#"{"nftables":[{"metainfo":{"version":"1.1.6","json_schema_version":1}},{"table":{"family":"inet","name":"host_firewall","handle":66}},{"chain":{"family":"inet","table":"host_firewall","name":"input","handle":1,"type":"filter","hook":"input","prio":0,"policy":"drop"}},{"chain":{"family":"inet","table":"host_firewall","name":"forward","handle":2,"type":"filter","hook":"forward","prio":0,"policy":"drop"}},{"chain":{"family":"inet","table":"host_firewall","name":"output","handle":3,"type":"filter","hook":"output","prio":0,"policy":"accept"}},{"rule":{"family":"inet","table":"host_firewall","chain":"forward","handle":698,"expr":[{"match":{"op":"in","left":{"ct":{"key":"state"}},"right":["established","related"]}},{"accept":null}]}},{"rule":{"family":"inet","table":"host_firewall","chain":"forward","handle":699,"expr":[{"match":{"op":"in","left":{"ct":{"key":"state"}},"right":"invalid"}},{"drop":null}]}},{"rule":{"family":"inet","table":"host_firewall","chain":"forward","handle":700,"comment":"outbound:validator_vms","expr":[{"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"saddr"}},"right":{"prefix":{"addr":"10.77.0.0","len":24}}}},{"accept":null}]}},{"rule":{"family":"inet","table":"host_firewall","chain":"forward","handle":711,"comment":"validator-0-hyperlane","expr":[{"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"saddr"}},"right":"198.51.100.30"}},{"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":"10.77.0.11"}},{"match":{"op":"in","left":{"ct":{"key":"status"}},"right":"dnat"}},{"match":{"op":"==","left":{"payload":{"protocol":"tcp","field":"dport"}},"right":9000}},{"accept":null}]}},{"rule":{"family":"inet","table":"host_firewall","chain":"forward","handle":721,"comment":"validator-1-hyperlane","expr":[{"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"saddr"}},"right":"198.51.100.30"}},{"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":"10.77.0.12"}},{"match":{"op":"in","left":{"ct":{"key":"status"}},"right":"dnat"}},{"match":{"op":"==","left":{"payload":{"protocol":"tcp","field":"dport"}},"right":9000}},{"accept":null}]}},{"table":{"family":"ip","name":"host_firewall_nat","handle":67}},{"chain":{"family":"ip","table":"host_firewall_nat","name":"prerouting","handle":1,"type":"nat","hook":"prerouting","prio":-100,"policy":"accept"}},{"chain":{"family":"ip","table":"host_firewall_nat","name":"postrouting","handle":2,"type":"nat","hook":"postrouting","prio":100,"policy":"accept"}},{"rule":{"family":"ip","table":"host_firewall_nat","chain":"prerouting","handle":456,"comment":"validator-0-hyperlane","expr":[{"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":"198.51.100.10"}},{"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"saddr"}},"right":"198.51.100.30"}},{"match":{"op":"==","left":{"payload":{"protocol":"tcp","field":"dport"}},"right":9000}},{"dnat":{"addr":"10.77.0.11"}}]}},{"rule":{"family":"ip","table":"host_firewall_nat","chain":"prerouting","handle":466,"comment":"validator-1-hyperlane","expr":[{"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":"198.51.100.10"}},{"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"saddr"}},"right":"198.51.100.30"}},{"match":{"op":"==","left":{"payload":{"protocol":"tcp","field":"dport"}},"right":9001}},{"dnat":{"addr":"10.77.0.12","port":9000}}]}},{"rule":{"family":"ip","table":"host_firewall_nat","chain":"postrouting","handle":467,"comment":"hairpin:validator_vms","expr":[{"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"saddr"}},"right":{"prefix":{"addr":"10.77.0.0","len":24}}}},{"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":{"prefix":{"addr":"10.77.0.0","len":24}}}},{"match":{"op":"in","left":{"ct":{"key":"status"}},"right":"dnat"}},{"snat":{"addr":"198.51.100.10"}}]}},{"rule":{"family":"ip","table":"host_firewall_nat","chain":"postrouting","handle":468,"comment":"outbound:validator_vms","expr":[{"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"saddr"}},"right":{"prefix":{"addr":"10.77.0.0","len":24}}}},{"match":{"op":"!=","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":{"prefix":{"addr":"10.77.0.0","len":24}}}},{"masquerade":null}]}}]}"#;
 
-const INTEL_NFT_JSON: &str = r#"{"nftables":[{"metainfo":{"version":"1.1.6","json_schema_version":1}},{"table":{"family":"inet","name":"host_firewall","handle":66}},{"chain":{"family":"inet","table":"host_firewall","name":"forward","handle":2,"type":"filter","hook":"forward","prio":0,"policy":"drop"}},{"rule":{"family":"inet","table":"host_firewall","chain":"forward","handle":700,"comment":"outbound:validator_vms","expr":[{"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"saddr"}},"right":{"prefix":{"addr":"10.77.0.0","len":24}}}},{"accept":null}]}},{"table":{"family":"ip","name":"host_firewall_nat","handle":67}},{"chain":{"family":"ip","table":"host_firewall_nat","name":"prerouting","handle":1,"type":"nat","hook":"prerouting","prio":-100,"policy":"accept"}},{"chain":{"family":"ip","table":"host_firewall_nat","name":"postrouting","handle":2,"type":"nat","hook":"postrouting","prio":100,"policy":"accept"}},{"rule":{"family":"ip","table":"host_firewall_nat","chain":"prerouting","handle":501,"comment":"validator-2-hyperlane","expr":[{"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":"141.95.168.110"}},{"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"saddr"}},"right":"141.95.147.184"}},{"match":{"op":"==","left":{"payload":{"protocol":"tcp","field":"dport"}},"right":9000}},{"dnat":{"addr":"10.77.0.11"}}]}},{"rule":{"family":"ip","table":"host_firewall_nat","chain":"prerouting","handle":502,"comment":"validator-joiner-0-hyperlane","expr":[{"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":"141.95.168.110"}},{"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"saddr"}},"right":"141.95.147.184"}},{"match":{"op":"==","left":{"payload":{"protocol":"tcp","field":"dport"}},"right":9002}},{"dnat":{"addr":"10.77.0.13","port":9000}}]}},{"rule":{"family":"ip","table":"host_firewall_nat","chain":"postrouting","handle":510,"comment":"outbound:validator_vms","expr":[{"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"saddr"}},"right":{"prefix":{"addr":"10.77.0.0","len":24}}}},{"match":{"op":"!=","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":{"prefix":{"addr":"10.77.0.0","len":24}}}},{"masquerade":null}]}}]}"#;
+const INTEL_NFT_JSON: &str = r#"{"nftables":[{"metainfo":{"version":"1.1.6","json_schema_version":1}},{"table":{"family":"inet","name":"host_firewall","handle":66}},{"chain":{"family":"inet","table":"host_firewall","name":"forward","handle":2,"type":"filter","hook":"forward","prio":0,"policy":"drop"}},{"rule":{"family":"inet","table":"host_firewall","chain":"forward","handle":700,"comment":"outbound:validator_vms","expr":[{"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"saddr"}},"right":{"prefix":{"addr":"10.77.0.0","len":24}}}},{"accept":null}]}},{"table":{"family":"ip","name":"host_firewall_nat","handle":67}},{"chain":{"family":"ip","table":"host_firewall_nat","name":"prerouting","handle":1,"type":"nat","hook":"prerouting","prio":-100,"policy":"accept"}},{"chain":{"family":"ip","table":"host_firewall_nat","name":"postrouting","handle":2,"type":"nat","hook":"postrouting","prio":100,"policy":"accept"}},{"rule":{"family":"ip","table":"host_firewall_nat","chain":"prerouting","handle":501,"comment":"validator-2-hyperlane","expr":[{"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":"203.0.113.20"}},{"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"saddr"}},"right":"198.51.100.30"}},{"match":{"op":"==","left":{"payload":{"protocol":"tcp","field":"dport"}},"right":9000}},{"dnat":{"addr":"10.77.0.11"}}]}},{"rule":{"family":"ip","table":"host_firewall_nat","chain":"prerouting","handle":502,"comment":"validator-joiner-0-hyperlane","expr":[{"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":"203.0.113.20"}},{"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"saddr"}},"right":"198.51.100.30"}},{"match":{"op":"==","left":{"payload":{"protocol":"tcp","field":"dport"}},"right":9002}},{"dnat":{"addr":"10.77.0.13","port":9000}}]}},{"rule":{"family":"ip","table":"host_firewall_nat","chain":"postrouting","handle":510,"comment":"outbound:validator_vms","expr":[{"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"saddr"}},"right":{"prefix":{"addr":"10.77.0.0","len":24}}}},{"match":{"op":"!=","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":{"prefix":{"addr":"10.77.0.0","len":24}}}},{"masquerade":null}]}}]}"#;
 
 const EMPTY_NFT_JSON: &str =
     r#"{"nftables":[{"metainfo":{"version":"1.1.6","json_schema_version":1}}]}"#;
@@ -229,7 +229,7 @@ impl HostFixture {
             match profile {
                 "amd" => (
                     "eno1",
-                    "162.19.107.121",
+                    "198.51.100.10",
                     AMD_NFT_JSON,
                     "1\n",
                     true,
@@ -238,7 +238,7 @@ impl HostFixture {
                 ),
                 "intel" => (
                     "eno1np0",
-                    "141.95.168.110",
+                    "203.0.113.20",
                     INTEL_NFT_JSON,
                     "1\n",
                     true,
@@ -247,7 +247,7 @@ impl HostFixture {
                 ),
                 "unconfigured" => (
                     "eno1",
-                    "162.19.107.121",
+                    "198.51.100.10",
                     EMPTY_NFT_JSON,
                     "0\n",
                     false,
@@ -256,7 +256,7 @@ impl HostFixture {
                 ),
                 "clean_nat" => (
                     "eno1",
-                    "162.19.107.121",
+                    "198.51.100.10",
                     EMPTY_NFT_JSON,
                     "0\n",
                     true,
@@ -265,7 +265,7 @@ impl HostFixture {
                 ),
                 "static_no_dhcp" => (
                     "eno1",
-                    "162.19.107.121",
+                    "198.51.100.10",
                     AMD_NFT_JSON,
                     "1\n",
                     true,
@@ -993,7 +993,7 @@ fn host_publish_detects_port_9000_conflict_and_prints_valid_nft_rules_readonly()
             "--port",
             "9000",
             "--source",
-            "141.95.147.184/32",
+            "198.51.100.30/32",
             "--vmm-socket",
         ])
         .arg(&amd.vmm_socket)
@@ -1033,7 +1033,7 @@ fn host_publish_detects_port_9000_conflict_and_prints_valid_nft_rules_readonly()
             "--port",
             "9000:9010",
             "--source",
-            "141.95.147.184/32",
+            "198.51.100.30/32",
             "--vmm-socket",
         ])
         .arg(&amd.vmm_socket)
@@ -1056,11 +1056,11 @@ fn host_publish_detects_port_9000_conflict_and_prints_valid_nft_rules_readonly()
     assert!(pj["conflicts"].as_array().unwrap().is_empty());
     assert_eq!(
         pj["forward_rules"][0],
-        r#"ip saddr { 141.95.147.184/32 } ip daddr 10.77.0.88 ct status dnat tcp dport 9000 accept comment "outbe-up:node-a";"#
+        r#"ip saddr { 198.51.100.30/32 } ip daddr 10.77.0.88 ct status dnat tcp dport 9000 accept comment "outbe-up:node-a";"#
     );
     assert_eq!(
         pj["prerouting_rules"][0],
-        r#"ip daddr 162.19.107.121 ip saddr { 141.95.147.184/32 } tcp dport 9010 dnat to 10.77.0.88:9000 comment "outbe-up:node-a";"#
+        r#"ip daddr 198.51.100.10 ip saddr { 198.51.100.30/32 } tcp dport 9010 dnat to 10.77.0.88:9000 comment "outbe-up:node-a";"#
     );
     assert!(pj["apply_commands"].as_array().unwrap().iter().any(|v| v
         .as_str()
@@ -1216,12 +1216,12 @@ fn host_publish_f4_port_ranges_sets_and_unparsed_dnat_fail_closed() {
       {"table":{"family":"ip","name":"host_firewall_nat","handle":67}},
       {"chain":{"family":"ip","table":"host_firewall_nat","name":"prerouting","handle":1,"type":"nat","hook":"prerouting","prio":-100,"policy":"accept"}},
       {"rule":{"family":"ip","table":"host_firewall_nat","chain":"prerouting","handle":401,"comment":"range-rule","expr":[
-        {"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":"162.19.107.121"}},
+        {"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":"198.51.100.10"}},
         {"match":{"op":"==","left":{"payload":{"protocol":"tcp","field":"dport"}},"right":{"range":[9000,9010]}}},
         {"dnat":{"addr":"10.77.0.11"}}
       ]}},
       {"rule":{"family":"ip","table":"host_firewall_nat","chain":"prerouting","handle":402,"comment":"set-rule","expr":[
-        {"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":"162.19.107.121"}},
+        {"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":"198.51.100.10"}},
         {"match":{"op":"==","left":{"payload":{"protocol":"tcp","field":"dport"}},"right":{"set":[9020,9021]}}},
         {"dnat":{"addr":"10.77.0.12"}}
       ]}}
@@ -1528,7 +1528,7 @@ fn host_check_verifies_network_dhcp_and_published_ports_readonly() {
             "--port",
             "30303:30313/udp",
             "--source",
-            "141.95.168.110/32",
+            "203.0.113.20/32",
             "--vmm-socket",
         ])
         .arg(&amd.vmm_socket)
@@ -1576,8 +1576,8 @@ fn host_check_verifies_network_dhcp_and_published_ports_readonly() {
       {"chain":{"family":"ip","table":"host_firewall_nat","name":"prerouting","handle":1,"type":"nat","hook":"prerouting","prio":-100,"policy":"accept"}},
       {"chain":{"family":"ip","table":"host_firewall_nat","name":"postrouting","handle":2,"type":"nat","hook":"postrouting","prio":100,"policy":"accept"}},
       {"rule":{"family":"ip","table":"host_firewall_nat","chain":"prerouting","handle":801,"comment":"outbe-up:node-a","expr":[
-        {"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":"162.19.107.121"}},
-        {"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"saddr"}},"right":"141.95.168.110"}},
+        {"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":"198.51.100.10"}},
+        {"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"saddr"}},"right":"203.0.113.20"}},
         {"match":{"op":"==","left":{"payload":{"protocol":"tcp","field":"dport"}},"right":30313}},
         {"dnat":{"addr":"10.77.0.88","port":30303}}
       ]}},
@@ -1638,7 +1638,7 @@ fn host_check_verifies_network_dhcp_and_published_ports_readonly() {
         {"accept":null}
       ]}},
       {"rule":{"family":"inet","table":"host_firewall","chain":"forward","handle":811,"comment":"outbe-up:node-a","expr":[
-        {"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"saddr"}},"right":"141.95.168.110"}},
+        {"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"saddr"}},"right":"203.0.113.20"}},
         {"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":"10.77.0.88"}},
         {"match":{"op":"in","left":{"ct":{"key":"status"}},"right":"dnat"}},
         {"match":{"op":"==","left":{"payload":{"protocol":"tcp","field":"dport"}},"right":30303}},
@@ -1648,8 +1648,8 @@ fn host_check_verifies_network_dhcp_and_published_ports_readonly() {
       {"chain":{"family":"ip","table":"host_firewall_nat","name":"prerouting","handle":1,"type":"nat","hook":"prerouting","prio":-100,"policy":"accept"}},
       {"chain":{"family":"ip","table":"host_firewall_nat","name":"postrouting","handle":2,"type":"nat","hook":"postrouting","prio":100,"policy":"accept"}},
       {"rule":{"family":"ip","table":"host_firewall_nat","chain":"prerouting","handle":801,"comment":"outbe-up:node-a","expr":[
-        {"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":"162.19.107.121"}},
-        {"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"saddr"}},"right":"141.95.168.110"}},
+        {"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":"198.51.100.10"}},
+        {"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"saddr"}},"right":"203.0.113.20"}},
         {"match":{"op":"==","left":{"payload":{"protocol":"tcp","field":"dport"}},"right":30313}},
         {"dnat":{"addr":"10.77.0.88","port":30303}}
       ]}},
@@ -1670,7 +1670,7 @@ fn host_check_verifies_network_dhcp_and_published_ports_readonly() {
             "--port",
             "30303:30313",
             "--source",
-            "141.95.168.110",
+            "203.0.113.20",
             "--vmm-socket",
         ])
         .arg(&amd.vmm_socket)
@@ -1910,32 +1910,32 @@ fn host_check_static_only_host_without_dhcp_local_ip_collision_and_offset_dnat()
       {"chain":{"family":"ip","table":"host_firewall_nat","name":"prerouting","handle":1,"type":"nat","hook":"prerouting","prio":-100,"policy":"accept"}},
       {"chain":{"family":"ip","table":"host_firewall_nat","name":"postrouting","handle":2,"type":"nat","hook":"postrouting","prio":100,"policy":"accept"}},
       {"rule":{"family":"ip","table":"host_firewall_nat","chain":"prerouting","handle":901,"comment":"outbe-up:node-a","expr":[
-        {"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":"162.19.107.121"}},
+        {"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":"198.51.100.10"}},
         {"match":{"op":"==","left":{"payload":{"protocol":"tcp","field":"dport"}},"right":30304}},
         {"dnat":{"addr":"10.77.0.88"}}
       ]}},
       {"rule":{"family":"ip","table":"host_firewall_nat","chain":"prerouting","handle":902,"comment":"outbe-up:node-a","expr":[
-        {"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":"162.19.107.121"}},
+        {"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":"198.51.100.10"}},
         {"match":{"op":"==","left":{"payload":{"protocol":"udp","field":"dport"}},"right":30304}},
         {"dnat":{"addr":"10.77.0.88"}}
       ]}},
       {"rule":{"family":"ip","table":"host_firewall_nat","chain":"prerouting","handle":903,"comment":"outbe-up:node-a","expr":[
-        {"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":"162.19.107.121"}},
+        {"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":"198.51.100.10"}},
         {"match":{"op":"==","left":{"payload":{"protocol":"tcp","field":"dport"}},"right":30401}},
         {"dnat":{"addr":"10.77.0.88"}}
       ]}},
       {"rule":{"family":"ip","table":"host_firewall_nat","chain":"prerouting","handle":904,"comment":"outbe-up:node-a","expr":[
-        {"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":"162.19.107.121"}},
+        {"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":"198.51.100.10"}},
         {"match":{"op":"==","left":{"payload":{"protocol":"udp","field":"dport"}},"right":31304}},
         {"dnat":{"addr":"10.77.0.88"}}
       ]}},
       {"rule":{"family":"ip","table":"host_firewall_nat","chain":"prerouting","handle":905,"comment":"outbe-up:node-a","expr":[
-        {"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":"162.19.107.121"}},
+        {"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":"198.51.100.10"}},
         {"match":{"op":"==","left":{"payload":{"protocol":"tcp","field":"dport"}},"right":8777}},
         {"dnat":{"addr":"10.77.0.88"}}
       ]}},
       {"rule":{"family":"ip","table":"host_firewall_nat","chain":"prerouting","handle":906,"comment":"outbe-up:node-a","expr":[
-        {"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":"162.19.107.121"}},
+        {"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":"198.51.100.10"}},
         {"match":{"op":"==","left":{"payload":{"protocol":"tcp","field":"dport"}},"right":9001}},
         {"dnat":{"addr":"10.77.0.88","port":9000}}
       ]}},

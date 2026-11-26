@@ -180,25 +180,27 @@ Pass `--expect-vm-id <uuid>` on `start`, `stop`, `update`, `status`, `logs`, and
 
 The measured guest image runs `outbe-vm-agent vm-boot` on startup. It reads `/opt/outbe-chain/validator.env`, configures static IPv4, and starts the systemd units for the node role. Guests do not use DHCP for service IPs.
 
-Static network keys in `validator.env`:
+Static address and network keys in `validator.env` (three distinct IPv4 addresses):
 
 - `OUTBE_NODE_ROLE`: `founder`, `joining-validator`, or `full-node`
-- `OUTBE_RPC_BIND_IP`: static guest IPv4 on the host bridge (for example `10.77.0.11`)
+- `OUTBE_VM_IP`: static private IPv4 address assigned to the guest VM's `eth0` interface on the host bridge (VM roles only, for example `10.77.0.11`)
+- `OUTBE_RPC_BIND_IP`: HTTP JSON-RPC listen address (`--http.addr`); defaults to `OUTBE_VM_IP` in VM configs (may be set to `127.0.0.1` for loopback-only RPC) and to `127.0.0.1` on bare hosts
+- `OUTBE_EXTERNAL_IP`: advertised public/external IPv4 for P2P (`--nat extip:...`), Radicle (`--advertise`), and on-chain consensus registration
 - `OUTBE_VM_PREFIX`: IPv4 prefix length (for example `24`)
 - `OUTBE_VM_GATEWAY`: bridge gateway IPv4 (for example `10.77.0.1`)
 - `OUTBE_VM_DNS`: comma-separated DNS servers (for example `1.1.1.1,8.8.8.8`)
-- `OUTBE_EXTERNAL_IP`: advertised public IPv4 for P2P and on-chain registration
 
-`outbe-vm-agent` writes `/run/systemd/network/20-wired.network.d/80-outbe-static.conf` and reloads `systemd-networkd`.
+`outbe-vm-agent` configures `eth0` from `OUTBE_VM_IP` (writing `/run/systemd/network/20-wired.network.d/80-outbe-static.conf` and reloading `systemd-networkd`) and rejects any `OUTBE_RPC_BIND_IP` other than `127.0.0.1` or `OUTBE_VM_IP`.
 
-Configurable P2P and Radicle ports in `validator.env` (with 1:1 host DNAT using `base + port_offset`):
+Configurable ports in `validator.env` (P2P and Radicle ports use 1:1 host DNAT with `base + port_offset`):
 
-- `OUTBE_RETH_PORT`: execution P2P TCP and UDP (base `30303`)
+- `OUTBE_RPC_PORT`: HTTP JSON-RPC TCP (default `8545`, bound to `OUTBE_RPC_BIND_IP`)
+- `OUTBE_RETH_P2P_PORT`: execution P2P TCP and UDP (base `30303`)
 - `OUTBE_CONSENSUS_PORT`: consensus P2P TCP (base `30400`)
-- `OUTBE_DISCV5_PORT`: execution discovery UDP (base `31303`)
+- `OUTBE_RETH_DISCOVERY_PORT`: execution discovery UDP (base `31303`)
 - `OUTBE_RADICLE_PORT`: Radicle TCP (base `8776`)
 
-Fixed guest service ports are `8545` (JSON-RPC), `8551`, `8876`, `9000` (Hyperlane), `9002`, `9003`, and `9101`. Do not assign any configurable port to a fixed port.
+Fixed guest service ports are `8551`, `8876`, `9000` (Hyperlane), `9002`, `9003`, and `9101`. Do not assign any configurable port to a fixed port or to another configurable port.
 
 Role services started by `outbe-vm-agent`:
 
@@ -212,7 +214,7 @@ Role services started by `outbe-vm-agent`:
 - **Do not stop two validators at once.** Stop or update one validator at a time. Wait until it returns to consensus in lockstep with zero missed votes before stopping the next validator.
 - **Do not stop a validator near or during a DKG ceremony.** Check `outbe_consensusStatus` first. Check that `randomnessStatus` is `"healthy"` and leave ample blocks before `nextPlannedActivationHeight`.
 - **Do not use short DKG windows.** Keep `dkg_prepare_window_blocks >= 120` and `dkg_activation_grace_blocks >= 120` (default `1200/300/300`). Shorter windows can starve the 30-second DKG `ACK_COLLECTION_GRACE` at ~4 blocks/s.
-- **Do not SSH into guest VMs during normal operation.** Query `outbe-up vm status`, `outbe-up vm logs`, and host-local JSON-RPC at `http://<bridge-ip>:8545`.
+- **Do not SSH into guest VMs during normal operation.** Query `outbe-up vm status`, `outbe-up vm logs`, and host-local JSON-RPC at `http://<vm-ip>:<rpc-port>` (default `8545`).
 
 ## Bare-host joining validator
 

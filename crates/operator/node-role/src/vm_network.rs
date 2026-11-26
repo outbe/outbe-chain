@@ -1,7 +1,7 @@
 //! Plain static IPv4 configuration for Outbe VMs (Owner Decision 10, revised).
 //!
 //! Reads the VM's static network parameters from `/opt/outbe-chain/validator.env`
-//! (`OUTBE_RPC_BIND_IP`, `OUTBE_VM_PREFIX`, `OUTBE_VM_GATEWAY`, `OUTBE_VM_DNS`), writes one
+//! (`OUTBE_VM_IP`, `OUTBE_VM_PREFIX`, `OUTBE_VM_GATEWAY`, `OUTBE_VM_DNS`), writes one
 //! runtime `systemd-networkd` drop-in under `/run/systemd/network/20-wired.network.d/`, runs
 //! `networkctl reload`, and waits bounded until the static IPv4 address (non-tentative, no DAD
 //! conflict) and default route via the configured gateway are up.
@@ -33,15 +33,17 @@ pub const STATIC_NETWORK_DROPIN_NAME: &str = "80-outbe-static.conf";
 pub const DEFAULT_APPLY_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 pub const DEFAULT_APPLY_POLL_INTERVAL: Duration = Duration::from_millis(250);
 
+pub const DEFAULT_RPC_PORT: u16 = 8_545;
 pub const DEFAULT_CONSENSUS_PORT: u16 = 30_400;
 pub const DEFAULT_RETH_PORT: u16 = 30_303;
 pub const DEFAULT_DISCV5_PORT: u16 = 31_303;
 pub const DEFAULT_RADICLE_PORT: u16 = 8_776;
-const FIXED_GUEST_PORTS: &[u16] = &[8_545, 8_551, 8_876, 9_000, 9_002, 9_003, 9_101];
+const FIXED_GUEST_PORTS: &[u16] = &[8_551, 8_876, 9_000, 9_002, 9_003, 9_101];
 
-/// Validated explicit VM listen/advertise ports from `validator.env` (`OUTBE_*_PORT`).
+/// Validated explicit listen/advertise ports from `validator.env` (`OUTBE_*_PORT`).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct VmPortsConfig {
+    pub rpc_port: u16,
     pub consensus_port: u16,
     pub reth_port: u16,
     pub discv5_port: u16,
@@ -51,6 +53,7 @@ pub struct VmPortsConfig {
 impl Default for VmPortsConfig {
     fn default() -> Self {
         Self {
+            rpc_port: DEFAULT_RPC_PORT,
             consensus_port: DEFAULT_CONSENSUS_PORT,
             reth_port: DEFAULT_RETH_PORT,
             discv5_port: DEFAULT_DISCV5_PORT,
@@ -60,25 +63,27 @@ impl Default for VmPortsConfig {
 }
 
 impl VmPortsConfig {
-    /// Parse and strictly validate the four explicit VM port keys from `validator.env`.
+    /// Parse and strictly validate the five explicit port keys from `validator.env`.
     pub fn from_env(values: &BTreeMap<String, String>) -> Result<Self> {
         let cfg = Self {
+            rpc_port: parse_port_env(values, "OUTBE_RPC_PORT")?,
             consensus_port: parse_port_env(values, "OUTBE_CONSENSUS_PORT")?,
-            reth_port: parse_port_env(values, "OUTBE_RETH_PORT")?,
-            discv5_port: parse_port_env(values, "OUTBE_DISCV5_PORT")?,
+            reth_port: parse_port_env(values, "OUTBE_RETH_P2P_PORT")?,
+            discv5_port: parse_port_env(values, "OUTBE_RETH_DISCOVERY_PORT")?,
             radicle_port: parse_port_env(values, "OUTBE_RADICLE_PORT")?,
         };
         cfg.validate()?;
         Ok(cfg)
     }
 
-    /// Strictly validate that all four ports are non-zero, pairwise distinct, and do not collide
-    /// with fixed guest ports (8545, 8551, 8876, 9000, 9002, 9003, 9101).
+    /// Strictly validate that all five ports are non-zero, pairwise distinct, and do not collide
+    /// with fixed loopback/service ports (8551, 8876, 9000, 9002, 9003, 9101).
     pub fn validate(&self) -> Result<()> {
         let entries = [
+            ("OUTBE_RPC_PORT", self.rpc_port),
             ("OUTBE_CONSENSUS_PORT", self.consensus_port),
-            ("OUTBE_RETH_PORT", self.reth_port),
-            ("OUTBE_DISCV5_PORT", self.discv5_port),
+            ("OUTBE_RETH_P2P_PORT", self.reth_port),
+            ("OUTBE_RETH_DISCOVERY_PORT", self.discv5_port),
             ("OUTBE_RADICLE_PORT", self.radicle_port),
         ];
         let mut seen: BTreeMap<u16, &'static str> = BTreeMap::new();
@@ -86,7 +91,7 @@ impl VmPortsConfig {
             ensure!(port > 0, "{name} must be in 1..=65535, got 0");
             ensure!(
                 !FIXED_GUEST_PORTS.contains(&port),
-                "{name} ({port}) collides with a fixed guest service port"
+                "{name} ({port}) collides with a fixed service port"
             );
             if let Some(prev) = seen.insert(port, name) {
                 bail!("{name} ({port}) collides with {prev} ({port})");
@@ -125,12 +130,12 @@ impl StaticVmNetworkConfig {
     /// Parse and strictly validate static VM network keys from `validator.env`.
     pub fn from_env(values: &BTreeMap<String, String>) -> Result<Self> {
         let raw_ip = values
-            .get("OUTBE_RPC_BIND_IP")
+            .get("OUTBE_VM_IP")
             .filter(|v| !v.is_empty())
-            .ok_or_else(|| eyre::eyre!("missing OUTBE_RPC_BIND_IP in validator.env"))?;
+            .ok_or_else(|| eyre::eyre!("missing OUTBE_VM_IP in validator.env"))?;
         let address: Ipv4Addr = raw_ip
             .parse()
-            .wrap_err("OUTBE_RPC_BIND_IP must be an IPv4 literal")?;
+            .wrap_err("OUTBE_VM_IP must be an IPv4 literal")?;
 
         let raw_prefix = values
             .get("OUTBE_VM_PREFIX")
@@ -172,7 +177,7 @@ impl StaticVmNetworkConfig {
     pub fn validate(&self) -> Result<()> {
         ensure!(
             !self.address.is_loopback() && self.address.is_private(),
-            "VM static IP (OUTBE_RPC_BIND_IP) must be a non-loopback private IPv4 address, got {}",
+            "VM static IP (OUTBE_VM_IP) must be a non-loopback private IPv4 address, got {}",
             self.address
         );
         let (network, broadcast) = subnet_bounds(self.address, self.prefix_len)?;
@@ -807,7 +812,7 @@ mod tests {
     #[test]
     fn from_env_validates_strictly_and_rejects_invalid_inputs() {
         let mut env = BTreeMap::from([
-            ("OUTBE_RPC_BIND_IP".to_owned(), "10.77.0.80".to_owned()),
+            ("OUTBE_VM_IP".to_owned(), "10.77.0.80".to_owned()),
             ("OUTBE_VM_PREFIX".to_owned(), "24".to_owned()),
             ("OUTBE_VM_GATEWAY".to_owned(), "10.77.0.1".to_owned()),
             ("OUTBE_VM_DNS".to_owned(), "1.1.1.1,8.8.8.8".to_owned()),
@@ -816,14 +821,10 @@ mod tests {
         assert_eq!(parsed, sample_config());
 
         for (key, bad_val, expected_err) in [
-            ("OUTBE_RPC_BIND_IP", "127.0.0.1", "non-loopback private"),
-            (
-                "OUTBE_RPC_BIND_IP",
-                "162.19.107.121",
-                "non-loopback private",
-            ),
-            ("OUTBE_RPC_BIND_IP", "10.77.0.0", "network"),
-            ("OUTBE_RPC_BIND_IP", "10.77.0.255", "broadcast"),
+            ("OUTBE_VM_IP", "127.0.0.1", "non-loopback private"),
+            ("OUTBE_VM_IP", "198.51.100.10", "non-loopback private"),
+            ("OUTBE_VM_IP", "10.77.0.0", "network"),
+            ("OUTBE_VM_IP", "10.77.0.255", "broadcast"),
             ("OUTBE_VM_PREFIX", "0", "prefix length"),
             ("OUTBE_VM_PREFIX", "31", "prefix length"),
             ("OUTBE_VM_PREFIX", "32", "prefix length"),
@@ -853,8 +854,13 @@ mod tests {
             );
         }
 
-        // Missing any of the three static keys must fail closed (no defaults).
-        for required_key in ["OUTBE_VM_PREFIX", "OUTBE_VM_GATEWAY", "OUTBE_VM_DNS"] {
+        // Missing any of the four static keys must fail closed (no defaults).
+        for required_key in [
+            "OUTBE_VM_IP",
+            "OUTBE_VM_PREFIX",
+            "OUTBE_VM_GATEWAY",
+            "OUTBE_VM_DNS",
+        ] {
             let mut missing = env.clone();
             missing.remove(required_key);
             let err = StaticVmNetworkConfig::from_env(&missing).unwrap_err();
@@ -978,21 +984,24 @@ mod tests {
     #[test]
     fn vm_ports_from_env_validates_strictly_and_rejects_collisions() {
         let valid = BTreeMap::from([
+            ("OUTBE_RPC_PORT".to_owned(), "8546".to_owned()),
             ("OUTBE_CONSENSUS_PORT".to_owned(), "30401".to_owned()),
-            ("OUTBE_RETH_PORT".to_owned(), "30304".to_owned()),
-            ("OUTBE_DISCV5_PORT".to_owned(), "31304".to_owned()),
+            ("OUTBE_RETH_P2P_PORT".to_owned(), "30304".to_owned()),
+            ("OUTBE_RETH_DISCOVERY_PORT".to_owned(), "31304".to_owned()),
             ("OUTBE_RADICLE_PORT".to_owned(), "8777".to_owned()),
         ]);
         let parsed = VmPortsConfig::from_env(&valid).unwrap();
+        assert_eq!(parsed.rpc_port, 8_546);
         assert_eq!(parsed.consensus_port, 30_401);
         assert_eq!(parsed.reth_port, 30_304);
         assert_eq!(parsed.discv5_port, 31_304);
         assert_eq!(parsed.radicle_port, 8_777);
 
         for missing_key in [
+            "OUTBE_RPC_PORT",
             "OUTBE_CONSENSUS_PORT",
-            "OUTBE_RETH_PORT",
-            "OUTBE_DISCV5_PORT",
+            "OUTBE_RETH_P2P_PORT",
+            "OUTBE_RETH_DISCOVERY_PORT",
             "OUTBE_RADICLE_PORT",
         ] {
             let mut m = valid.clone();
@@ -1004,12 +1013,17 @@ mod tests {
         }
 
         for (key, bad, expect) in [
+            ("OUTBE_RPC_PORT", "0", "1..=65535"),
+            ("OUTBE_RPC_PORT", "8551", "fixed service port"),
+            ("OUTBE_RPC_PORT", "9000", "fixed service port"),
+            ("OUTBE_RPC_PORT", "30401", "collides with"),
             ("OUTBE_CONSENSUS_PORT", "0", "1..=65535"),
-            ("OUTBE_RETH_PORT", "70000", "1..=65535"),
-            ("OUTBE_DISCV5_PORT", "+31303", "decimal port"),
-            ("OUTBE_RADICLE_PORT", "8545", "fixed guest service port"),
-            ("OUTBE_RADICLE_PORT", "9000", "fixed guest service port"),
-            ("OUTBE_RETH_PORT", "30401", "collides with"),
+            ("OUTBE_RETH_P2P_PORT", "70000", "1..=65535"),
+            ("OUTBE_RETH_DISCOVERY_PORT", "+31303", "decimal port"),
+            ("OUTBE_RADICLE_PORT", "8551", "fixed service port"),
+            ("OUTBE_RADICLE_PORT", "9000", "fixed service port"),
+            ("OUTBE_RADICLE_PORT", "8546", "collides with"),
+            ("OUTBE_RETH_P2P_PORT", "30401", "collides with"),
         ] {
             let mut m = valid.clone();
             m.insert(key.to_owned(), bad.to_owned());

@@ -62,6 +62,20 @@ pub(crate) struct NetworkManifest {
     pub(super) genesis: GenesisIdentity,
     pub(crate) founders: Vec<FounderArtifact>,
     pub(super) joining: JoiningArtifact,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) firewall_mappings: Vec<FirewallMappingEntry>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct FirewallMappingEntry {
+    pub(crate) member: String,
+    pub(crate) host: String,
+    pub(crate) public_ip: Ipv4Addr,
+    pub(crate) public_port: u16,
+    pub(crate) proto: String,
+    pub(crate) vm_ip: Ipv4Addr,
+    pub(crate) vm_port: u16,
+    pub(crate) purpose: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -85,6 +99,10 @@ pub(super) struct GenesisIdentity {
     pub(super) genesis_block_hash: String,
 }
 
+const fn default_rpc_port() -> u16 {
+    super::config::BASE_RPC_PORT
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 pub(crate) struct FounderArtifact {
     pub(crate) index: usize,
@@ -92,6 +110,8 @@ pub(crate) struct FounderArtifact {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) ssh_host: Option<String>,
     pub(super) advertise_ip: Ipv4Addr,
+    #[serde(default = "default_rpc_port")]
+    pub(crate) rpc_port: u16,
     pub(super) validator_address: String,
     pub(super) hyperlane_address: String,
     pub(super) consensus_public_key: String,
@@ -109,7 +129,7 @@ pub(crate) struct FounderVmArtifact {
     pub(super) vmm_host: String,
     pub(super) vmm_user: String,
     pub(super) vmm_port: u16,
-    pub(super) bridge_ip: Ipv4Addr,
+    pub(super) vm_ip: Ipv4Addr,
     #[serde(default)]
     pub(super) port_offset: u16,
     pub(super) vcpu: u32,
@@ -249,6 +269,13 @@ pub fn run(
     for founder in &founders {
         println!("  {:<20} {}", founder.name, founder.hyperlane_address);
     }
+    let firewall_mappings = build_vm_firewall_mappings(&config)?;
+    if !firewall_mappings.is_empty() {
+        println!(
+            "\nDNAT / firewall mappings:\n{}",
+            render_firewall_mappings_table(&firewall_mappings)
+        );
+    }
     let joining = build_joining_artifacts(&BuildArtifacts {
         root: staging.path(),
         software_root: software_root.path(),
@@ -287,6 +314,7 @@ pub fn run(
         },
         founders,
         joining,
+        firewall_mappings,
     };
     fs::write(
         staging.path().join("network-manifest.json"),
@@ -514,6 +542,25 @@ pub(super) fn genesis_cli_config(
     ] {
         root.insert(key.to_owned(), value);
     }
+    if config.vm.is_none() {
+        let first_rpc_port = config.founders[0].rpc_port();
+        if config
+            .founders
+            .iter()
+            .all(|founder| founder.rpc_port() == first_rpc_port)
+        {
+            if first_rpc_port != super::config::BASE_RPC_PORT {
+                root.insert("rpc_port".into(), json!(first_rpc_port));
+            }
+        } else {
+            let runtime_entries: Vec<Value> = config
+                .founders
+                .iter()
+                .map(|founder| json!({"rpc_port": founder.rpc_port()}))
+                .collect();
+            root.insert("validator_runtime".into(), Value::Array(runtime_entries));
+        }
+    }
     if config.network == Network::Devnet {
         root.insert("price_provider".into(), json!("mock"));
         let founder0 = validator_address(&keys.join("validator-0/evm-key.hex"))?;
@@ -595,24 +642,26 @@ pub(super) fn genesis_cli_config(
 }
 
 fn rpc_bind(config: &NetworkConfig) -> Result<String> {
+    let binds: Vec<Ipv4Addr> = config
+        .founders
+        .iter()
+        .map(|founder| config.founder_rpc_bind_ip(founder))
+        .collect::<Result<Vec<_>>>()?;
     if config
         .founders
         .iter()
-        .all(|founder| founder.rpc_bind_ip == founder.advertise_ip)
+        .zip(&binds)
+        .all(|(founder, bind)| *bind == founder.advertise_ip)
     {
         return Ok("validator".into());
     }
-    let first = config.founders[0].rpc_bind_ip;
-    if config
-        .founders
-        .iter()
-        .all(|founder| founder.rpc_bind_ip == first)
-    {
+    let first = binds[0];
+    if binds.iter().all(|bind| *bind == first) {
         return Ok(first.to_string());
     }
-    // For VM networks where each VM binds its own private bridge IP while advertising a shared
+    // For VM networks where each VM binds its own private VM IP while advertising a shared
     // host public IP, `launch_bundle::render` is not used — each VM receives its exact
-    // `founder.rpc_bind_ip` in `emit_vm_founder_trees`.
+    // `rpc_bind_ip` (defaulting to `vm.vm_ip`) in `emit_vm_founder_trees`.
     if config.vm.is_some() {
         return Ok("127.0.0.1".into());
     }
@@ -640,6 +689,7 @@ pub(super) fn founder_artifacts(
                 name: founder.name.clone(),
                 ssh_host: Some(ssh.host.clone()),
                 advertise_ip: founder.advertise_ip,
+                rpc_port: founder.rpc_port(),
                 validator_address: required_validator_field(validator, "address")?.to_owned(),
                 hyperlane_address: required_validator_field(validator, "hyperlane_address")?
                     .to_owned(),
@@ -701,6 +751,63 @@ fn write_vm_bootnodes(
     Ok(enodes)
 }
 
+pub(super) fn build_vm_firewall_mappings(
+    config: &NetworkConfig,
+) -> Result<Vec<FirewallMappingEntry>> {
+    if config.vm.is_none() {
+        return Ok(Vec::new());
+    }
+    let mut resolved_founders = Vec::with_capacity(config.founders.len());
+    let mut distinct_hosts = std::collections::BTreeSet::new();
+    for founder in &config.founders {
+        let resolved = config.resolve_founder_vm(founder)?;
+        distinct_hosts.insert(resolved.vmm_host.host.clone());
+        resolved_founders.push((founder, resolved));
+    }
+    let multi_host = distinct_hosts.len() > 1;
+    let mut entries = Vec::new();
+    for (founder, resolved) in resolved_founders {
+        if !(multi_host || resolved.port_offset > 0 || founder.advertise_ip != resolved.vm_ip) {
+            continue;
+        }
+        let ports = super::config::FounderPublishedPorts::from_offset(resolved.port_offset)?;
+        for (public_port, vm_port, proto, purpose) in ports.dnat_ports() {
+            entries.push(FirewallMappingEntry {
+                member: founder.name.clone(),
+                host: resolved.vmm_host.host.clone(),
+                public_ip: founder.advertise_ip,
+                public_port,
+                proto: proto.to_owned(),
+                vm_ip: resolved.vm_ip,
+                vm_port,
+                purpose: purpose.to_owned(),
+            });
+        }
+    }
+    Ok(entries)
+}
+
+pub(super) fn render_firewall_mappings_table(entries: &[FirewallMappingEntry]) -> String {
+    let mut out = format!(
+        "  {:<14} {:<16} {:<16} {:<11} {:<5} {:<14} {:<7} {}\n",
+        "MEMBER", "HOST", "PUBLIC_IP", "PUBLIC_PORT", "PROTO", "VM_IP", "VM_PORT", "PURPOSE"
+    );
+    for entry in entries {
+        out.push_str(&format!(
+            "  {:<14} {:<16} {:<16} {:<11} {:<5} {:<14} {:<7} {}\n",
+            entry.member,
+            entry.host,
+            entry.public_ip,
+            entry.public_port,
+            entry.proto,
+            entry.vm_ip,
+            entry.vm_port,
+            entry.purpose
+        ));
+    }
+    out.trim_end().to_owned()
+}
+
 fn emit_vm_founder_trees(inputs: &VmTreeInputs<'_>) -> Result<Vec<FounderArtifact>> {
     let consensus_peers = consensus_peers(inputs.config, inputs.validators)?;
     let feeder_public_toml = joining_feeder_public_toml(inputs.config, inputs.software_root)?;
@@ -740,17 +847,29 @@ fn emit_vm_founder_trees(inputs: &VmTreeInputs<'_>) -> Result<Vec<FounderArtifac
 
         let validator_addr = validator_address(&dst_keys.join("evm-key.hex"))?;
         let ports = super::config::FounderPublishedPorts::from_offset(resolved_vm.port_offset)?;
+        let rpc_bind_ip = inputs.config.founder_rpc_bind_ip(founder)?;
+        if rpc_bind_ip != resolved_vm.vm_ip {
+            eprintln!(
+                "warning: founder `{}` sets rpc_bind_ip={rpc_bind_ip} != vm.vm_ip={}; host-side RPC-based readiness checks cannot work and `outbe-net-up network deploy|start|update` will refuse this config",
+                founder.name, resolved_vm.vm_ip
+            );
+        }
         let operator = OperatorConfig {
             version: OPERATOR_CONFIG_VERSION,
             network: OperatorNetworkConfig {
                 chain_id: inputs.config.chain_id,
                 certified_rpc: inputs.config.certified_rpc.clone(),
                 advertise_ip: founder.advertise_ip,
-                rpc_bind_ip: founder.rpc_bind_ip,
-                ports: OperatorNetworkPorts::default(),
+                rpc_bind_ip: Some(rpc_bind_ip),
+                ports: OperatorNetworkPorts {
+                    rpc: founder.rpc_port(),
+                    ..OperatorNetworkPorts::default()
+                },
+                vm_ip: Some(resolved_vm.vm_ip),
                 vm_prefix: Some(resolved_vm.prefix),
                 vm_gateway: Some(resolved_vm.gateway),
                 vm_dns: resolved_vm.dns.clone(),
+                vm_rpc_port: Some(founder.rpc_port()),
                 vm_consensus_port: Some(ports.consensus_p2p_tcp),
                 vm_reth_port: Some(ports.reth_p2p_tcp),
                 vm_discv5_port: Some(ports.reth_discv5_udp),
@@ -806,6 +925,7 @@ fn emit_vm_founder_trees(inputs: &VmTreeInputs<'_>) -> Result<Vec<FounderArtifac
             name: founder.name.clone(),
             ssh_host: None,
             advertise_ip: founder.advertise_ip,
+            rpc_port: founder.rpc_port(),
             validator_address: required_validator_field(validator, "address")?.to_owned(),
             hyperlane_address: required_validator_field(validator, "hyperlane_address")?.to_owned(),
             consensus_public_key: required_validator_field(validator, "public_key")?.to_owned(),
@@ -816,7 +936,7 @@ fn emit_vm_founder_trees(inputs: &VmTreeInputs<'_>) -> Result<Vec<FounderArtifac
                 vmm_host: resolved_vm.vmm_host.host,
                 vmm_user: resolved_vm.vmm_host.user,
                 vmm_port: resolved_vm.vmm_host.port,
-                bridge_ip: resolved_vm.bridge_ip,
+                vm_ip: resolved_vm.vm_ip,
                 port_offset: resolved_vm.port_offset,
                 vcpu: resolved_vm.vcpu,
                 memory_gib: resolved_vm.memory_gib,
@@ -964,11 +1084,13 @@ fn joining_operator_config(
             chain_id: config.chain_id,
             certified_rpc: config.certified_rpc.clone(),
             advertise_ip: Ipv4Addr::new(192, 0, 2, 10),
-            rpc_bind_ip: Ipv4Addr::LOCALHOST,
+            rpc_bind_ip: config.vm.is_none().then_some(Ipv4Addr::LOCALHOST),
             ports: OperatorNetworkPorts::default(),
+            vm_ip: None,
             vm_prefix,
             vm_gateway,
             vm_dns,
+            vm_rpc_port: None,
             vm_consensus_port: None,
             vm_reth_port: None,
             vm_discv5_port: None,
@@ -1261,43 +1383,40 @@ chain_id: 54322345
 certified_rpc: "http://10.77.0.10:8545"
 vm:
   vmm_host:
-    host: 162.19.107.121
+    host: 198.51.100.10
   prefix: 24
   gateway: 10.77.0.1
   dns: [1.1.1.1, 8.8.8.8]
 founders:
   - name: validator-0
-    advertise_ip: 162.19.107.121
+    advertise_ip: 198.51.100.10
     rpc_bind_ip: 10.77.0.10
-    hyperlane_public_url: http://162.19.107.121:9000
+    hyperlane_public_url: http://198.51.100.10:9000
     vm:
-      bridge_ip: 10.77.0.10
+      vm_ip: 10.77.0.10
       port_offset: 0
   - name: validator-1
-    advertise_ip: 162.19.107.121
-    rpc_bind_ip: 10.77.0.11
-    hyperlane_public_url: http://162.19.107.121:9001
+    advertise_ip: 198.51.100.10
+    hyperlane_public_url: http://198.51.100.10:9001
     vm:
-      bridge_ip: 10.77.0.11
+      vm_ip: 10.77.0.11
       port_offset: 1
   - name: validator-2
-    advertise_ip: 141.95.168.110
-    rpc_bind_ip: 10.77.0.10
-    hyperlane_public_url: http://141.95.168.110:9000
+    advertise_ip: 203.0.113.20
+    hyperlane_public_url: http://203.0.113.20:9000
     vm:
-      bridge_ip: 10.77.0.10
+      vm_ip: 10.77.0.10
       port_offset: 0
       vmm_host:
-        host: 141.95.168.110
+        host: 203.0.113.20
   - name: validator-3
-    advertise_ip: 141.95.168.110
-    rpc_bind_ip: 10.77.0.11
-    hyperlane_public_url: http://141.95.168.110:9001
+    advertise_ip: 203.0.113.20
+    hyperlane_public_url: http://203.0.113.20:9001
     vm:
-      bridge_ip: 10.77.0.11
+      vm_ip: 10.77.0.11
       port_offset: 1
       vmm_host:
-        host: 141.95.168.110
+        host: 203.0.113.20
 hyperlane:
   gasless: true
 topology:
@@ -1339,19 +1458,19 @@ genesis:
         let bootnodes =
             write_vm_bootnodes(&json!({}), &config, &validators, &keys_dir, &staging_root).unwrap();
         assert!(
-            bootnodes[0].ends_with("@162.19.107.121:30303"),
+            bootnodes[0].ends_with("@198.51.100.10:30303"),
             "{bootnodes:?}"
         );
         assert!(
-            bootnodes[1].ends_with("@162.19.107.121:30304"),
+            bootnodes[1].ends_with("@198.51.100.10:30304"),
             "{bootnodes:?}"
         );
         assert!(
-            bootnodes[2].ends_with("@141.95.168.110:30303"),
+            bootnodes[2].ends_with("@203.0.113.20:30303"),
             "{bootnodes:?}"
         );
         assert!(
-            bootnodes[3].ends_with("@141.95.168.110:30304"),
+            bootnodes[3].ends_with("@203.0.113.20:30304"),
             "{bootnodes:?}"
         );
 
@@ -1374,35 +1493,43 @@ genesis:
         assert_eq!(
             genesis_cfg["validators"],
             json!([
-                "162.19.107.121",
-                "162.19.107.121:30401",
-                "141.95.168.110",
-                "141.95.168.110:30401",
+                "198.51.100.10",
+                "198.51.100.10:30401",
+                "203.0.113.20",
+                "203.0.113.20:30401",
             ])
         );
 
         let env0 = fs::read_to_string(staging_root.join("vm/validator-0/validator.env")).unwrap();
         assert!(
-            env0.contains("OUTBE_EXTERNAL_IP=\"162.19.107.121\""),
+            env0.contains("OUTBE_EXTERNAL_IP=\"198.51.100.10\""),
             "{env0}"
         );
         assert!(env0.contains("OUTBE_RPC_BIND_IP=\"10.77.0.10\""), "{env0}");
+        assert!(env0.contains("OUTBE_VM_IP=\"10.77.0.10\""), "{env0}");
         assert!(env0.contains("OUTBE_VM_PREFIX=\"24\""), "{env0}");
         assert!(env0.contains("OUTBE_VM_GATEWAY=\"10.77.0.1\""), "{env0}");
         assert!(env0.contains("OUTBE_VM_DNS=\"1.1.1.1,8.8.8.8\""), "{env0}");
+        assert!(env0.contains("OUTBE_RPC_PORT=\"8545\""), "{env0}");
         assert!(env0.contains("OUTBE_CONSENSUS_PORT=\"30400\""), "{env0}");
-        assert!(env0.contains("OUTBE_RETH_PORT=\"30303\""), "{env0}");
-        assert!(env0.contains("OUTBE_DISCV5_PORT=\"31303\""), "{env0}");
+        assert!(env0.contains("OUTBE_RETH_P2P_PORT=\"30303\""), "{env0}");
+        assert!(
+            env0.contains("OUTBE_RETH_DISCOVERY_PORT=\"31303\""),
+            "{env0}"
+        );
         assert!(env0.contains("OUTBE_RADICLE_PORT=\"8776\""), "{env0}");
-        assert!(env0.contains("162.19.107.121:30400"), "{env0}");
-        assert!(env0.contains("162.19.107.121:30401"), "{env0}");
-        assert!(env0.contains("141.95.168.110:30400"), "{env0}");
-        assert!(env0.contains("141.95.168.110:30401"), "{env0}");
+        assert!(env0.contains("198.51.100.10:30400"), "{env0}");
+        assert!(env0.contains("198.51.100.10:30401"), "{env0}");
+        assert!(env0.contains("203.0.113.20:30400"), "{env0}");
+        assert!(env0.contains("203.0.113.20:30401"), "{env0}");
 
         let env1 = fs::read_to_string(staging_root.join("vm/validator-1/validator.env")).unwrap();
         assert!(env1.contains("OUTBE_CONSENSUS_PORT=\"30401\""), "{env1}");
-        assert!(env1.contains("OUTBE_RETH_PORT=\"30304\""), "{env1}");
-        assert!(env1.contains("OUTBE_DISCV5_PORT=\"31304\""), "{env1}");
+        assert!(env1.contains("OUTBE_RETH_P2P_PORT=\"30304\""), "{env1}");
+        assert!(
+            env1.contains("OUTBE_RETH_DISCOVERY_PORT=\"31304\""),
+            "{env1}"
+        );
         assert!(env1.contains("OUTBE_RADICLE_PORT=\"8777\""), "{env1}");
 
         for index in 0..4 {
@@ -1448,5 +1575,849 @@ genesis:
         assert!(with_base.get("epoch_length_blocks").is_none());
         assert!(with_base.get("dkg_prepare_window_blocks").is_none());
         assert!(with_base.get("dkg_activation_grace_blocks").is_none());
+    }
+
+    #[test]
+    fn joining_config_serializes_numeric_fields_as_yaml_numbers() {
+        let temp = tempfile::tempdir().unwrap();
+        let pairs = temp
+            .path()
+            .join("share/outbe-genesis/profiles/testnet/pairs.toml");
+        fs::create_dir_all(pairs.parent().unwrap()).unwrap();
+        fs::write(
+            &pairs,
+            "[[currency_pairs]]\nbase = \"COEN\"\nquote = \"840\"\nmarkets = [{ provider = \"mock_http\" }]\n",
+        )
+        .unwrap();
+        let config: NetworkConfig = serde_yaml_ng::from_str(super::super::config::EXAMPLE).unwrap();
+        let operator = joining_operator_config(
+            &config,
+            temp.path(),
+            vec!["enode://bootnode".into()],
+            vec!["public-key@127.0.0.1:30400".into()],
+        )
+        .unwrap();
+        let yaml = serde_yaml_ng::to_string(&operator).unwrap();
+        assert!(yaml.contains("version: 1"));
+        assert!(yaml.contains(&format!("chain_id: {}", config.chain_id)));
+        assert!(yaml.contains("reth_p2p: 30303"));
+        assert!(yaml.contains("consensus: 30400"));
+        assert!(!yaml.contains("$serde_json"));
+        assert!(!yaml.contains("poll_interval_secs:"));
+        assert!(!yaml.contains("signer_funding_wei:"));
+        assert!(!yaml.contains("rpc_consensus:"));
+        assert!(!yaml.contains("interval_secs:"));
+        assert!(!yaml.contains("rpc_urls: ["));
+        let decoded: OperatorConfig = serde_yaml_ng::from_str(&yaml).unwrap();
+        assert_eq!(decoded.network.chain_id, config.chain_id);
+        assert_eq!(decoded.hyperlane.poll_interval_secs, 30);
+        assert_eq!(decoded.hyperlane.signer_funding_wei, "1000000000000000000");
+        assert!(decoded
+            .hyperlane
+            .origins
+            .iter()
+            .all(|origin| origin.interval_secs == 15));
+    }
+
+    #[test]
+    fn devnet_uses_the_self_contained_mock_feeder_profile() {
+        let temp = tempfile::tempdir().unwrap();
+        let pairs = temp
+            .path()
+            .join("share/outbe-genesis/profiles/devnet/pairs.toml");
+        fs::create_dir_all(pairs.parent().unwrap()).unwrap();
+        fs::write(
+            &pairs,
+            "[[currency_pairs]]\nbase = \"COEN\"\nquote = \"840\"\nmarkets = [{ provider = \"mock\" }]\n",
+        )
+        .unwrap();
+        let mut config: NetworkConfig =
+            serde_yaml_ng::from_str(super::super::config::EXAMPLE).unwrap();
+        config.network = Network::Devnet;
+        config.chain_id = Network::Devnet.chain_id();
+        let (keys, feeder_addresses) = feeder_keys(temp.path(), config.founders.len());
+
+        let genesis = genesis_cli_config(&config, temp.path(), &keys, None).unwrap();
+        assert_eq!(genesis["price_provider"], "mock");
+        assert_eq!(genesis["feeder_pairs"], json!(pairs));
+        for address in feeder_addresses {
+            assert_eq!(genesis["balance"][address], FEEDER_FUNDING_WEI.to_string());
+        }
+
+        let operator = joining_operator_config(
+            &config,
+            temp.path(),
+            vec!["enode://bootnode".into()],
+            vec!["public-key@127.0.0.1:30400".into()],
+        )
+        .unwrap();
+        assert!(operator.feeder.public_toml.contains("provider = \"mock\""));
+        assert!(!operator.feeder.public_toml.contains("[[api_providers]]"));
+        assert!(!operator.feeder.public_toml.contains("REPLACE_WITH_RPC_URL"));
+    }
+
+    #[test]
+    fn validates_a_custom_pre_tee_base_genesis() {
+        let genesis = json!({
+            "config": {"chainId": 54_322_345},
+            "alloc": {},
+            "timestamp": "0x1"
+        });
+        ensure_base_genesis(&genesis, 54_322_345).unwrap();
+        assert!(ensure_base_genesis(&genesis, 676).is_err());
+
+        let mut finalized = genesis;
+        finalized["config"]["teeAttestationV1"] = json!({});
+        assert!(ensure_base_genesis(&finalized, 54_322_345).is_err());
+    }
+
+    #[test]
+    fn vm_founder_trees_pass_vm_boot_verification() {
+        let temp = tempfile::tempdir().unwrap();
+        let software_root = temp.path().join("software");
+        let staging_root = temp.path().join("staging");
+        let keys_dir = staging_root.join("secrets/founder-keys");
+        let fake_bins = temp.path().join("bins");
+        fs::create_dir_all(&staging_root).unwrap();
+        fs::create_dir_all(&fake_bins).unwrap();
+
+        let fake_keygen = fake_bins.join("outbe-keygen");
+        fs::write(&fake_keygen, b"#!/bin/sh\nexit 0\n").unwrap();
+        fs::set_permissions(&fake_keygen, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let pairs = software_root.join("share/outbe-genesis/profiles/devnet/pairs.toml");
+        fs::create_dir_all(pairs.parent().unwrap()).unwrap();
+        fs::write(
+            &pairs,
+            "[[currency_pairs]]\nbase = \"COEN\"\nquote = \"840\"\nmarkets = [{ provider = \"mock\" }]\n",
+        )
+        .unwrap();
+        let crs = software_root.join(".bb-crs/bn254_g1.dat");
+        fs::create_dir_all(crs.parent().unwrap()).unwrap();
+        fs::write(&crs, b"crs-bytes").unwrap();
+
+        fs::write(
+            staging_root.join("genesis.json"),
+            br#"{"config":{"chainId":424242}}"#,
+        )
+        .unwrap();
+        let auth_keys = temp.path().join("dev.pub");
+        fs::write(
+            &auth_keys,
+            b"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAItest dev@outbe\n",
+        )
+        .unwrap();
+
+        let config_path = temp.path().join("network.yaml");
+        let config: NetworkConfig = serde_yaml_ng::from_str(&format!(
+            r#"
+version: 1
+name: vm-devnet
+network: devnet
+chain_id: 424242
+certified_rpc: "http://10.77.0.10:8545"
+vm:
+  vmm_host:
+    host: 192.0.2.50
+  prefix: 24
+  gateway: 10.77.0.1
+  dns: [1.1.1.1, 8.8.8.8]
+  authorized_keys: ./dev.pub
+founders:
+{}
+hyperlane:
+  gasless: true
+  origins:
+    - domain: 424242
+      rpc_urls: ["https://rpc.example.invalid"]
+      reorg_period: 0
+topology:
+  use_local_defaults: true
+genesis:
+  prefunded_accounts: {{}}
+"#,
+            (0..4)
+                .map(|index| format!(
+                    "  - name: validator-{index}\n    advertise_ip: 10.77.0.{}\n    hyperlane_public_url: http://192.0.2.50:{}\n    vm:\n      vm_ip: 10.77.0.{}",
+                    index + 10,
+                    9000 + index,
+                    index + 10,
+                ))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ))
+        .unwrap();
+        config.validate().unwrap();
+
+        let mut validators = Vec::new();
+        let mut bootnodes = Vec::new();
+        for index in 0..4 {
+            let val_keys = keys_dir.join(format!("validator-{index}"));
+            fs::create_dir_all(val_keys.join("radicle/keys")).unwrap();
+            let key_hex = format!("{:064x}", index + 1);
+            for file in [
+                "signing-key.hex",
+                "reth-p2p-secret.hex",
+                "radicle/keys/radicle",
+            ] {
+                fs::write(val_keys.join(file), format!("{key_hex}\n")).unwrap();
+            }
+            for file in ["evm-key.hex", "feeder-key.hex", "hyperlane-key.hex"] {
+                fs::write(val_keys.join(file), &key_hex).unwrap();
+            }
+            let addr = format!(
+                "{:#x}",
+                validator_address(&val_keys.join("evm-key.hex")).unwrap()
+            );
+            let pubkey = format!("{:096x}", index + 1);
+            let host = format!("10.77.0.{}", index + 10);
+            validators.push(json!({
+                "address": addr,
+                "hyperlane_address": addr,
+                "public_key": pubkey,
+                "p2p_address": format!("{host}:30400"),
+            }));
+            bootnodes.push(format!("enode://{:0128x}@{host}:30303", index + 1));
+        }
+
+        let artifacts = emit_vm_founder_trees(&VmTreeInputs {
+            staging_root: &staging_root,
+            software_root: &software_root,
+            keys_dir: &keys_dir,
+            config_path: &config_path,
+            config: &config,
+            validators: &validators,
+            bootnodes: &bootnodes,
+        })
+        .unwrap();
+        assert_eq!(artifacts.len(), 4);
+
+        for (index, artifact) in artifacts.iter().enumerate() {
+            assert!(artifact.archive.is_none());
+            let vm = artifact.vm.as_ref().unwrap();
+            assert_eq!(vm.data_tree, format!("vm/validator-{index}"));
+            assert!(vm.has_authorized_keys);
+
+            let tree = staging_root.join(&vm.data_tree);
+            assert!(tree.join("dev/authorized_keys").is_file());
+            assert!(!tree.join("outbe-chain").exists());
+            assert!(!tree.join("systemd").exists());
+
+            outbe_operator_node_role::vm_boot::verify_tree_without_mount(&tree, &fake_bins)
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn devnet_seeded_genesis_sets_hyperlane_admin_to_founder_zero_and_testnet_is_unchanged() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap();
+        let real_testnet_profile = repo_root.join("bin/outbe-genesis-cli/profiles/testnet.yaml");
+        let software = temp.path().join("software");
+        let profile_dst = software.join("share/outbe-genesis/profiles/testnet.yaml");
+        fs::create_dir_all(profile_dst.parent().unwrap()).unwrap();
+        fs::copy(&real_testnet_profile, &profile_dst).unwrap();
+        let devnet_pairs = software.join("share/outbe-genesis/profiles/devnet/pairs.toml");
+        fs::create_dir_all(devnet_pairs.parent().unwrap()).unwrap();
+        fs::write(
+            &devnet_pairs,
+            "[[currency_pairs]]\nbase = \"COEN\"\nquote = \"840\"\nmarkets = [{ provider = \"mock\" }]\n",
+        )
+        .unwrap();
+        let testnet_pairs = software.join("share/outbe-genesis/profiles/testnet/pairs.toml");
+        fs::create_dir_all(testnet_pairs.parent().unwrap()).unwrap();
+        fs::write(
+            &testnet_pairs,
+            "[[currency_pairs]]\nbase = \"COEN\"\nquote = \"840\"\nmarkets = [{ provider = \"mock_http\" }]\n",
+        )
+        .unwrap();
+
+        let (keys, _) = feeder_keys(temp.path(), 4);
+        let founder0_addr = validator_address(&keys.join("validator-0/evm-key.hex")).unwrap();
+        let profile_admin: Address = "0x2Af7d3C5C3f82Fee4eA037A674f55fa2eD011c05"
+            .parse()
+            .unwrap();
+        assert_ne!(founder0_addr, profile_admin);
+
+        let validators_fixture: Vec<Value> = (0..4)
+            .map(|i| {
+                let addr = format!(
+                    "{:#x}",
+                    validator_address(&keys.join(format!("validator-{i}/evm-key.hex"))).unwrap()
+                );
+                let feeder = format!(
+                    "{:#x}",
+                    validator_address(&keys.join(format!("validator-{i}/feeder-key.hex"))).unwrap()
+                );
+                json!({
+                    "address": addr,
+                    "feeder_address": feeder,
+                    "public_key": format!("{:096x}", i + 1),
+                    "radicle_node_id": format!("{:064x}", i + 1),
+                })
+            })
+            .collect();
+
+        // 1. Devnet: real build_seed + seed_validators produces slot 9 == founder 0.
+        let mut devnet_cfg: NetworkConfig =
+            serde_yaml_ng::from_str(super::super::config::EXAMPLE).unwrap();
+        devnet_cfg.network = Network::Devnet;
+        devnet_cfg.chain_id = Network::Devnet.chain_id();
+        let devnet_cli = genesis_cli_config(&devnet_cfg, &software, &keys, None).unwrap();
+        let devnet_seed = outbe_genesis_cli::stages::build_seed(&devnet_cli).unwrap();
+        let mut devnet_alloc = Map::new();
+        let mut devnet_genesis = json!({
+            "config": {"chainId": 424242, "epochLengthBlocks": 1200},
+            "timestamp": "0x6800000",
+            "alloc": {}
+        });
+        outbe_genesis_cli::seed_validators::seed_founders(
+            &devnet_genesis,
+            &devnet_seed,
+            &validators_fixture,
+            &mut devnet_alloc,
+        )
+        .unwrap();
+        devnet_genesis["alloc"] = Value::Object(devnet_alloc);
+        assert_eq!(
+            read_hyperlane_admin_slot(&devnet_genesis).unwrap(),
+            founder0_addr
+        );
+        let devnet_genesis_path = temp.path().join("devnet.genesis.json");
+        fs::write(
+            &devnet_genesis_path,
+            serde_json::to_vec(&devnet_genesis).unwrap(),
+        )
+        .unwrap();
+        verify_devnet_hyperlane_admin(&devnet_genesis_path, founder0_addr).unwrap();
+        assert!(verify_devnet_hyperlane_admin(&devnet_genesis_path, profile_admin).is_err());
+
+        // 2. Devnet with conflicting explicit override must fail.
+        let mut conflict_cfg = devnet_cfg.clone();
+        conflict_cfg.genesis.overrides.insert(
+            "hyperlane_controller".into(),
+            serde_yaml_ng::from_str("admin: \"0x2Af7d3C5C3f82Fee4eA037A674f55fa2eD011c05\"")
+                .unwrap(),
+        );
+        let err = genesis_cli_config(&conflict_cfg, &software, &keys, None).unwrap_err();
+        assert!(
+            err.to_string().contains("founder 0"),
+            "expected founder 0 policy error, got: {err}"
+        );
+
+        // 3. Testnet: unchanged — inherits testnet.yaml admin.
+        let testnet_cfg: NetworkConfig =
+            serde_yaml_ng::from_str(super::super::config::EXAMPLE).unwrap();
+        let testnet_cli = genesis_cli_config(&testnet_cfg, &software, &keys, None).unwrap();
+        let testnet_seed = outbe_genesis_cli::stages::build_seed(&testnet_cli).unwrap();
+        let mut testnet_alloc = Map::new();
+        let mut testnet_genesis = json!({
+            "config": {"chainId": 54322345, "epochLengthBlocks": 1200},
+            "timestamp": "0x6800000",
+            "alloc": {}
+        });
+        outbe_genesis_cli::seed_validators::seed_founders(
+            &testnet_genesis,
+            &testnet_seed,
+            &validators_fixture,
+            &mut testnet_alloc,
+        )
+        .unwrap();
+        testnet_genesis["alloc"] = Value::Object(testnet_alloc);
+        assert_eq!(
+            read_hyperlane_admin_slot(&testnet_genesis).unwrap(),
+            profile_admin
+        );
+    }
+
+    #[test]
+    fn vm_devnet_local_evm_generates_exactly_two_origins_and_passes_vm_boot() {
+        let temp = tempfile::tempdir().unwrap();
+        let software_root = temp.path().join("software");
+        let staging_root = temp.path().join("staging");
+        let keys_dir = staging_root.join("secrets/founder-keys");
+        let fake_bins = temp.path().join("bins");
+        fs::create_dir_all(&staging_root).unwrap();
+        fs::create_dir_all(&fake_bins).unwrap();
+
+        let fake_keygen = fake_bins.join("outbe-keygen");
+        fs::write(&fake_keygen, b"#!/bin/sh\nexit 0\n").unwrap();
+        fs::set_permissions(&fake_keygen, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let pairs = software_root.join("share/outbe-genesis/profiles/devnet/pairs.toml");
+        fs::create_dir_all(pairs.parent().unwrap()).unwrap();
+        fs::write(
+            &pairs,
+            "[[currency_pairs]]\nbase = \"COEN\"\nquote = \"840\"\nmarkets = [{ provider = \"mock\" }]\n",
+        )
+        .unwrap();
+        let crs = software_root.join(".bb-crs/bn254_g1.dat");
+        fs::create_dir_all(crs.parent().unwrap()).unwrap();
+        fs::write(&crs, b"crs-bytes").unwrap();
+        fs::write(
+            staging_root.join("genesis.json"),
+            br#"{"config":{"chainId":424242}}"#,
+        )
+        .unwrap();
+
+        let config_path = temp.path().join("network.yaml");
+        let config: NetworkConfig = serde_yaml_ng::from_str(&format!(
+            r#"
+version: 1
+name: vm-devnet-hl3
+network: devnet
+chain_id: 424242
+certified_rpc: "http://10.77.0.68:8545"
+vm:
+  vmm_host:
+    host: 192.0.2.50
+  prefix: 24
+  gateway: 10.77.0.1
+  dns: [1.1.1.1, 8.8.8.8]
+founders:
+{}
+hyperlane:
+  gasless: true
+  local_evm:
+    domain: 31337
+    rpc_url: "http://10.77.0.1:8546"
+    reorg_period: 0
+topology:
+  use_local_defaults: true
+genesis:
+  prefunded_accounts: {{}}
+"#,
+            (0..4)
+                .map(|index| format!(
+                    "  - name: validator-{index}\n    advertise_ip: 10.77.0.{}\n    hyperlane_public_url: http://10.77.0.{}:9000\n    vm:\n      vm_ip: 10.77.0.{}",
+                    68 + index,
+                    68 + index,
+                    68 + index,
+                ))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ))
+        .unwrap();
+        config.validate().unwrap();
+
+        let mut validators = Vec::new();
+        let mut bootnodes = Vec::new();
+        for index in 0..4 {
+            let val_keys = keys_dir.join(format!("validator-{index}"));
+            fs::create_dir_all(val_keys.join("radicle/keys")).unwrap();
+            let key_hex = format!("{:064x}", index + 1);
+            for file in [
+                "signing-key.hex",
+                "reth-p2p-secret.hex",
+                "radicle/keys/radicle",
+            ] {
+                fs::write(val_keys.join(file), format!("{key_hex}\n")).unwrap();
+            }
+            for file in ["evm-key.hex", "feeder-key.hex", "hyperlane-key.hex"] {
+                fs::write(val_keys.join(file), &key_hex).unwrap();
+            }
+            let addr = format!(
+                "{:#x}",
+                validator_address(&val_keys.join("evm-key.hex")).unwrap()
+            );
+            let host = format!("10.77.0.{}", 68 + index);
+            validators.push(json!({
+                "address": addr,
+                "hyperlane_address": addr,
+                "public_key": format!("{:096x}", index + 1),
+                "p2p_address": format!("{host}:30400"),
+            }));
+            bootnodes.push(format!("enode://{:0128x}@{host}:30303", index + 1));
+        }
+
+        emit_vm_founder_trees(&VmTreeInputs {
+            staging_root: &staging_root,
+            software_root: &software_root,
+            keys_dir: &keys_dir,
+            config_path: &config_path,
+            config: &config,
+            validators: &validators,
+            bootnodes: &bootnodes,
+        })
+        .unwrap();
+
+        for index in 0..4 {
+            let tree = staging_root.join(format!("vm/validator-{index}"));
+            let raw = fs::read_to_string(tree.join("hyperlane-public.toml")).unwrap();
+            assert!(!raw.contains("[account]"));
+            assert!(!raw.contains("private_key"));
+            assert!(!raw.contains("testnet.outbe.net"));
+            assert!(!raw.contains("bnbchain.org"));
+            assert!(!raw.contains("publicnode.com"));
+            let parsed: toml::Table = raw.parse().unwrap();
+            let origins = parsed["origin"].as_array().unwrap();
+            assert_eq!(origins.len(), 2);
+            assert_eq!(origins[0]["domain"].as_integer(), Some(424_242));
+            assert_eq!(
+                origins[0]["rpc_urls"].as_array().unwrap()[0].as_str(),
+                Some(format!("http://10.77.0.{}:8545", 68 + index).as_str())
+            );
+            assert_eq!(origins[0]["rpc_consensus"].as_str(), Some("single"));
+            assert_eq!(origins[0]["reorg_period"].as_integer(), Some(0));
+            assert_eq!(origins[1]["domain"].as_integer(), Some(31_337));
+            assert_eq!(
+                origins[1]["rpc_urls"].as_array().unwrap()[0].as_str(),
+                Some("http://10.77.0.1:8546")
+            );
+            assert_eq!(origins[1]["rpc_consensus"].as_str(), Some("single"));
+            assert_eq!(origins[1]["reorg_period"].as_integer(), Some(0));
+
+            outbe_operator_node_role::vm_boot::verify_tree_without_mount(&tree, &fake_bins)
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn hyperlane_public_toml_and_local_evm_reject_invalid_configs() {
+        use outbe_operator_node_role::config::validate_hyperlane_public_toml;
+
+        let valid = "\
+[hyperlane]
+poll_interval_secs = 30
+gasless = true
+
+[health]
+enabled = true
+bind_address = \"127.0.0.1:9003\"
+
+[storage]
+db_path = \"/opt/outbe-chain/state/hyperlane/db\"
+
+[server]
+bind_address = \"0.0.0.0:9000\"
+public_url = \"http://10.77.0.68:9000\"
+
+[[origin]]
+domain = 424242
+rpc_urls = [\"http://10.77.0.68:8545\"]
+rpc_consensus = \"single\"
+reorg_period = 0
+
+[[origin]]
+domain = 31337
+rpc_urls = [\"http://10.77.0.1:8546\"]
+rpc_consensus = \"single\"
+reorg_period = 0
+";
+        validate_hyperlane_public_toml(valid, 424_242, true).unwrap();
+
+        assert!(validate_hyperlane_public_toml(valid, 54_322_345, true).is_err());
+
+        let with_account = format!("{valid}\n[account]\nprivate_key = \"0x01\"\n");
+        assert!(validate_hyperlane_public_toml(&with_account, 424_242, true).is_err());
+
+        let zero_domain = valid.replace("domain = 31337", "domain = 0");
+        assert!(validate_hyperlane_public_toml(&zero_domain, 424_242, true).is_err());
+
+        let dup_domain = valid.replace("domain = 31337", "domain = 424242");
+        assert!(validate_hyperlane_public_toml(&dup_domain, 424_242, true).is_err());
+
+        let with_creds = valid.replace("http://10.77.0.1:8546", "http://user:pass@10.77.0.1:8546");
+        assert!(validate_hyperlane_public_toml(&with_creds, 424_242, true).is_err());
+    }
+
+    #[test]
+    fn custom_rpc_port_flows_into_vm_env_hyperlane_and_bare_host_genesis_config() {
+        let temp = tempfile::tempdir().unwrap();
+        let software = temp.path().join("software");
+        let pairs = software.join("share/outbe-genesis/profiles/devnet/pairs.toml");
+        fs::create_dir_all(pairs.parent().unwrap()).unwrap();
+        fs::write(&pairs, "[[pairs]]\nbase = \"ETH\"\nquote = \"USD\"\n").unwrap();
+        fs::create_dir_all(software.join(".bb-crs")).unwrap();
+        fs::write(software.join(".bb-crs/bn254_g1.dat"), b"crs").unwrap();
+
+        let keys_dir = temp.path().join("keys");
+        let mut validators = Vec::new();
+        for i in 0..4 {
+            let vdir = keys_dir.join(format!("validator-{i}"));
+            fs::create_dir_all(vdir.join("radicle/keys")).unwrap();
+            let key_hex = format!("{:064x}", i + 1);
+            for file in [
+                "signing-key.hex",
+                "evm-key.hex",
+                "feeder-key.hex",
+                "hyperlane-key.hex",
+                "reth-p2p-secret.hex",
+            ] {
+                fs::write(vdir.join(file), &key_hex).unwrap();
+            }
+            fs::write(vdir.join("radicle/keys/radicle"), &key_hex).unwrap();
+            validators.push(json!({
+                "address": format!("0x{:040x}", i + 1),
+                "hyperlane_address": format!("0x{:040x}", i + 100),
+                "public_key": format!("{:096x}", i + 1),
+                "p2p_address": format!("10.77.0.{}:30400", 68 + i),
+            }));
+        }
+
+        let mut vm_cfg: NetworkConfig = serde_yaml_ng::from_str(&format!(
+            r#"
+version: 1
+name: custom-rpc-vm
+network: devnet
+chain_id: 424242
+certified_rpc: "http://10.77.0.68:18545"
+vm:
+  vmm_host:
+    host: 198.51.100.10
+  prefix: 24
+  gateway: 10.77.0.1
+  dns: [1.1.1.1, 8.8.8.8]
+founders:
+{}
+hyperlane:
+  gasless: true
+topology:
+  use_local_defaults: true
+genesis:
+  prefunded_accounts: {{}}
+"#,
+            (0..4)
+                .map(|i| format!(
+                    "  - name: validator-{i}\n    advertise_ip: 10.77.0.{}\n    rpc_port: {}\n    hyperlane_public_url: http://10.77.0.{}:9000\n    vm:\n      vm_ip: 10.77.0.{}",
+                    68 + i,
+                    18_545 + i,
+                    68 + i,
+                    68 + i
+                ))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ))
+        .unwrap();
+        vm_cfg.validate().unwrap();
+
+        let staging = temp.path().join("staging");
+        fs::create_dir_all(&staging).unwrap();
+        fs::write(
+            staging.join("genesis.json"),
+            r#"{"config":{"chainId":424242}}"#,
+        )
+        .unwrap();
+        let bootnodes: Vec<String> = (0..4)
+            .map(|i| format!("enode://{:0128x}@10.77.0.{}:30303", i + 1, 68 + i))
+            .collect();
+        let artifacts = emit_vm_founder_trees(&VmTreeInputs {
+            staging_root: &staging,
+            software_root: &software,
+            keys_dir: &keys_dir,
+            config_path: &temp.path().join("network.yaml"),
+            config: &vm_cfg,
+            validators: &validators,
+            bootnodes: &bootnodes,
+        })
+        .unwrap();
+        assert_eq!(artifacts[0].rpc_port, 18_545);
+        assert_eq!(artifacts[1].rpc_port, 18_546);
+
+        let fake_bins = temp.path().join("fake-bins");
+        fs::create_dir_all(&fake_bins).unwrap();
+        let fake_keygen = fake_bins.join("outbe-keygen");
+        fs::write(&fake_keygen, "#!/bin/sh\nexit 0\n").unwrap();
+        fs::set_permissions(&fake_keygen, fs::Permissions::from_mode(0o755)).unwrap();
+
+        for i in 0..4 {
+            let tree = staging.join(format!("vm/validator-{i}"));
+            let env = fs::read_to_string(tree.join("validator.env")).unwrap();
+            let expected_port = 18_545 + i;
+            assert!(
+                env.contains(&format!("OUTBE_RPC_PORT=\"{expected_port}\"")),
+                "{env}"
+            );
+            let hl = fs::read_to_string(tree.join("hyperlane-public.toml")).unwrap();
+            assert!(
+                hl.contains(&format!("http://10.77.0.{}:{expected_port}", 68 + i)),
+                "{hl}"
+            );
+            outbe_operator_node_role::vm_boot::verify_tree_without_mount(&tree, &fake_bins)
+                .unwrap();
+        }
+
+        // Bare-host genesis_cli_config emits `rpc_port` when uniform and `validator_runtime` when distinct.
+        let mut bare: NetworkConfig =
+            serde_yaml_ng::from_str(super::super::config::EXAMPLE).unwrap();
+        for founder in &mut bare.founders {
+            founder.rpc_port = Some(18_545);
+        }
+        bare.validate().unwrap();
+        let uniform_cli = genesis_cli_config(&bare, &software, &keys_dir, None).unwrap();
+        assert_eq!(uniform_cli.get("rpc_port"), Some(&json!(18_545)));
+        assert!(uniform_cli.get("validator_runtime").is_none());
+
+        bare.founders[1].rpc_port = Some(18_546);
+        bare.validate().unwrap();
+        let per_founder_cli = genesis_cli_config(&bare, &software, &keys_dir, None).unwrap();
+        assert_eq!(
+            per_founder_cli.pointer("/validator_runtime/0/rpc_port"),
+            Some(&json!(18_545))
+        );
+        assert_eq!(
+            per_founder_cli.pointer("/validator_runtime/1/rpc_port"),
+            Some(&json!(18_546))
+        );
+        // Loopback rpc_bind_ip != vm.vm_ip builds cleanly (with warning) and passes vm-boot verification.
+        vm_cfg.founders[0].rpc_bind_ip = Some(Ipv4Addr::LOCALHOST);
+        vm_cfg.validate().unwrap();
+        let lb_staging = temp.path().join("lb-staging");
+        fs::create_dir_all(&lb_staging).unwrap();
+        fs::write(
+            lb_staging.join("genesis.json"),
+            r#"{"config":{"chainId":424242}}"#,
+        )
+        .unwrap();
+        emit_vm_founder_trees(&VmTreeInputs {
+            staging_root: &lb_staging,
+            software_root: &software,
+            keys_dir: &keys_dir,
+            config_path: &temp.path().join("network.yaml"),
+            config: &vm_cfg,
+            validators: &validators,
+            bootnodes: &bootnodes,
+        })
+        .unwrap();
+        let lb_env = fs::read_to_string(lb_staging.join("vm/validator-0/validator.env")).unwrap();
+        assert!(lb_env.contains("OUTBE_VM_IP=\"10.77.0.68\""), "{lb_env}");
+        assert!(
+            lb_env.contains("OUTBE_RPC_BIND_IP=\"127.0.0.1\""),
+            "{lb_env}"
+        );
+        outbe_operator_node_role::vm_boot::verify_tree_without_mount(
+            &lb_staging.join("vm/validator-0"),
+            &fake_bins,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn firewall_mappings_cover_published_vm_founders_and_omit_single_host_local_devnet() {
+        // 1. Multi-host 2+2 VM testnet -> 4 founders x 5 DNAT ports = 20 entries.
+        let mixed: NetworkConfig = serde_yaml_ng::from_str(
+            r#"
+version: 1
+name: mixed-fw
+network: testnet
+chain_id: 54322345
+certified_rpc: "http://10.77.0.10:8545"
+vm:
+  vmm_host:
+    host: 198.51.100.10
+  prefix: 24
+  gateway: 10.77.0.1
+  dns: [1.1.1.1, 8.8.8.8]
+founders:
+  - name: validator-0
+    advertise_ip: 198.51.100.10
+    hyperlane_public_url: http://198.51.100.10:9000
+    vm:
+      vm_ip: 10.77.0.10
+      port_offset: 0
+  - name: validator-1
+    advertise_ip: 198.51.100.10
+    hyperlane_public_url: http://198.51.100.10:9001
+    vm:
+      vm_ip: 10.77.0.11
+      port_offset: 1
+  - name: validator-2
+    advertise_ip: 203.0.113.20
+    hyperlane_public_url: http://203.0.113.20:9000
+    vm:
+      vm_ip: 10.77.0.10
+      port_offset: 0
+      vmm_host:
+        host: 203.0.113.20
+  - name: validator-3
+    advertise_ip: 203.0.113.20
+    hyperlane_public_url: http://203.0.113.20:9001
+    vm:
+      vm_ip: 10.77.0.11
+      port_offset: 1
+      vmm_host:
+        host: 203.0.113.20
+hyperlane:
+  gasless: true
+topology:
+  use_local_defaults: false
+genesis:
+  prefunded_accounts: {}
+"#,
+        )
+        .unwrap();
+        mixed.validate().unwrap();
+        let mappings = build_vm_firewall_mappings(&mixed).unwrap();
+        assert_eq!(mappings.len(), 20);
+        assert_eq!(
+            mappings[0],
+            FirewallMappingEntry {
+                member: "validator-0".to_owned(),
+                host: "198.51.100.10".to_owned(),
+                public_ip: Ipv4Addr::new(198, 51, 100, 10),
+                public_port: 30_303,
+                proto: "tcp".to_owned(),
+                vm_ip: Ipv4Addr::new(10, 77, 0, 10),
+                vm_port: 30_303,
+                purpose: "reth-p2p".to_owned(),
+            }
+        );
+        // validator-1 uses port_offset 1 -> consensus-p2p is 30401.
+        assert!(mappings.iter().any(|m| {
+            m.member == "validator-1"
+                && m.host == "198.51.100.10"
+                && m.public_ip == Ipv4Addr::new(198, 51, 100, 10)
+                && m.public_port == 30_401
+                && m.proto == "tcp"
+                && m.vm_ip == Ipv4Addr::new(10, 77, 0, 11)
+                && m.vm_port == 30_401
+                && m.purpose == "consensus-p2p"
+        }));
+        let table = render_firewall_mappings_table(&mappings);
+        assert!(table.contains("MEMBER"), "{table}");
+        assert!(table.contains("PUBLIC_PORT"), "{table}");
+        assert!(table.contains("reth-discovery"), "{table}");
+        assert!(table.contains("radicle"), "{table}");
+
+        // 2. Single-host local devnet (advertise_ip == vm_ip, port_offset == 0) -> empty mappings.
+        let local_dev: NetworkConfig = serde_yaml_ng::from_str(&format!(
+            r#"
+version: 1
+name: local-dev
+network: devnet
+chain_id: 424242
+certified_rpc: "http://10.77.0.68:8545"
+vm:
+  vmm_host:
+    host: 198.51.100.10
+  prefix: 24
+  gateway: 10.77.0.1
+  dns: [1.1.1.1, 8.8.8.8]
+founders:
+{}
+hyperlane:
+  gasless: true
+topology:
+  use_local_defaults: true
+genesis:
+  prefunded_accounts: {{}}
+"#,
+            (0..4)
+                .map(|i| format!(
+                    "  - name: validator-{i}\n    advertise_ip: 10.77.0.{}\n    hyperlane_public_url: http://10.77.0.{}:9000\n    vm:\n      vm_ip: 10.77.0.{}",
+                    68 + i,
+                    68 + i,
+                    68 + i
+                ))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ))
+        .unwrap();
+        local_dev.validate().unwrap();
+        assert!(build_vm_firewall_mappings(&local_dev).unwrap().is_empty());
     }
 }

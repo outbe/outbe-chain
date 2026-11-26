@@ -41,6 +41,10 @@ pub enum MemberRole {
     FullNode,
 }
 
+const fn default_rpc_port() -> u16 {
+    super::config::BASE_RPC_PORT
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NetworkMemberState {
@@ -54,6 +58,8 @@ pub struct NetworkMemberState {
     pub bridge: String,
     pub service_ip: Ipv4Addr,
     pub advertise_ip: Ipv4Addr,
+    #[serde(default = "default_rpc_port")]
+    pub rpc_port: u16,
     pub port_offset: u16,
     pub vcpu: u32,
     pub memory_gib: u32,
@@ -307,6 +313,7 @@ mod tests {
             bridge: "obr0".to_owned(),
             service_ip: Ipv4Addr::new(10, 77, 0, 10 + index as u8),
             advertise_ip: Ipv4Addr::new(10, 77, 0, 10 + index as u8),
+            rpc_port: default_rpc_port(),
             port_offset: 0,
             vcpu: 3,
             memory_gib: 5,

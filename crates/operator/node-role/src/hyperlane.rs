@@ -422,8 +422,7 @@ pub async fn run_service(bin_dir: Option<&Path>) -> Result<()> {
     if !wait_for_active {
         return super::service::hyperlane(bin_dir);
     }
-    let rpc_bind = required_env("OUTBE_RPC_BIND_IP")?;
-    let rpc_url = format!("http://{rpc_bind}:8545");
+    let rpc_url = super::service::local_rpc_url()?;
     let rpc = RpcClient::new(&rpc_url)?;
     let validator = required_env("OUTBE_VALIDATOR_ADDRESS")?.parse()?;
     let hyperlane_key = std::env::var_os("OUTBE_HYPERLANE_KEY_PATH")
@@ -479,8 +478,7 @@ pub async fn run_service(bin_dir: Option<&Path>) -> Result<()> {
 }
 
 pub async fn setup_founder() -> Result<()> {
-    let rpc_bind = required_env("OUTBE_RPC_BIND_IP")?;
-    let rpc_url = format!("http://{rpc_bind}:8545");
+    let rpc_url = super::service::local_rpc_url()?;
     let validator_key = required_path("OUTBE_VALIDATOR_KEY_PATH")?;
     let hyperlane_key = required_path("OUTBE_HYPERLANE_KEY_PATH")?;
     let funding = required_env("OUTBE_HYPERLANE_FUNDING_WEI")?

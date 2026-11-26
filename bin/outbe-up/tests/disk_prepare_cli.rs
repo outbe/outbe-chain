@@ -119,12 +119,14 @@ fn build_founder_tree(tree: &Path, chain_id: u64) {
                 "OUTBE_NODE_ROLE=\"founder\"\n",
                 "OUTBE_EXTERNAL_IP=\"10.77.0.10\"\n",
                 "OUTBE_RPC_BIND_IP=\"10.77.0.10\"\n",
+                "OUTBE_VM_IP=\"10.77.0.10\"\n",
                 "OUTBE_VM_PREFIX=\"24\"\n",
                 "OUTBE_VM_GATEWAY=\"10.77.0.1\"\n",
                 "OUTBE_VM_DNS=\"1.1.1.1,8.8.8.8\"\n",
+                "OUTBE_RPC_PORT=\"8545\"\n",
                 "OUTBE_CONSENSUS_PORT=\"30400\"\n",
-                "OUTBE_RETH_PORT=\"30303\"\n",
-                "OUTBE_DISCV5_PORT=\"31303\"\n",
+                "OUTBE_RETH_P2P_PORT=\"30303\"\n",
+                "OUTBE_RETH_DISCOVERY_PORT=\"31303\"\n",
                 "OUTBE_RADICLE_PORT=\"8776\"\n",
                 "OUTBE_CERTIFIED_RPC=\"http://10.77.0.10:8545\"\n",
                 "OUTBE_VALIDATOR_ADDRESS=\"0x1111111111111111111111111111111111111111\"\n",
@@ -205,27 +207,23 @@ certified_rpc: "http://10.77.0.10:8545"
 founders:
   - name: validator-0
     vm:
-      bridge_ip: 10.77.0.10
+      vm_ip: 10.77.0.10
     advertise_ip: 10.77.0.10
-    rpc_bind_ip: 10.77.0.10
     hyperlane_public_url: "http://10.77.0.10:9000"
   - name: validator-1
     vm:
-      bridge_ip: 10.77.0.11
+      vm_ip: 10.77.0.11
     advertise_ip: 10.77.0.11
-    rpc_bind_ip: 10.77.0.11
     hyperlane_public_url: "http://10.77.0.11:9000"
   - name: validator-2
     vm:
-      bridge_ip: 10.77.0.12
+      vm_ip: 10.77.0.12
     advertise_ip: 10.77.0.12
-    rpc_bind_ip: 10.77.0.12
     hyperlane_public_url: "http://10.77.0.12:9000"
   - name: validator-3
     vm:
-      bridge_ip: 10.77.0.13
+      vm_ip: 10.77.0.13
     advertise_ip: 10.77.0.13
-    rpc_bind_ip: 10.77.0.13
     hyperlane_public_url: "http://10.77.0.13:9000"
 hyperlane:
   gasless: true
@@ -281,7 +279,7 @@ vm:
                 "vmm_host": "192.0.2.50",
                 "vmm_user": "ubuntu",
                 "vmm_port": 22,
-                "bridge_ip": format!("10.77.0.{}", 10 + index),
+                "vm_ip": format!("10.77.0.{}", 10 + index),
                 "vcpu": 3,
                 "memory_gib": 5,
                 "disk_gib": 1,
@@ -451,7 +449,7 @@ network:
   chain_id: {chain_id}
   certified_rpc: "http://10.77.0.10:8545"
   advertise_ip: 10.77.0.20
-  rpc_bind_ip: 10.77.0.20
+  vm_ip: 10.77.0.20
   vm_prefix: 24
   vm_gateway: 10.77.0.1
   vm_dns: [1.1.1.1, 8.8.8.8]
@@ -487,7 +485,7 @@ network:
   chain_id: {chain_id}
   certified_rpc: "http://10.77.0.10:8545"
   advertise_ip: 10.77.0.21
-  rpc_bind_ip: 10.77.0.21
+  vm_ip: 10.77.0.21
   vm_prefix: 24
   vm_gateway: 10.77.0.1
   vm_dns: [1.1.1.1, 8.8.8.8]
@@ -501,7 +499,7 @@ network:
 }
 
 #[test]
-fn founder_disk_prepare_is_byte_identical_to_legacy_vm_disk_and_supports_tar() {
+fn founder_disk_prepare_is_deterministic_across_dir_and_tar_inputs() {
     if !has_disk_tools() {
         eprintln!("SKIPPED: sfdisk/mke2fs/debugfs not available");
         return;
@@ -509,20 +507,6 @@ fn founder_disk_prepare_is_byte_identical_to_legacy_vm_disk_and_supports_tar() {
     let tmp = tempfile::tempdir().unwrap();
     let artifacts = tmp.path().join("network-artifacts");
     let founder_tree = build_vm_network_artifacts(&artifacts, 424_242);
-
-    let legacy_img = tmp.path().join("legacy.img");
-    let legacy_out = Command::new(OUTBE_UP_BIN)
-        .args(["vm", "disk", "--artifacts"])
-        .arg(&artifacts)
-        .args(["--founder", "0", "--size-gib", "1", "--output"])
-        .arg(&legacy_img)
-        .output()
-        .unwrap();
-    assert!(
-        legacy_out.status.success(),
-        "legacy vm disk failed:\n{}",
-        String::from_utf8_lossy(&legacy_out.stderr)
-    );
 
     let prepared_img = tmp.path().join("founder-dir.img");
     let prep_out = Command::new(OUTBE_UP_BIN)
@@ -539,16 +523,24 @@ fn founder_disk_prepare_is_byte_identical_to_legacy_vm_disk_and_supports_tar() {
         String::from_utf8_lossy(&prep_out.stderr)
     );
 
-    let legacy_sha = sha256_sparse_file(&legacy_img).unwrap();
     let prepared_sha = sha256_sparse_file(&prepared_img).unwrap();
-    assert_eq!(
-        legacy_sha, prepared_sha,
-        "disk prepare --role founder must be byte-identical to legacy vm disk"
+    let repeat_img = tmp.path().join("founder-dir-repeat.img");
+    let repeat_out = Command::new(OUTBE_UP_BIN)
+        .args(["disk", "prepare", "--role", "founder", "--source"])
+        .arg(&founder_tree)
+        .args(["--size-gib", "1", "--output"])
+        .arg(&repeat_img)
+        .output()
+        .unwrap();
+    assert!(
+        repeat_out.status.success(),
+        "second disk prepare --role founder failed:\n{}",
+        String::from_utf8_lossy(&repeat_out.stderr)
     );
     assert_eq!(
-        fs::metadata(&legacy_img).unwrap().permissions().mode() & 0o777,
-        0o600,
-        "legacy vm disk raw image must be mode 0600"
+        sha256_sparse_file(&repeat_img).unwrap(),
+        prepared_sha,
+        "repeated disk prepare --role founder must be byte-identical"
     );
     assert_eq!(
         fs::metadata(&prepared_img).unwrap().permissions().mode() & 0o777,
@@ -602,7 +594,7 @@ fn founder_disk_prepare_is_byte_identical_to_legacy_vm_disk_and_supports_tar() {
         "disk prepare --role founder (tar.zst) failed:\n{}",
         String::from_utf8_lossy(&tar_prep.stderr)
     );
-    assert_eq!(sha256_sparse_file(&tar_img).unwrap(), legacy_sha);
+    assert_eq!(sha256_sparse_file(&tar_img).unwrap(), prepared_sha);
     assert_eq!(
         fs::metadata(&tar_img).unwrap().permissions().mode() & 0o777,
         0o600
@@ -638,7 +630,7 @@ fn founder_disk_prepare_is_byte_identical_to_legacy_vm_disk_and_supports_tar() {
         "disk prepare --role founder (tar.gz) failed:\n{}",
         String::from_utf8_lossy(&tgz_prep.stderr)
     );
-    assert_eq!(sha256_sparse_file(&tgz_img).unwrap(), legacy_sha);
+    assert_eq!(sha256_sparse_file(&tgz_img).unwrap(), prepared_sha);
     assert_eq!(
         fs::metadata(&tgz_img).unwrap().permissions().mode() & 0o777,
         0o600
@@ -1209,8 +1201,7 @@ fn cli_enforces_keys_from_allowlist_redacts_verify_errors_verifies_founder_bls_a
         0o600
     );
 
-    // F7: Refuse existing dangling symlink for both `disk prepare` and legacy `vm disk`, leaving
-    // the symlink untouched.
+    // F7: Refuse existing dangling symlink for `disk prepare`, leaving the symlink untouched.
     let dangling = tmp.path().join("dangling.img");
     let nonexistent = tmp.path().join("never-created-target.img");
     std::os::unix::fs::symlink(&nonexistent, &dangling).unwrap();
@@ -1229,25 +1220,6 @@ fn cli_enforces_keys_from_allowlist_redacts_verify_errors_verifies_founder_bls_a
         String::from_utf8_lossy(&f7_prep.stderr).contains("already exists"),
         "{}",
         String::from_utf8_lossy(&f7_prep.stderr)
-    );
-    assert!(fs::symlink_metadata(&dangling)
-        .unwrap()
-        .file_type()
-        .is_symlink());
-    assert!(!nonexistent.exists());
-
-    let f7_vm = Command::new(OUTBE_UP_BIN)
-        .args(["vm", "disk", "--artifacts"])
-        .arg(&artifacts)
-        .args(["--founder", "0", "--size-gib", "1", "--output"])
-        .arg(&dangling)
-        .output()
-        .unwrap();
-    assert!(!f7_vm.status.success());
-    assert!(
-        String::from_utf8_lossy(&f7_vm.stderr).contains("already exists"),
-        "{}",
-        String::from_utf8_lossy(&f7_vm.stderr)
     );
     assert!(fs::symlink_metadata(&dangling)
         .unwrap()

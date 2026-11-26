@@ -58,7 +58,11 @@ pub async fn show(
     watch: bool,
     json: bool,
 ) -> Result<()> {
-    let ssh: Arc<dyn HostExec> = Arc::new(SshOptions::new(ssh_key, ssh_config)?);
+    let build = NetworkArtifacts::load(artifacts)?;
+    let ssh: Arc<dyn HostExec> = Arc::new(
+        SshOptions::new(ssh_key, ssh_config)?
+            .with_network_known_hosts(&build.manifest.genesis.final_sha256)?,
+    );
     show_with_exec(artifacts, ssh, watch, json).await
 }
 
@@ -271,7 +275,8 @@ fn query_one(exec: &dyn HostExec, founder: &super::config::Founder) -> FounderSt
 }
 
 fn query_one_inner(exec: &dyn HostExec, founder: &super::config::Founder) -> Result<FounderStatus> {
-    let url = format!("http://{}:8545", founder.rpc_bind_ip);
+    let rpc_bind_ip = founder.rpc_bind_ip.unwrap_or(std::net::Ipv4Addr::LOCALHOST);
+    let url = format!("http://{rpc_bind_ip}:{}", founder.rpc_port());
     let request = |method: &str, params: &str, id: u8| {
         format!(
             "curl -fsS --max-time 4 -H 'content-type: application/json' --data '{{\"jsonrpc\":\"2.0\",\"method\":\"{method}\",\"params\":{params},\"id\":{id}}}' {url} || true; printf '\\n'"

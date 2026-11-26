@@ -534,13 +534,12 @@ fn outbe_up_cli_executes_local_vm_flow_with_json_output() {
     assert_eq!(removed["vm_id"], json!(TEST_UUID));
     assert!(!state_dir.join("vms/dev.json").exists());
 
-    // 8. Legacy mode prints the required deprecation notice on stderr even if artifacts don't exist.
+    // 8. Legacy multi-founder `--artifacts` flag has been removed from `outbe-up vm`.
     let legacy_out = run_cli(&["vm", "stop", "--artifacts", dir.path().to_str().unwrap()]);
     assert!(!legacy_out.status.success());
     assert!(
-        String::from_utf8_lossy(&legacy_out.stderr)
-            .contains("network-level vm commands move to outbe-net-up"),
-        "missing legacy stderr notice: {}",
+        String::from_utf8_lossy(&legacy_out.stderr).contains("--artifacts"),
+        "expected unknown argument error for --artifacts: {}",
         String::from_utf8_lossy(&legacy_out.stderr)
     );
 }

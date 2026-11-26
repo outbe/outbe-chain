@@ -79,8 +79,10 @@ pub struct AddValidatorOptions<'a> {
     pub port: u16,
     pub vmm_home: Option<&'a str>,
     pub bridge: Option<&'a str>,
-    pub bridge_ip: Ipv4Addr,
+    pub vm_ip: Ipv4Addr,
+    pub rpc_bind_ip: Option<Ipv4Addr>,
     pub advertise_ip: Ipv4Addr,
+    pub rpc_port: u16,
     pub port_offset: u16,
     pub image_source: Option<ImageSource>,
     pub vcpu: Option<u32>,
@@ -103,8 +105,10 @@ pub struct AddFullNodeOptions<'a> {
     pub port: u16,
     pub vmm_home: Option<&'a str>,
     pub bridge: Option<&'a str>,
-    pub bridge_ip: Ipv4Addr,
+    pub vm_ip: Ipv4Addr,
+    pub rpc_bind_ip: Option<Ipv4Addr>,
     pub advertise_ip: Option<Ipv4Addr>,
+    pub rpc_port: u16,
     pub image_source: Option<ImageSource>,
     pub vcpu: Option<u32>,
     pub memory_gib: Option<u32>,
@@ -329,7 +333,11 @@ pub async fn add_validator(options: AddValidatorOptions<'_>) -> Result<()> {
     let build = NetworkArtifacts::load(options.artifacts)?;
     ensure_vm_deployment(&build)?;
     let driver = RealJoinChainDriver::from_artifacts(&build.root, &build.config.certified_rpc)?;
-    let session = Arc::new(SshControlSession::new(options.ssh_key, options.ssh_config)?);
+    let session = Arc::new(SshControlSession::new_for_network(
+        options.ssh_key,
+        options.ssh_config,
+        &build.manifest.genesis.final_sha256,
+    )?);
     let exec: Arc<dyn HostExec> = session.clone();
     let res = add_validator_with_exec(&options, exec, &driver).await;
     session.close_all();
@@ -337,7 +345,13 @@ pub async fn add_validator(options: AddValidatorOptions<'_>) -> Result<()> {
 }
 
 pub async fn add_full_node(options: AddFullNodeOptions<'_>) -> Result<()> {
-    let session = Arc::new(SshControlSession::new(options.ssh_key, options.ssh_config)?);
+    let build = NetworkArtifacts::load(options.artifacts)?;
+    ensure_vm_deployment(&build)?;
+    let session = Arc::new(SshControlSession::new_for_network(
+        options.ssh_key,
+        options.ssh_config,
+        &build.manifest.genesis.final_sha256,
+    )?);
     let exec: Arc<dyn HostExec> = session.clone();
     let res = add_full_node_with_exec(&options, exec).await;
     session.close_all();
@@ -357,8 +371,10 @@ struct ProvisionRequest<'a> {
     port: u16,
     vmm_home: Option<&'a str>,
     bridge: Option<&'a str>,
-    bridge_ip: Ipv4Addr,
+    vm_ip: Ipv4Addr,
+    rpc_bind_ip: Option<Ipv4Addr>,
     advertise_ip: Ipv4Addr,
+    rpc_port: u16,
     port_offset: u16,
     image_source: Option<&'a ImageSource>,
     vcpu: Option<u32>,
@@ -408,6 +424,17 @@ fn provision_member(
 
     let build = NetworkArtifacts::load(req.artifacts)?;
     ensure_vm_deployment(&build)?;
+    super::ensure_vm_rpc_reachable_for_orchestration(&build)?;
+    if let Some(rpc_bind_ip) = req.rpc_bind_ip {
+        ensure!(
+            rpc_bind_ip == req.vm_ip,
+            "refusing VM orchestration: member `{}` sets rpc_bind_ip={rpc_bind_ip} != vm_ip={}; \
+             RPC-based readiness checks require rpc_bind_ip to match vm_ip (omit --rpc-bind-ip or set it to {})",
+            req.name,
+            req.vm_ip,
+            req.vm_ip
+        );
+    }
     let vm_defaults = build
         .config
         .vm
@@ -451,8 +478,9 @@ fn provision_member(
             vmm_host,
             vmm_home,
             bridge,
-            service_ip: req.bridge_ip,
+            service_ip: req.vm_ip,
             advertise_ip: req.advertise_ip,
+            rpc_port: req.rpc_port,
             port_offset: req.port_offset,
             vcpu: req.vcpu.unwrap_or(vm_defaults.vcpu),
             memory_gib: req.memory_gib.unwrap_or(vm_defaults.memory_gib),
@@ -829,6 +857,16 @@ pub(crate) async fn add_validator_with_exec(
     // Fails closed if the member keys directory is partially populated (F5).
     let build_probe = NetworkArtifacts::load(options.artifacts)?;
     ensure_vm_deployment(&build_probe)?;
+    super::ensure_vm_rpc_reachable_for_orchestration(&build_probe)?;
+    let first_host = build_probe
+        .config
+        .resolve_founder_vm(&build_probe.config.founders[0])?
+        .vmm_host;
+    progress.stage(&format!(
+        "verifying certified_rpc ({}) answers eth_chainId == {}",
+        build_probe.config.certified_rpc, build_probe.config.chain_id
+    ));
+    super::verify_certified_rpc_chain_id(&build_probe, &first_host, exec.as_ref()).await?;
     let ports = FounderPublishedPorts::from_offset(options.port_offset)?;
     progress.stage(&format!(
         "ensuring local joining-validator keys for `{}`",
@@ -849,8 +887,10 @@ pub(crate) async fn add_validator_with_exec(
             port: options.port,
             vmm_home: options.vmm_home,
             bridge: options.bridge,
-            bridge_ip: options.bridge_ip,
+            vm_ip: options.vm_ip,
+            rpc_bind_ip: options.rpc_bind_ip,
             advertise_ip: options.advertise_ip,
+            rpc_port: options.rpc_port,
             port_offset: options.port_offset,
             image_source: options.image_source.as_ref(),
             vcpu: options.vcpu,
@@ -1166,7 +1206,19 @@ pub(crate) async fn add_full_node_with_exec(
 ) -> Result<()> {
     let deadline = Instant::now() + options.timeout;
     let mut progress = Progress::new();
-    let advertise_ip = options.advertise_ip.unwrap_or(options.bridge_ip);
+    let build_probe = NetworkArtifacts::load(options.artifacts)?;
+    ensure_vm_deployment(&build_probe)?;
+    super::ensure_vm_rpc_reachable_for_orchestration(&build_probe)?;
+    let first_host = build_probe
+        .config
+        .resolve_founder_vm(&build_probe.config.founders[0])?
+        .vmm_host;
+    progress.stage(&format!(
+        "verifying certified_rpc ({}) answers eth_chainId == {}",
+        build_probe.config.certified_rpc, build_probe.config.chain_id
+    ));
+    super::verify_certified_rpc_chain_id(&build_probe, &first_host, exec.as_ref()).await?;
+    let advertise_ip = options.advertise_ip.unwrap_or(options.vm_ip);
 
     let provisioned = provision_member(
         &ProvisionRequest {
@@ -1178,8 +1230,10 @@ pub(crate) async fn add_full_node_with_exec(
             port: options.port,
             vmm_home: options.vmm_home,
             bridge: options.bridge,
-            bridge_ip: options.bridge_ip,
+            vm_ip: options.vm_ip,
+            rpc_bind_ip: options.rpc_bind_ip,
             advertise_ip,
+            rpc_port: options.rpc_port,
             port_offset: 0,
             image_source: options.image_source.as_ref(),
             vcpu: options.vcpu,
@@ -1321,6 +1375,7 @@ struct NewMemberSpec<'a> {
     bridge: String,
     service_ip: Ipv4Addr,
     advertise_ip: Ipv4Addr,
+    rpc_port: u16,
     port_offset: u16,
     vcpu: u32,
     memory_gib: u32,
@@ -1366,7 +1421,7 @@ fn build_and_validate_new_member(
     ensure!(spec.disk_gib > 0, "disk_gib must be positive");
     ensure!(
         spec.service_ip.is_private() && !spec.service_ip.is_loopback(),
-        "bridge_ip ({}) must be a non-loopback private IPv4 address",
+        "vm_ip ({}) must be a non-loopback private IPv4 address",
         spec.service_ip
     );
 
@@ -1390,6 +1445,25 @@ fn build_and_validate_new_member(
     .validate()
     .wrap_err_with(|| format!("invalid static VM addressing for `{}`", spec.name))?;
 
+    let member_ports = if spec.role == MemberRole::FullNode {
+        outbe_operator_node_role::vm_network::VmPortsConfig {
+            rpc_port: spec.rpc_port,
+            ..outbe_operator_node_role::vm_network::VmPortsConfig::default()
+        }
+    } else {
+        let published = FounderPublishedPorts::from_offset(spec.port_offset)?;
+        outbe_operator_node_role::vm_network::VmPortsConfig {
+            rpc_port: spec.rpc_port,
+            consensus_port: published.consensus_p2p_tcp,
+            reth_port: published.reth_p2p_tcp,
+            discv5_port: published.reth_discv5_udp,
+            radicle_port: published.radicle_tcp,
+        }
+    };
+    member_ports
+        .validate()
+        .wrap_err_with(|| format!("invalid rpc_port for `{}`", spec.name))?;
+
     // Check collisions against other members (allow exact same vm_name on idempotent retry).
     for other in existing_members {
         if other.vm_name == vm_name {
@@ -1404,7 +1478,7 @@ fn build_and_validate_new_member(
         }
         ensure!(
             !(other.vmm_host.host == spec.vmm_host.host && other.service_ip == spec.service_ip),
-            "bridge_ip {} on host {} collides with existing member `{}`",
+            "vm_ip {} on host {} collides with existing member `{}`",
             spec.service_ip,
             spec.vmm_host.host,
             other.name
@@ -1460,6 +1534,7 @@ fn build_and_validate_new_member(
         bridge: spec.bridge,
         service_ip: spec.service_ip,
         advertise_ip: spec.advertise_ip,
+        rpc_port: spec.rpc_port,
         port_offset: spec.port_offset,
         vcpu: spec.vcpu,
         memory_gib: spec.memory_gib,
@@ -1712,7 +1787,10 @@ fn build_joining_validator_tar_bytes(
         )
     })?;
     op_cfg.network.advertise_ip = member.advertise_ip;
-    op_cfg.network.rpc_bind_ip = member.service_ip;
+    op_cfg.network.vm_ip = Some(member.service_ip);
+    op_cfg.network.rpc_bind_ip = Some(member.service_ip);
+    op_cfg.network.ports.rpc = member.rpc_port;
+    op_cfg.network.vm_rpc_port = Some(member.rpc_port);
     op_cfg.network.vm_consensus_port = Some(ports.consensus_p2p_tcp);
     op_cfg.network.vm_reth_port = Some(ports.reth_p2p_tcp);
     op_cfg.network.vm_discv5_port = Some(ports.reth_discv5_udp);
@@ -1771,10 +1849,12 @@ fn build_full_node_config(
             chain_id: build.config.chain_id,
             certified_rpc: build.config.certified_rpc.clone(),
             advertise_ip: member.advertise_ip,
-            rpc_bind_ip: member.service_ip,
+            rpc_bind_ip: Some(member.service_ip),
+            vm_ip: Some(member.service_ip),
             vm_prefix: op_cfg.network.vm_prefix,
             vm_gateway: op_cfg.network.vm_gateway,
             vm_dns: op_cfg.network.vm_dns,
+            vm_rpc_port: Some(member.rpc_port),
             vm_consensus_port: Some(DEFAULT_CONSENSUS_PORT),
             vm_reth_port: Some(DEFAULT_RETH_PORT),
             vm_discv5_port: Some(DEFAULT_DISCV5_PORT),
@@ -1962,6 +2042,7 @@ pub(super) fn verify_finalized_hash_match(
         &member_a.vmm_host,
         &member_a.name,
         status_a.service_ip,
+        member_a.rpc_port,
         check_height,
     )?;
     let hash_b = query_vm_block_hash(
@@ -1969,6 +2050,7 @@ pub(super) fn verify_finalized_hash_match(
         &member_b.vmm_host,
         &member_b.name,
         status_b.service_ip,
+        member_b.rpc_port,
         check_height,
     )?;
     Ok(hash_a == hash_b)

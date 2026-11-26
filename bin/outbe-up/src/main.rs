@@ -7,7 +7,6 @@ mod cli;
 mod disk;
 mod host;
 mod image;
-mod network;
 mod vm;
 
 #[tokio::main]

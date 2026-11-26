@@ -98,7 +98,7 @@ const VM_CONSOLE_ONLY_SERVICES: &[&str] = &[
 ///   console (`StandardOutput=journal+console`, `StandardError=journal+console`).
 /// - Overrides `ExecStart` on `outbe-chain` node units (`outbe-validator.service`,
 ///   `outbe-joining-validator.service`, `outbe-full-node.service`) so `--metrics` binds on
-///   `${OUTBE_RPC_BIND_IP}:9101` instead of `127.0.0.1:9101` and stdout logging includes
+///   `${OUTBE_VM_IP}:9101` instead of `127.0.0.1:9101` and stdout logging includes
 ///   `--log.stdout.filter info,commonware_p2p=debug`, derived directly from [`vm_units`] so flags
 ///   cannot drift.
 pub fn vm_dev_dropins() -> Vec<UnitFile> {
@@ -113,7 +113,7 @@ pub fn vm_dev_dropins() -> Vec<UnitFile> {
         let exec_start = extract_exec_start_block(&base.content)
             .unwrap_or_else(|| panic!("missing ExecStart in {service_name}"));
         let from = "  --metrics 127.0.0.1:9101 \\";
-        let to = "  --metrics ${OUTBE_RPC_BIND_IP}:9101 \\\n  --log.stdout.filter info,commonware_p2p=debug \\";
+        let to = "  --metrics ${OUTBE_VM_IP}:9101 \\\n  --log.stdout.filter info,commonware_p2p=debug \\";
         assert_eq!(
             exec_start.matches(from).count(),
             1,
@@ -363,22 +363,7 @@ pub fn founding_units(config: FoundingConfig<'_>) -> Vec<UnitFile> {
 
 /// Single-source Reth / `outbe-chain node` base arguments shared by every managed node role
 /// (bare-host joining validator, VM founder, VM joining validator, and VM keyless full node).
-fn common_node_exec_lines(bin_dir: &str, is_vm: bool, p2p_secret_key: Option<&str>) -> Vec<String> {
-    let reth_port_line = if is_vm {
-        "  --port ${OUTBE_RETH_PORT} \\"
-    } else {
-        "  --port ${OUTBE_RETH_P2P_PORT} \\"
-    };
-    let discovery_port_line = if is_vm {
-        "  --discovery.port ${OUTBE_RETH_PORT} \\"
-    } else {
-        "  --discovery.port ${OUTBE_RETH_P2P_PORT} \\"
-    };
-    let discv5_port_line = if is_vm {
-        "  --discovery.v5.port ${OUTBE_DISCV5_PORT} \\"
-    } else {
-        "  --discovery.v5.port ${OUTBE_RETH_DISCOVERY_PORT} \\"
-    };
+fn common_node_exec_lines(bin_dir: &str, p2p_secret_key: Option<&str>) -> Vec<String> {
     let mut args = lines(&[
         &format!("ExecStart={bin_dir}/outbe-chain node \\"),
         "  --chain /opt/outbe-chain/genesis.json \\",
@@ -388,14 +373,14 @@ fn common_node_exec_lines(bin_dir: &str, is_vm: bool, p2p_secret_key: Option<&st
         "  --consensus.storage-dir /opt/outbe-chain/validator-0/consensus \\",
         "  --http \\",
         "  --http.addr ${OUTBE_RPC_BIND_IP} \\",
-        "  --http.port 8545 \\",
+        "  --http.port ${OUTBE_RPC_PORT} \\",
         "  --http.api eth,net,web3,outbe \\",
         "  --authrpc.port 8551 \\",
-        reth_port_line,
-        discovery_port_line,
+        "  --port ${OUTBE_RETH_P2P_PORT} \\",
+        "  --discovery.port ${OUTBE_RETH_P2P_PORT} \\",
         "  --nat extip:${OUTBE_EXTERNAL_IP} \\",
         "  --discovery.v5.addr 0.0.0.0 \\",
-        discv5_port_line,
+        "  --discovery.v5.port ${OUTBE_RETH_DISCOVERY_PORT} \\",
     ]);
     if let Some(key_path) = p2p_secret_key {
         args.push(format!("  --p2p-secret-key {key_path} \\"));
@@ -425,7 +410,6 @@ fn managed_validator_spec(
     ]);
     directives.extend(common_node_exec_lines(
         profile.bin_dir,
-        profile.is_vm,
         Some("/opt/outbe-chain/keys/reth-p2p-secret.hex"),
     ));
     directives.extend(lines(&[
@@ -483,7 +467,7 @@ fn managed_full_node_spec(profile: &ManagedProfile<'_>) -> ServiceSpec {
         "EnvironmentFile=/opt/outbe-chain/validator.env",
         "Environment=RUST_MIN_STACK=16777216",
     ]);
-    directives.extend(common_node_exec_lines(profile.bin_dir, profile.is_vm, None));
+    directives.extend(common_node_exec_lines(profile.bin_dir, None));
     directives.extend(lines(&[
         "  $OUTBE_CONSENSUS_EXTRA_ARGS \\",
         "  --upstream ${OUTBE_CERTIFIED_RPC}",
@@ -909,7 +893,7 @@ mod tests {
                     "  --consensus.storage-dir /opt/outbe-chain/validator-0/consensus \\\n",
                     "  --http \\\n",
                     "  --http.addr ${OUTBE_RPC_BIND_IP} \\\n",
-                    "  --http.port 8545 \\\n",
+                    "  --http.port ${OUTBE_RPC_PORT} \\\n",
                     "  --http.api eth,net,web3,outbe \\\n",
                     "  --authrpc.port 8551 \\\n",
                     "  --port ${OUTBE_RETH_P2P_PORT} \\\n",
@@ -1217,11 +1201,12 @@ mod tests {
     fn vm_units_use_explicit_env_ports_for_listen_and_advertise_and_keep_fixed_ports() {
         let vm = vm_units();
         let expand = |raw: &str| {
-            raw.replace("${OUTBE_EXTERNAL_IP}", "162.19.107.121")
+            raw.replace("${OUTBE_EXTERNAL_IP}", "198.51.100.10")
                 .replace("${OUTBE_RPC_BIND_IP}", "10.77.0.81")
+                .replace("${OUTBE_RPC_PORT}", "8546")
                 .replace("${OUTBE_CONSENSUS_PORT}", "30401")
-                .replace("${OUTBE_RETH_PORT}", "30304")
-                .replace("${OUTBE_DISCV5_PORT}", "31304")
+                .replace("${OUTBE_RETH_P2P_PORT}", "30304")
+                .replace("${OUTBE_RETH_DISCOVERY_PORT}", "31304")
                 .replace("${OUTBE_RADICLE_PORT}", "8777")
         };
 
@@ -1230,20 +1215,21 @@ mod tests {
         assert!(validator.contains("--port 30304"));
         assert!(validator.contains("--discovery.port 30304"));
         assert!(validator.contains("--discovery.v5.port 31304"));
-        assert!(validator.contains("--nat extip:162.19.107.121"));
-        // Fixed guest ports stay unchanged.
+        assert!(validator.contains("--nat extip:198.51.100.10"));
         assert!(validator.contains("--http.addr 10.77.0.81"));
-        assert!(validator.contains("--http.port 8545"));
+        assert!(validator.contains("--http.port 8546"));
+        // Fixed guest ports stay unchanged.
         assert!(validator.contains("--authrpc.port 8551"));
         assert!(validator.contains("--metrics 127.0.0.1:9101"));
         assert!(validator.contains("--radicle.status-address 127.0.0.1:8876"));
 
         let radicle = expand(unit(&vm, "outbe-radicle.service"));
         assert!(radicle.contains("--listen 0.0.0.0:8777"));
-        assert!(radicle.contains("--advertise 162.19.107.121:8777"));
+        assert!(radicle.contains("--advertise 198.51.100.10:8777"));
         assert!(radicle.contains("--status-listen 127.0.0.1:8876"));
 
         let joining = expand(unit(&vm, "outbe-joining-validator.service"));
+        assert!(joining.contains("--http.port 8546"));
         assert!(joining.contains("--consensus.listen-addr 0.0.0.0:30401"));
         assert!(joining.contains("--port 30304"));
         assert!(joining.contains("--discovery.port 30304"));
@@ -1257,6 +1243,7 @@ mod tests {
         assert!(full_node.contains("--discovery.port 30304"));
         assert!(full_node.contains("--discovery.v5.port 31304"));
         assert!(full_node.contains("--http.addr 10.77.0.81"));
+        assert!(full_node.contains("--http.port 8546"));
         assert!(full_node.contains("--upstream ${OUTBE_CERTIFIED_RPC}"));
     }
 
@@ -1338,8 +1325,8 @@ mod tests {
                 "{name}: prod unit must keep loopback metrics bind"
             );
             assert!(
-                !base.contains("--metrics ${OUTBE_RPC_BIND_IP}:9101"),
-                "{name}: prod unit must never bind metrics on service IP"
+                !base.contains("--metrics ${OUTBE_VM_IP}:9101"),
+                "{name}: prod unit must never bind metrics on VM IP"
             );
             assert!(
                 !base.contains("StandardOutput=journal+console"),
@@ -1354,7 +1341,7 @@ mod tests {
             assert!(dropin.contains("StandardOutput=journal+console\n"));
             assert!(dropin.contains("StandardError=journal+console\n"));
             assert!(dropin.contains("\nExecStart=\nExecStart=/usr/local/bin/outbe-chain node \\"));
-            assert!(dropin.contains("  --metrics ${OUTBE_RPC_BIND_IP}:9101 \\"));
+            assert!(dropin.contains("  --metrics ${OUTBE_VM_IP}:9101 \\"));
             assert!(dropin.contains("  --log.stdout.filter info,commonware_p2p=debug \\"));
             assert!(!dropin.contains("127.0.0.1:9101"));
 
@@ -1366,7 +1353,7 @@ mod tests {
                 .iter()
                 .position(|tok| tok == "127.0.0.1:9101")
                 .expect("base ExecStart must contain 127.0.0.1:9101");
-            expected_dev_tokens[metrics_pos] = "${OUTBE_RPC_BIND_IP}:9101".to_owned();
+            expected_dev_tokens[metrics_pos] = "${OUTBE_VM_IP}:9101".to_owned();
             expected_dev_tokens.insert(metrics_pos + 1, "--log.stdout.filter".to_owned());
             expected_dev_tokens.insert(metrics_pos + 2, "info,commonware_p2p=debug".to_owned());
             let dev_tokens = exec_start_tokens(dropin);

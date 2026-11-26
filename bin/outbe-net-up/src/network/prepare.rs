@@ -63,7 +63,11 @@ pub async fn run(
     ssh_key: Option<&Path>,
     ssh_config: Option<&Path>,
 ) -> Result<()> {
-    let ssh: Arc<dyn HostExec> = Arc::new(SshOptions::new(ssh_key, ssh_config)?);
+    let build = NetworkArtifacts::load(artifacts)?;
+    let ssh: Arc<dyn HostExec> = Arc::new(
+        SshOptions::new(ssh_key, ssh_config)?
+            .with_network_known_hosts(&build.manifest.genesis.final_sha256)?,
+    );
     run_with_exec(artifacts, ssh).await
 }
 
@@ -149,27 +153,38 @@ struct PrepareFounder<'a> {
 
 fn prepare_founder(input: PrepareFounder<'_>) -> Result<()> {
     let advertise_ip = input.founder.advertise_ip;
-    let rpc_bind_check =
-        if input.founder.rpc_bind_ip.is_loopback() || input.founder.rpc_bind_ip == advertise_ip {
-            String::new()
-        } else {
-            format!(
-                "ip -4 -o addr show | grep -Fq ' {0}/' \
+    let rpc_bind_ip = input
+        .founder
+        .rpc_bind_ip
+        .unwrap_or(std::net::Ipv4Addr::LOCALHOST);
+    let rpc_bind_check = if rpc_bind_ip.is_loopback() || rpc_bind_ip == advertise_ip {
+        String::new()
+    } else {
+        format!(
+            "ip -4 -o addr show | grep -Fq ' {0}/' \
 || {{ echo 'rpc_bind_ip {0} is not configured on this host' >&2; exit 1; }};",
-                input.founder.rpc_bind_ip,
-            )
-        };
+            rpc_bind_ip,
+        )
+    };
+    let required_ports = format!(
+        "{} 30303 31303 30400 8776 8551 8876 9002 9101 9000 9003",
+        input.founder.rpc_port()
+    );
     let remote = capture_founder(
         input.exec,
         input.founder,
         &format!(
             "set -eu; test \"$(uname -s)\" = Linux; test \"$(uname -m)\" = x86_64; \
 command -v systemctl >/dev/null; command -v tar >/dev/null; command -v sha256sum >/dev/null; \
-command -v curl >/dev/null; command -v ip >/dev/null; \
+command -v curl >/dev/null; command -v ip >/dev/null; command -v ss >/dev/null; \
 if [ \"$(id -u)\" -ne 0 ]; then command -v sudo >/dev/null; sudo -n true; fi; \
 ip -4 -o addr show | grep -Fq ' {advertise_ip}/' \
   || {{ echo 'advertise_ip {advertise_ip} is not configured on this host' >&2; exit 1; }}; \
 {rpc_bind_check} \
+for port in {required_ports}; do \
+  ! ss -H -lntu | grep -Eq \"[:.]$port[[:space:]]\" \
+    || {{ echo \"required port $port is already in use\" >&2; exit 1; }}; \
+done; \
 available=\"$(df -Pk /opt 2>/dev/null | awk 'NR==2 {{print $4}}')\"; \
 [ -n \"$available\" ] || available=\"$(df -Pk / | awk 'NR==2 {{print $4}}')\"; \
 [ \"$available\" -ge {} ] \

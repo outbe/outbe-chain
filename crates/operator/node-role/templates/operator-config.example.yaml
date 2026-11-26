@@ -6,6 +6,7 @@ network:
   advertise_ip: 192.0.2.10
   rpc_bind_ip: 127.0.0.1
   ports:
+    rpc: 8545
     reth_p2p: 30303
     reth_discovery: 31303
     consensus: 30400
