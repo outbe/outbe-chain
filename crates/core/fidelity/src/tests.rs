@@ -205,30 +205,32 @@ fn precompile_dispatch_query_auth_and_metadata() {
         let expiry = T0 + 400 * DAY;
         let query_ts = T0 + 100 * DAY;
 
-        // fidelityIndexAt through the ABI dispatch with a valid owner
+        // getFidelityIndexAt through the ABI dispatch with a valid owner
         // authorization -> decoded RCFI is positive.
         let sig = query_auth(&sk, account, expiry);
-        let call = IFidelity::IFidelityCalls::fidelityIndexAt(IFidelity::fidelityIndexAtCall {
-            account,
-            timestamp: query_ts,
-            expiry,
-            signature: Bytes::from(sig),
-        })
-        .abi_encode();
+        let call =
+            IFidelity::IFidelityCalls::getFidelityIndexAt(IFidelity::getFidelityIndexAtCall {
+                account,
+                timestamp: query_ts,
+                expiry,
+                signature: Bytes::from(sig),
+            })
+            .abi_encode();
         let out = dispatch(storage.clone(), &call, Address::ZERO, U256::ZERO).unwrap();
-        let rcfi = IFidelity::fidelityIndexAtCall::abi_decode_returns(&out).unwrap();
+        let rcfi = IFidelity::getFidelityIndexAtCall::abi_decode_returns(&out).unwrap();
         assert!(rcfi > U256::ZERO);
 
         // A signature from a different key is rejected by the dispatch.
         let (other, _) = evm_signer(0x78);
         let forged = query_auth(&other, account, expiry);
-        let bad = IFidelity::IFidelityCalls::fidelityIndexAt(IFidelity::fidelityIndexAtCall {
-            account,
-            timestamp: query_ts,
-            expiry,
-            signature: Bytes::from(forged.clone()),
-        })
-        .abi_encode();
+        let bad =
+            IFidelity::IFidelityCalls::getFidelityIndexAt(IFidelity::getFidelityIndexAtCall {
+                account,
+                timestamp: query_ts,
+                expiry,
+                signature: Bytes::from(forged.clone()),
+            })
+            .abi_encode();
         // ...and surfaced as a RevertBytes carrying the production QueryFailed error
         // (not an opaque Fatal, which eth_call drops as data-less "missing revert data").
         let err = dispatch(storage.clone(), &bad, Address::ZERO, U256::ZERO).unwrap_err();
@@ -238,15 +240,16 @@ fn precompile_dispatch_query_auth_and_metadata() {
                 outbe_primitives::error::PrecompileError::RevertBytes(bytes)
                     if bytes.starts_with(&<IFidelity::QueryFailed as alloy_sol_types::SolError>::SELECTOR)
             ),
-            "fidelityIndexAt failure must surface as QueryFailed RevertBytes, got {err:?}"
+            "getFidelityIndexAt failure must surface as QueryFailed RevertBytes, got {err:?}"
         );
 
-        let bad_now = IFidelity::IFidelityCalls::fidelityIndex(IFidelity::fidelityIndexCall {
-            account,
-            expiry,
-            signature: Bytes::from(forged),
-        })
-        .abi_encode();
+        let bad_now =
+            IFidelity::IFidelityCalls::getFidelityIndex(IFidelity::getFidelityIndexCall {
+                account,
+                expiry,
+                signature: Bytes::from(forged),
+            })
+            .abi_encode();
         let err_now = dispatch(storage.clone(), &bad_now, Address::ZERO, U256::ZERO).unwrap_err();
         assert!(
             matches!(
@@ -254,7 +257,7 @@ fn precompile_dispatch_query_auth_and_metadata() {
                 outbe_primitives::error::PrecompileError::RevertBytes(bytes)
                     if bytes.starts_with(&<IFidelity::QueryFailed as alloy_sol_types::SolError>::SELECTOR)
             ),
-            "fidelityIndex failure must surface as QueryFailed RevertBytes, got {err_now:?}"
+            "getFidelityIndex failure must surface as QueryFailed RevertBytes, got {err_now:?}"
         );
 
         // Plaintext metadata needs no authorization.

@@ -409,7 +409,7 @@ fn private_tx(nonce: u64, timestamp: u64) -> TransactionSigned {
         expiry,
     );
     let signature = signer.sign_hash(&eip191_hash(&message)).unwrap();
-    let input = outbe_fidelity::precompile::IFidelity::fidelityIndexCall {
+    let input = outbe_fidelity::precompile::IFidelity::getFidelityIndexCall {
         account,
         expiry,
         signature: Bytes::copy_from_slice(&signature),

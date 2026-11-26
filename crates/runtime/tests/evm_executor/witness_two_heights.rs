@@ -1,7 +1,7 @@
 //! Two executor blocks. H2 runs on H1's merged post-state.
 //!
 //! Each height sends four signed user transactions through `OutbeBlockExecutor`:
-//! Gratis `mineCoen`, Promis `mineCoen`, Fidelity `fidelityIndex`, and
+//! Gratis `mineCoen`, Promis `mineCoen`, Fidelity `getFidelityIndex`, and
 //! NOD `quoteSettlement`. The tape must carry a tag from every confidential
 //! domain, indexed on those user transactions.
 
@@ -119,7 +119,7 @@ fn two_blocks_record_every_domain_across_three_witness_modes() {
             user_tx(
                 nonce_base + 2,
                 FIDELITY_ADDRESS,
-                IFidelity::fidelityIndexCall {
+                IFidelity::getFidelityIndexCall {
                     account: user_sender,
                     expiry: TEST_BLOCK_TIMESTAMP_BASE + 100_000,
                     signature: Bytes::copy_from_slice(&fidelity_sig),
