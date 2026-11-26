@@ -1,4 +1,4 @@
-//! Commands for the on-chain public Radicle repository registry.
+//! Commands for the on-chain public Radicle repository registry (`outbe-cli rad ...`).
 
 use alloy_primitives::{FixedBytes, U256};
 use alloy_sol_types::SolCall;
@@ -6,21 +6,21 @@ use clap::Subcommand;
 use eyre::{Result, WrapErr};
 use outbe_primitives::addresses::CODE_REGISTRY_ADDRESS;
 
-use crate::{abi::ICodeRegistry, errors::RadicleError, rpc::Rpc};
+use crate::{abi::ICodeRegistry, commands::require_signer, errors::RadError, rpc::Rpc};
 
-type RepoId = FixedBytes<20>;
+pub(super) type RepoId = FixedBytes<20>;
 
-fn parse_repo_id(value: &str) -> std::result::Result<RepoId, RadicleError> {
+fn parse_repo_id(value: &str) -> std::result::Result<RepoId, RadError> {
     let value = value.strip_prefix("0x").unwrap_or(value);
-    let bytes = hex::decode(value).map_err(RadicleError::InvalidRepoIdHex)?;
+    let bytes = hex::decode(value).map_err(RadError::InvalidRepoIdHex)?;
     if bytes.len() != 20 {
-        return Err(RadicleError::InvalidRepoIdLength(bytes.len()));
+        return Err(RadError::InvalidRepoIdLength(bytes.len()));
     }
     Ok(RepoId::from_slice(&bytes))
 }
 
 #[derive(Subcommand)]
-pub enum RadicleCmd {
+pub enum RadRegistryCmd {
     /// Register a public Heartwood RepoId. Registration becomes active after finality.
     RegisterRepository {
         #[arg(long, value_parser = parse_repo_id)]
@@ -35,11 +35,11 @@ pub enum RadicleCmd {
     },
 }
 
-impl RadicleCmd {
+impl RadRegistryCmd {
     pub async fn run(self, client: &(impl Rpc + Sync), private_key: Option<&str>) -> Result<()> {
         match self {
             Self::RegisterRepository { repo_id } => {
-                let signer = super::require_signer(private_key)?;
+                let signer = require_signer(private_key)?;
                 let call = ICodeRegistry::registerRepositoryCall { repoId: repo_id };
                 let tx = signer
                     .send_tx(client, CODE_REGISTRY_ADDRESS, call.abi_encode(), U256::ZERO)
@@ -102,20 +102,16 @@ mod tests {
     const PRIVATE_KEY: &str = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 
     #[test]
-    fn parses_registry_commands_and_rejects_wrong_length() {
+    fn parses_registry_commands_under_rad_and_rejects_wrong_length() {
         let id = "11".repeat(20);
-        assert!(Cli::try_parse_from([
-            "outbe-cli",
-            "radicle",
-            "register-repository",
-            "--repo-id",
-            &id,
-        ])
+        assert!(Cli::try_parse_from(
+            ["outbe-cli", "rad", "register-repository", "--repo-id", &id,]
+        )
         .is_ok());
-        assert!(Cli::try_parse_from(["outbe-cli", "radicle", "repositories"]).is_ok());
+        assert!(Cli::try_parse_from(["outbe-cli", "rad", "repositories"]).is_ok());
+        assert!(Cli::try_parse_from(["outbe-cli", "rad", "repository", "--repo-id", &id]).is_ok());
         assert!(
-            Cli::try_parse_from(["outbe-cli", "radicle", "repository", "--repo-id", "11",])
-                .is_err()
+            Cli::try_parse_from(["outbe-cli", "rad", "repository", "--repo-id", "11"]).is_err()
         );
     }
 
@@ -130,7 +126,7 @@ mod tests {
             U256::ZERO,
         )
         .unwrap();
-        RadicleCmd::RegisterRepository { repo_id }
+        RadRegistryCmd::RegisterRepository { repo_id }
             .run(&rpc, Some(PRIVATE_KEY))
             .await
             .unwrap();

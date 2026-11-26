@@ -174,6 +174,7 @@ fn mint_request() -> GratisOpRequest {
             op_nonce: 0,
         },
         fidelity: None,
+        sealed_pledge: None,
     }
 }
 
@@ -190,6 +191,7 @@ fn zero_request(account: Address) -> GratisOpRequest {
             op_nonce: 0,
         },
         fidelity: None,
+        sealed_pledge: None,
     }
 }
 
@@ -804,6 +806,7 @@ fn promis_tag_on_the_gratis_tape_is_rejected_by_the_typed_codec() {
             inputs_canonical_hash: B256::ZERO,
             attestation_tag: Vec::new(),
             encrypted_event_amount: Vec::new(),
+            pledge_account: None,
         },
     )
     .expect("canonical gratis body");

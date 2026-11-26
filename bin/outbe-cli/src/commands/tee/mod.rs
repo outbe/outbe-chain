@@ -15,7 +15,6 @@ use args::StatusArgs;
 pub enum TeeCmd {
     /// Read finalized registry, policy and upgrade state, plus node-reported enclave health.
     /// No enclave connection, signing key or lifecycle journal is required.
-    #[command(visible_alias = "upgrade-status")]
     Status(StatusArgs),
 }
 

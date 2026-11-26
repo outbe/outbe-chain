@@ -8,10 +8,6 @@ use outbe_primitives::storage::StorageHandle;
 /// caller's Gratis write authorization without depending on `outbe_gratis`.
 pub use outbe_gratis::api::ModifyAuth;
 
-pub use crate::runtime::{
-    burn_from_credis, collateral_of, pledge_of, release_from_credis, send_to_credis,
-};
-
 #[cfg(any(test, feature = "test-utils"))]
 pub fn mint(
     storage: StorageHandle<'_>,

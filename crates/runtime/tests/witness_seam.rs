@@ -110,6 +110,7 @@ fn gratis_request(balance: Vec<u8>, nonce: u64) -> GratisOpRequest {
             op_nonce: nonce,
         },
         fidelity: None,
+        sealed_pledge: None,
     }
 }
 

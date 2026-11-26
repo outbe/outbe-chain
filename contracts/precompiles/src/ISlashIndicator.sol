@@ -4,6 +4,15 @@ pragma solidity ^0.8.30;
 /// @title ISlashIndicator
 /// @notice Slash indicator precompile at 0x000000000000000000000000000000000000EE01
 interface ISlashIndicator {
+    struct SlashConfig {
+        uint64 proposerMisdemeanorThreshold;
+        uint64 proposerFelonyThreshold;
+        uint64 voterMisdemeanorThreshold;
+        uint64 voterFelonyThreshold;
+        uint64 slashAmountPercent;
+        uint64 evidenceRewardPercent;
+    }
+
     /// Caller-facing domain revert.
     error EvidenceSignerMismatch();
     error ProposalsMustBeSameRound();
@@ -138,4 +147,5 @@ interface ISlashIndicator {
     function getProposerMissCount(address validator) external view returns (uint64);
     function getVoterMissCount(address validator) external view returns (uint64);
     function getFelonyCount(address validator) external view returns (uint64);
+    function getConfig() external view returns (SlashConfig memory);
 }

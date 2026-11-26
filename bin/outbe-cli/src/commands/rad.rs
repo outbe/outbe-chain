@@ -31,6 +31,8 @@ use crate::{
     rpc::Rpc,
 };
 
+mod registry;
+
 /// Heartwood's replication port. Validators run the sidecar on this port. The
 /// chain records their consensus P2P endpoint, not the Radicle one, so the host
 /// comes from chain state and the port from here.
@@ -84,10 +86,12 @@ pub enum RadCmd {
         #[arg(long)]
         home: Option<PathBuf>,
     },
+    #[command(flatten)]
+    Registry(registry::RadRegistryCmd),
 }
 
 impl RadCmd {
-    pub async fn run(self, client: &(impl Rpc + Sync)) -> Result<()> {
+    pub async fn run(self, client: &(impl Rpc + Sync), private_key: Option<&str>) -> Result<()> {
         match self {
             Self::Init {
                 home,
@@ -113,6 +117,7 @@ impl RadCmd {
                 start(&home, &listen, &binary)
             }
             Self::Status { home } => status(client, &resolve_home(home)?).await,
+            Self::Registry(cmd) => cmd.run(client, private_key).await,
         }
     }
 }

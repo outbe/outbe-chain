@@ -16,7 +16,7 @@ use outbe_system_common::call_breach::{self, BreachTerms};
 
 use crate::errors::CredisError;
 use crate::precompile::ICredis;
-use crate::schema::{Credis, CredisContract, SubSeriesSummary};
+use crate::schema::{CallTerms, Credis, CredisContract, CredisView, SubSeriesSummary};
 
 impl<'storage> CredisContract<'storage> {
     // ---------------------------------------------------------------------
@@ -27,22 +27,27 @@ impl<'storage> CredisContract<'storage> {
         self.records.exists(credis_id)
     }
 
-    /// Loads a Credis as its group sees it: a live Credis reads its call and call terms
-    /// from the group. Reverts on missing.
-    pub fn load_credis(&self, credis_id: U256) -> Result<Credis> {
-        let mut record = self
+    /// Loads a Credis with the call terms and the call time of its group. Reverts on missing.
+    pub fn load_credis(&self, credis_id: U256) -> Result<CredisView> {
+        let record = self
             .records
             .get(credis_id)?
             .ok_or(CredisError::CredisNotFound)?;
-        if !record.is_settled() {
-            let group = self.group_of(&record)?;
-            record.call_window_seconds = self.group_call_window_seconds.read(&group)?;
-            record.call_threshold_seconds = self.group_call_threshold_seconds.read(&group)?;
-            record.call_notice_period_seconds =
-                self.group_call_notice_period_seconds.read(&group)?;
-            record.called_at = self.group_called_at.read(&group)?;
-        }
-        Ok(record)
+        let group = self.group_of(&record)?;
+        Ok(CredisView {
+            terms: self.group_call_terms(group)?,
+            called_at: self.group_called_at.read(&group)?,
+            record,
+        })
+    }
+
+    /// The call terms that `group` sealed with its first Credis.
+    pub fn group_call_terms(&self, group: B256) -> Result<CallTerms> {
+        Ok(CallTerms {
+            call_window_seconds: self.group_call_window_seconds.read(&group)?,
+            call_threshold_seconds: self.group_call_threshold_seconds.read(&group)?,
+            call_notice_period_seconds: self.group_call_notice_period_seconds.read(&group)?,
+        })
     }
 
     /// The call group of the Credis's sub-series.
@@ -68,9 +73,14 @@ impl<'storage> CredisContract<'storage> {
     }
 
     /// Records a new Credis, lists it, counts it in its owner's sums, puts it in its
-    /// sub-series and group, and emits the ERC-721 mint `Transfer`. Returns `true` when
-    /// this Credis opens its sub-series.
-    pub fn create_credis_record(&mut self, record: &Credis, call_start_day: u32) -> Result<bool> {
+    /// sub-series and group, and emits the ERC-721 mint `Transfer`. A group it opens seals
+    /// `terms`. Returns `true` when this Credis opens its sub-series.
+    pub fn create_credis_record(
+        &mut self,
+        record: &Credis,
+        terms: &CallTerms,
+        call_start_day: u32,
+    ) -> Result<bool> {
         create_indexed(&self.records, record, self.record_indexes(record.owner))?;
         add_to(&self.owner_amount_minor, record.owner, record.amount_minor)?;
         add_to(
@@ -78,7 +88,7 @@ impl<'storage> CredisContract<'storage> {
             record.owner,
             record.outstanding_amount_minor,
         )?;
-        let newly_opened = self.join_group(record, call_start_day)?;
+        let newly_opened = self.join_group(record, terms, call_start_day)?;
         self.emit(ICredis::Transfer {
             from: Address::ZERO,
             to: record.owner,
@@ -161,7 +171,12 @@ impl<'storage> CredisContract<'storage> {
     }
 
     /// Returns `true` when this Credis opens its sub-series.
-    fn join_group(&mut self, record: &Credis, call_start_day: u32) -> Result<bool> {
+    fn join_group(
+        &mut self,
+        record: &Credis,
+        terms: &CallTerms,
+        call_start_day: u32,
+    ) -> Result<bool> {
         let key = Self::sub_series_key(record.series_id, record.sub_series);
         let mut group = self.sub_series_group.read(&key)?;
         let newly_opened = group.is_zero();
@@ -173,7 +188,7 @@ impl<'storage> CredisContract<'storage> {
             );
             self.open_sub_series(key, group, record)?;
             if self.group_start_day.read(&group)? == 0 {
-                self.seal_group(group, record, call_start_day)?;
+                self.seal_group(group, record, terms, call_start_day)?;
             }
             self.group_sub_series.list(&group).push(key)?;
         }
@@ -209,24 +224,30 @@ impl<'storage> CredisContract<'storage> {
             .write(&key, record.call_price_minor)
     }
 
-    fn seal_group(&mut self, group: B256, record: &Credis, call_start_day: u32) -> Result<()> {
+    fn seal_group(
+        &mut self,
+        group: B256,
+        record: &Credis,
+        terms: &CallTerms,
+        call_start_day: u32,
+    ) -> Result<()> {
         self.group_currency
             .write(&group, record.reference_currency)?;
         self.group_start_day.write(&group, call_start_day)?;
         self.group_call_price_minor
             .write(&group, record.call_price_minor)?;
         self.group_call_window_seconds
-            .write(&group, record.call_window_seconds)?;
+            .write(&group, terms.call_window_seconds)?;
         self.group_call_threshold_seconds
-            .write(&group, record.call_threshold_seconds)?;
+            .write(&group, terms.call_threshold_seconds)?;
         self.group_call_notice_period_seconds
-            .write(&group, record.call_notice_period_seconds)?;
+            .write(&group, terms.call_notice_period_seconds)?;
         call_breach::widen_scan_terms(
             &self.max_call_window_seconds,
             &self.min_call_threshold_seconds,
             record.reference_currency,
-            record.call_window_seconds,
-            record.call_threshold_seconds,
+            terms.call_window_seconds,
+            terms.call_threshold_seconds,
         )
     }
 
