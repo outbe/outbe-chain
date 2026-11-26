@@ -301,8 +301,8 @@ fn loads_equal_to_the_limit_complete() {
     assert_eq!(pending_desis_limit(&mut provider), U256::ZERO);
 }
 
-/// Loads above the Metadosis Limit complete the day with nothing for Promis Limit and no
-/// auction, and the loads the limit does not cover carry to the next days.
+/// Loads above the Metadosis Limit complete the day with nothing for Promis Limit and a Desis
+/// brief with no limit, and the loads the limit does not cover carry to the next days.
 #[test]
 fn loads_above_the_limit_carry_the_excess() {
     let day = outbe_system_common::time::EmissionDate::new(DAY);
@@ -329,19 +329,9 @@ fn loads_above_the_limit_carry_the_excess() {
     assert_eq!(record.desis_limit, 0);
     assert_eq!(promis_limit(&mut provider), before);
     StorageHandle::enter(&mut provider, |storage| {
-        let desis = outbe_desis::schema::DesisContract::new(storage.clone());
-        let anchor = u64::from(desis.auction_at.read(&day).unwrap());
-        let mut ctx = block_at(storage.clone());
-        ctx.block.timestamp = anchor;
-        outbe_desis::advance_auctions(&ctx).unwrap();
-        assert_eq!(
-            desis.auction_stage.read(&day).unwrap(),
-            outbe_desis::schema::AuctionStage::Canceled as u8
-        );
-        assert_eq!(
-            desis.cancel_reason.read(&day).unwrap(),
-            outbe_desis::constants::CANCELED_NO_LIMIT
-        );
+        let desis = outbe_desis::schema::DesisContract::new(storage);
+        assert_eq!(desis.desis_limit_set.read(&day).unwrap(), 1);
+        assert_eq!(desis.has_desis_limit.read(&day).unwrap(), 0);
     });
 }
 
