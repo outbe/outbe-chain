@@ -394,7 +394,11 @@ async fn latest_schedule_must_not_replace_the_supplied_checkpoint() {
         )),
         other => panic!("wrong error: {other:?}"),
     }
-    assert_eq!(calls.lock().unwrap().len(), 1);
+    let recorded = calls.lock().unwrap();
+    assert_eq!(recorded.len(), 1);
+    assert_eq!(recorded[0].0, "outbe_teeRenewalScheduleV1");
+    assert_eq!(recorded[0].1, vec![json!(at.hash)]);
+    drop(recorded);
     handle.stop().unwrap();
 }
 
@@ -776,6 +780,377 @@ async fn onboarding_scan_uses_a_bounded_reverse_window() {
     assert_eq!(logs.len(), 4);
     assert!(logs.iter().all(|args| args[0]["fromBlock"] != json!("0x0")));
     handle.stop().unwrap();
+}
+
+/// Failure-only provider tests for `outbe_teeRenewalScheduleV1` fault rows that
+/// a real Reth provider cannot represent (known non-canonical mapping,
+/// inconsistent finalized marker/header, provider lookup errors, pruned state).
+/// This stub NEVER serves synthetic epoch state for a historical success proof.
+mod schedule_fault_rows {
+    use alloy_consensus::Header;
+    use alloy_eips::{BlockNumHash, BlockNumberOrTag};
+    use alloy_primitives::{BlockHash, BlockNumber, B256};
+    use outbe_primitives::{OutbeHeader, OutbePrimitives};
+    use outbe_rpc::{state_reader::OutbeRpcStateReader, OutbeApiHandler, OutbeApiServer as _};
+    use reth_chainspec::ChainInfo;
+    use reth_primitives_traits::SealedHeader;
+    use reth_provider::{
+        BlockHashReader, BlockIdReader, BlockNumReader, HeaderProvider, ProviderError,
+        ProviderResult, StateProviderBox, StateProviderFactory,
+    };
+    use serde_json::{json, Value};
+    use std::collections::HashMap;
+    use std::ops::RangeBounds;
+    use std::sync::Arc;
+
+    struct FaultScheduleProvider {
+        finalized_marker: Result<Option<BlockNumHash>, String>,
+        sealed_headers: HashMap<u64, Result<Option<SealedHeader<OutbeHeader>>, String>>,
+        block_numbers: HashMap<B256, Result<Option<u64>, String>>,
+        canonical_hashes: HashMap<u64, Result<Option<B256>, String>>,
+        state_errors: HashMap<B256, String>,
+    }
+
+    impl Default for FaultScheduleProvider {
+        fn default() -> Self {
+            Self {
+                finalized_marker: Ok(None),
+                sealed_headers: HashMap::new(),
+                block_numbers: HashMap::new(),
+                canonical_hashes: HashMap::new(),
+                state_errors: HashMap::new(),
+            }
+        }
+    }
+
+    impl FaultScheduleProvider {
+        fn sealed_header(number: u64, timestamp: u64, nonce_byte: u8) -> SealedHeader<OutbeHeader> {
+            SealedHeader::seal_slow(OutbeHeader::new(Header {
+                number,
+                timestamp,
+                nonce: alloy_primitives::B64::with_last_byte(nonce_byte),
+                ..Default::default()
+            }))
+        }
+
+        fn with_valid_finalized(height: u64, timestamp: u64) -> (Self, SealedHeader<OutbeHeader>) {
+            let header = Self::sealed_header(height, timestamp, 0x01);
+            let hash = header.hash();
+            let mut provider = Self {
+                finalized_marker: Ok(Some(BlockNumHash::new(height, hash))),
+                ..Default::default()
+            };
+            provider
+                .sealed_headers
+                .insert(height, Ok(Some(header.clone())));
+            provider.block_numbers.insert(hash, Ok(Some(height)));
+            provider.canonical_hashes.insert(height, Ok(Some(hash)));
+            (provider, header)
+        }
+
+        fn err(msg: &str) -> ProviderError {
+            ProviderError::TrieWitnessError(msg.to_owned())
+        }
+    }
+
+    impl BlockHashReader for FaultScheduleProvider {
+        fn block_hash(&self, number: u64) -> ProviderResult<Option<B256>> {
+            match self.canonical_hashes.get(&number) {
+                Some(Ok(hash)) => Ok(*hash),
+                Some(Err(msg)) => Err(Self::err(msg)),
+                None => Ok(None),
+            }
+        }
+
+        fn canonical_hashes_range(
+            &self,
+            _start: BlockNumber,
+            _end: BlockNumber,
+        ) -> ProviderResult<Vec<B256>> {
+            Ok(Vec::new())
+        }
+    }
+
+    impl BlockNumReader for FaultScheduleProvider {
+        fn chain_info(&self) -> ProviderResult<ChainInfo> {
+            Ok(ChainInfo::default())
+        }
+
+        fn best_block_number(&self) -> ProviderResult<BlockNumber> {
+            Ok(0)
+        }
+
+        fn last_block_number(&self) -> ProviderResult<BlockNumber> {
+            Ok(0)
+        }
+
+        fn block_number(&self, hash: B256) -> ProviderResult<Option<BlockNumber>> {
+            match self.block_numbers.get(&hash) {
+                Some(Ok(num)) => Ok(*num),
+                Some(Err(msg)) => Err(Self::err(msg)),
+                None => Ok(None),
+            }
+        }
+    }
+
+    impl BlockIdReader for FaultScheduleProvider {
+        fn pending_block_num_hash(&self) -> ProviderResult<Option<BlockNumHash>> {
+            Ok(None)
+        }
+
+        fn safe_block_num_hash(&self) -> ProviderResult<Option<BlockNumHash>> {
+            Ok(None)
+        }
+
+        fn finalized_block_num_hash(&self) -> ProviderResult<Option<BlockNumHash>> {
+            match &self.finalized_marker {
+                Ok(marker) => Ok(*marker),
+                Err(msg) => Err(Self::err(msg)),
+            }
+        }
+    }
+
+    impl HeaderProvider for FaultScheduleProvider {
+        type Header = OutbeHeader;
+
+        fn header(&self, _block_hash: BlockHash) -> ProviderResult<Option<Self::Header>> {
+            Ok(None)
+        }
+
+        fn header_by_number(&self, _num: u64) -> ProviderResult<Option<Self::Header>> {
+            Ok(None)
+        }
+
+        fn headers_range(
+            &self,
+            _range: impl RangeBounds<BlockNumber>,
+        ) -> ProviderResult<Vec<Self::Header>> {
+            Ok(Vec::new())
+        }
+
+        fn sealed_header(
+            &self,
+            number: BlockNumber,
+        ) -> ProviderResult<Option<SealedHeader<Self::Header>>> {
+            match self.sealed_headers.get(&number) {
+                Some(Ok(header)) => Ok(header.clone()),
+                Some(Err(msg)) => Err(Self::err(msg)),
+                None => Ok(None),
+            }
+        }
+
+        fn sealed_headers_while(
+            &self,
+            _range: impl RangeBounds<BlockNumber>,
+            _predicate: impl FnMut(&SealedHeader<Self::Header>) -> bool,
+        ) -> ProviderResult<Vec<SealedHeader<Self::Header>>> {
+            Ok(Vec::new())
+        }
+    }
+
+    impl StateProviderFactory for FaultScheduleProvider {
+        type Primitives = OutbePrimitives;
+
+        fn latest(&self) -> ProviderResult<StateProviderBox> {
+            Err(ProviderError::StateForHashNotFound(B256::ZERO))
+        }
+
+        fn state_with_block_appended(
+            &self,
+            _parent_hash: BlockHash,
+            _block: reth_chain_state::ExecutedBlock<Self::Primitives>,
+        ) -> ProviderResult<StateProviderBox> {
+            Err(ProviderError::StateForHashNotFound(B256::ZERO))
+        }
+
+        fn state_by_block_number_or_tag(
+            &self,
+            _number_or_tag: BlockNumberOrTag,
+        ) -> ProviderResult<StateProviderBox> {
+            Err(ProviderError::StateForHashNotFound(B256::ZERO))
+        }
+
+        fn history_by_block_number(&self, block: BlockNumber) -> ProviderResult<StateProviderBox> {
+            Err(ProviderError::StateForNumberNotFound(block))
+        }
+
+        fn history_by_block_hash(&self, block: BlockHash) -> ProviderResult<StateProviderBox> {
+            self.state_by_block_hash(block)
+        }
+
+        fn state_by_block_hash(&self, block: BlockHash) -> ProviderResult<StateProviderBox> {
+            match self.state_errors.get(&block) {
+                Some(msg) => Err(Self::err(msg)),
+                None => Err(ProviderError::StateForHashNotFound(block)),
+            }
+        }
+
+        fn pending(&self) -> ProviderResult<StateProviderBox> {
+            Err(ProviderError::StateForHashNotFound(B256::ZERO))
+        }
+
+        fn pending_state_by_hash(
+            &self,
+            _block_hash: B256,
+        ) -> ProviderResult<Option<StateProviderBox>> {
+            Ok(None)
+        }
+
+        fn maybe_pending(&self) -> ProviderResult<Option<StateProviderBox>> {
+            Ok(None)
+        }
+    }
+
+    fn handler_methods(provider: FaultScheduleProvider) -> jsonrpsee::Methods {
+        let reader: Arc<dyn OutbeRpcStateReader> = Arc::new(crate::OutbeRuntime::new());
+        OutbeApiHandler::new(Arc::new(provider), reader)
+            .with_tee_renewal_schedule(10, 1_000)
+            .into_rpc()
+            .into()
+    }
+
+    async fn call_schedule_err(methods: &jsonrpsee::Methods, params: Value) -> (i64, String) {
+        let raw = serde_json::to_string(&json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "outbe_teeRenewalScheduleV1",
+            "params": params,
+        }))
+        .unwrap();
+        let (response, _) = methods.raw_json_request(&raw, 1).await.unwrap();
+        let parsed: Value = serde_json::from_str(response.get()).unwrap();
+        let error = parsed
+            .get("error")
+            .unwrap_or_else(|| panic!("expected JSON-RPC error, got: {parsed}"));
+        (
+            error["code"].as_i64().unwrap(),
+            error["message"].as_str().unwrap().to_owned(),
+        )
+    }
+
+    #[tokio::test]
+    async fn renewal_schedule_rejects_known_noncanonical_hash_with_invalid_params() {
+        let (mut provider, _finalized) =
+            FaultScheduleProvider::with_valid_finalized(10, 1_700_000_100);
+        let canonical_h5 = FaultScheduleProvider::sealed_header(5, 1_700_000_050, 0x05);
+        let orphan_h5 = FaultScheduleProvider::sealed_header(5, 1_700_000_050, 0x55);
+        assert_ne!(canonical_h5.hash(), orphan_h5.hash());
+
+        // Orphan hash resolves to height 5, but canonical hash at height 5 differs.
+        provider.block_numbers.insert(orphan_h5.hash(), Ok(Some(5)));
+        provider
+            .canonical_hashes
+            .insert(5, Ok(Some(canonical_h5.hash())));
+        provider
+            .sealed_headers
+            .insert(5, Ok(Some(canonical_h5.clone())));
+
+        let methods = handler_methods(provider);
+        let (code, message) = call_schedule_err(&methods, json!([orphan_h5.hash()])).await;
+        assert_eq!(code, -32602);
+        assert_eq!(
+            message,
+            format!(
+                "non-canonical TEE renewal schedule block hash {}",
+                orphan_h5.hash()
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn renewal_schedule_checks_finalized_marker_header_consistency_before_target_selection() {
+        let finalized_header = FaultScheduleProvider::sealed_header(10, 1_700_000_100, 0x10);
+        let wrong_marker_hash = B256::repeat_byte(0xee);
+        assert_ne!(finalized_header.hash(), wrong_marker_hash);
+
+        let mut provider = FaultScheduleProvider {
+            finalized_marker: Ok(Some(BlockNumHash::new(10, wrong_marker_hash))),
+            ..Default::default()
+        };
+        provider
+            .sealed_headers
+            .insert(10, Ok(Some(finalized_header)));
+
+        let methods = handler_methods(provider);
+        for params in [json!([]), json!([B256::repeat_byte(0xaa)])] {
+            let (code, message) = call_schedule_err(&methods, params).await;
+            assert_eq!(code, -32603);
+            assert_eq!(
+                message,
+                "finalized block marker and canonical header disagree"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn renewal_schedule_reports_provider_lookup_and_pruned_state_errors_with_hash_context() {
+        let (mut provider, _finalized) =
+            FaultScheduleProvider::with_valid_finalized(10, 1_700_000_100);
+        let h_lookup_err = B256::repeat_byte(0x11);
+        provider
+            .block_numbers
+            .insert(h_lookup_err, Err("db read failure".into()));
+
+        let h_canonical_err = B256::repeat_byte(0x22);
+        provider.block_numbers.insert(h_canonical_err, Ok(Some(6)));
+        provider
+            .canonical_hashes
+            .insert(6, Err("canonical index failure".into()));
+
+        let h_pruned = FaultScheduleProvider::sealed_header(7, 1_700_000_070, 0x07);
+        provider.block_numbers.insert(h_pruned.hash(), Ok(Some(7)));
+        provider
+            .canonical_hashes
+            .insert(7, Ok(Some(h_pruned.hash())));
+        provider
+            .sealed_headers
+            .insert(7, Ok(Some(h_pruned.clone())));
+        provider
+            .state_errors
+            .insert(h_pruned.hash(), "historical state pruned".into());
+
+        let methods = handler_methods(provider);
+
+        let (code, msg) = call_schedule_err(&methods, json!([h_lookup_err])).await;
+        assert_eq!(code, -32603);
+        assert!(
+            msg.contains(&h_lookup_err.to_string()),
+            "missing hash context: {msg}"
+        );
+
+        let (code, msg) = call_schedule_err(&methods, json!([h_canonical_err])).await;
+        assert_eq!(code, -32603);
+        assert!(
+            msg.contains(&h_canonical_err.to_string()),
+            "missing hash context: {msg}"
+        );
+
+        // Pruned historical state returns Internal Error with requested hash context,
+        // never falling back to current finalized state.
+        let (code, msg) = call_schedule_err(&methods, json!([h_pruned.hash()])).await;
+        assert_eq!(code, -32603);
+        assert!(
+            msg.contains(&h_pruned.hash().to_string()),
+            "missing pruned hash context: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn renewal_schedule_preserves_missing_finalized_marker_and_header_errors() {
+        let methods = handler_methods(FaultScheduleProvider::default());
+        let (code, msg) = call_schedule_err(&methods, json!([B256::repeat_byte(0x01)])).await;
+        assert_eq!(code, -32603);
+        assert_eq!(msg, "finalized block is unavailable");
+
+        let missing_header = FaultScheduleProvider {
+            finalized_marker: Ok(Some(BlockNumHash::new(10, B256::repeat_byte(0x10)))),
+            ..Default::default()
+        };
+        let methods = handler_methods(missing_header);
+        let (code, msg) = call_schedule_err(&methods, json!([B256::repeat_byte(0x01)])).await;
+        assert_eq!(code, -32603);
+        assert_eq!(msg, "finalized header is unavailable");
+    }
 }
 
 #[path = "audit_tests.rs"]

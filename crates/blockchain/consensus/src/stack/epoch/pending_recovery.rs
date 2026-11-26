@@ -2,17 +2,24 @@
 use super::super::*;
 use super::runtime::*;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum PendingRestoreOutcome {
+    Completed,
+    Stopped,
+}
+
 impl<E, N: StackNodeAccess> EpochSupervisor<E, N>
 where
     E: Clock + CryptoRng + Network + Resolver + Spawner + Storage + Metrics + Send + Sync + 'static,
 {
     pub(super) async fn restore_pending(
         &mut self,
+        ctx: &E,
         recovered_pending_boundary: Option<PendingDkgBoundarySnapshot>,
         recovery_anchor_height: u64,
-    ) -> Result<()> {
+    ) -> Result<PendingRestoreOutcome> {
         let Some(snapshot) = recovered_pending_boundary else {
-            return Ok(());
+            return Ok(PendingRestoreOutcome::Completed);
         };
         let pending_epoch = Epoch::new(snapshot.artifact.epoch);
         let keys_dir = self
@@ -46,26 +53,30 @@ where
             &keys_dir,
         )?
         else {
-            return Ok(());
+            return Ok(PendingRestoreOutcome::Completed);
         };
 
         match startup_plan {
             StartupPendingDkgEpochPlan::Defer {
                 active_epoch,
                 preregister_after_current,
-            } => self.defer_recovered_pending_handoff(
-                restored,
-                restored_target_dkg_cycle,
-                active_epoch,
-                preregister_after_current,
-                recovery_anchor_height,
-            ),
+            } => {
+                self.defer_recovered_pending_handoff(
+                    restored,
+                    restored_target_dkg_cycle,
+                    active_epoch,
+                    preregister_after_current,
+                    recovery_anchor_height,
+                )?;
+                Ok(PendingRestoreOutcome::Completed)
+            }
             StartupPendingDkgEpochPlan::Activate {
                 previous_epoch,
                 active_epoch,
                 activation_anchor,
             } => {
                 self.activate_recovered_pending_handoff(
+                    ctx,
                     restored,
                     previous_epoch,
                     active_epoch,
@@ -160,12 +171,13 @@ where
 
     async fn activate_recovered_pending_handoff(
         &mut self,
+        ctx: &E,
         restored: RestoredPendingDkgActivation,
         previous_epoch: Epoch,
         active_epoch: Epoch,
         activation_anchor: u64,
         recovery_anchor_height: u64,
-    ) -> Result<()> {
+    ) -> Result<PendingRestoreOutcome> {
         let (target, canonical_output, activated_signing_share, boundary_artifact) =
             unpack_restored_pending_activation(restored)?;
         if boundary_artifact.epoch != active_epoch.get() {
@@ -251,18 +263,23 @@ where
         self.rotation.frozen_dkg_target = None;
         self.rotation.pending_dkg_activation = None;
         self.rotation.dealer_only_dkg_activation = None;
-        self.channels.next_epoch_subchannels = Some(
+        let Some(next_subchannels) = super::supervisor::poll_mux_registration_until_stopped(
+            ctx,
             crate::epoch_subchannels::register_epoch_subchannels(
                 active_epoch,
                 &mut self.channels.vote_mux,
                 &mut self.channels.cert_mux,
                 &mut self.channels.res_mux,
-            )
-            .await
-            .wrap_err_with(|| {
-                format!("pre-register activated startup subchannels for epoch {active_epoch}")
-            })?,
-        );
+            ),
+        )
+        .await
+        .wrap_err_with(|| {
+            format!("pre-register activated startup subchannels for epoch {active_epoch}")
+        })?
+        else {
+            return Ok(PendingRestoreOutcome::Stopped);
+        };
+        self.channels.next_epoch_subchannels = Some(next_subchannels);
         info!(
             previous_epoch = %previous_epoch,
             active_epoch = %active_epoch,
@@ -273,7 +290,7 @@ where
             dkg_output_hash = %dkg_manager::dkg_output_hash(&canonical_output),
             "restored preannounce-authorized DKG activation before boundary commit"
         );
-        Ok(())
+        Ok(PendingRestoreOutcome::Completed)
     }
 }
 

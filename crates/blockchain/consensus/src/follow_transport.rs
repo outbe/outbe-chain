@@ -293,10 +293,13 @@ impl FinalizedStateRpc for UpstreamRpcClient {
 }
 
 impl RegistryRpc for UpstreamRpcClient {
-    async fn tee_renewal_schedule_v1(&self) -> Result<TeeRenewalScheduleV1, Self::Error> {
+    async fn tee_renewal_schedule_v1(
+        &self,
+        finalized_hash: B256,
+    ) -> Result<TeeRenewalScheduleV1, Self::Error> {
         let schedule: TeeRenewalScheduleV1 = self
             .client
-            .request("outbe_teeRenewalScheduleV1", rpc_params![])
+            .request("outbe_teeRenewalScheduleV1", rpc_params![finalized_hash])
             .await
             .map_err(|error| FollowTransportError::UpstreamRpcRequest {
                 method: "outbe_teeRenewalScheduleV1",

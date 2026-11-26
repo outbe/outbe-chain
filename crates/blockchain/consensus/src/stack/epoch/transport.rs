@@ -243,19 +243,43 @@ where
     // The mux then drops the unrouted message -> the identity exchange hangs.
     // No later round registers on these muxes.
     let tee_dkg_round0 = match tee_dkg_mux.as_mut() {
-        Some(m) => Some(
-            m.register(0)
-                .await
-                .map_err(crate::errors::StackEpochError::pre_register_tee_dkg_round0)?,
-        ),
+        Some(m) => {
+            let Some(channel) =
+                super::supervisor::poll_mux_registration_until_stopped(ctx, async {
+                    m.register(0).await.map_err(|error| {
+                        eyre::Report::new(
+                            crate::errors::StackEpochError::pre_register_tee_dkg_round0(error),
+                        )
+                    })
+                })
+                .await?
+            else {
+                info!("global stop received during TEE DKG round-0 subchannel registration; exiting startup");
+                return Ok(None);
+            };
+            Some(channel)
+        }
         None => None,
     };
     let tee_bootstrap_round0 = match tee_bootstrap_mux.as_mut() {
-        Some(m) => Some(
-            m.register(0)
-                .await
-                .map_err(crate::errors::StackEpochError::pre_register_tee_bootstrap_round0)?,
-        ),
+        Some(m) => {
+            let Some(channel) =
+                super::supervisor::poll_mux_registration_until_stopped(ctx, async {
+                    m.register(0).await.map_err(|error| {
+                        eyre::Report::new(
+                            crate::errors::StackEpochError::pre_register_tee_bootstrap_round0(
+                                error,
+                            ),
+                        )
+                    })
+                })
+                .await?
+            else {
+                info!("global stop received during TEE bootstrap round-0 subchannel registration; exiting startup");
+                return Ok(None);
+            };
+            Some(channel)
+        }
         None => None,
     };
     info!("channel muxers started");
