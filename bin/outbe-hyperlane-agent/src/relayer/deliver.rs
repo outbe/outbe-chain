@@ -338,11 +338,12 @@ pub async fn process(
     let mut tx = tx.gas_limit(gas.saturating_add(GAS_LIMIT_BUFFER));
     // As upstream: a chain with no base fee or a zero base fee gets a legacy
     // transaction with the gas price of the node.
+    // An RPC error here is an error of the attempt: a legacy transaction
+    // has no fee cap.
     let base_fee = provider
         .get_fee_history(1, BlockNumberOrTag::Latest, &[])
-        .await
-        .ok()
-        .and_then(|history| history.latest_block_base_fee());
+        .await?
+        .latest_block_base_fee();
     match base_fee {
         None | Some(0) => tx = tx.gas_price(provider.get_gas_price().await?),
         Some(base_fee) => {
