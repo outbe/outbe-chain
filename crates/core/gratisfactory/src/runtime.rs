@@ -2,28 +2,19 @@
 use crate::{errors::GratisFactoryError, precompile::IGratisFactory};
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
-use outbe_fidelity::api::FidelityCohortOp;
 use outbe_gratis::api::{self as gratis, ModifyAuth};
 use outbe_primitives::{error::Result, storage::StorageHandle};
 use outbe_system_common::addresses::GRATIS_FACTORY_ADDRESS;
 use outbe_system_common::units::{checked_protocol_to_native, UNITS_PER_PROTOCOL_MINOR};
 
-/// Mint `amount` gratis to `account` (authorized by the account owner's modify
-/// key) and record the Fidelity acquisition cohort.
+/// Mint `amount` gratis to `account`, authorized by the account owner's modify key.
 pub fn mint(
     storage: StorageHandle<'_>,
     account: Address,
     amount: U256,
     auth: ModifyAuth,
 ) -> Result<()> {
-    // Fold the acquisition cohort into the gratis mint round-trip. Persist the
-    // returned fidelity blob.
-    let now = storage.now_secs()?;
-    let section =
-        outbe_fidelity::api::cohort_section(storage.clone(), account, FidelityCohortOp::In, now)?;
-    let outcome = gratis::mint_with_fidelity(storage.clone(), account, amount, auth, section)?;
-    outbe_fidelity::api::apply_fidelity_outcome(storage.clone(), account, &outcome)?;
-    Ok(())
+    gratis::mint(storage, account, amount, auth)
 }
 
 pub fn mine_coen(
@@ -35,13 +26,7 @@ pub fn mine_coen(
     let native_amount =
         checked_protocol_to_native(amount).ok_or(GratisFactoryError::NativeCoenOverflow)?;
 
-    // Fold the sale cohort into the gratis burn round-trip. Persist the returned
-    // fidelity blob.
-    let now = storage.now_secs()?;
-    let section =
-        outbe_fidelity::api::cohort_section(storage.clone(), account, FidelityCohortOp::Out, now)?;
-    let outcome = gratis::burn_with_fidelity(storage.clone(), account, amount, auth, section)?;
-    outbe_fidelity::api::apply_fidelity_outcome(storage.clone(), account, &outcome)?;
+    gratis::burn(storage.clone(), account, amount, auth)?;
 
     // GRATIS stays at six decimals. The matching native COEN exits at 18 decimals.
     storage.increase_balance(account, native_amount)?;

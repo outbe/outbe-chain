@@ -6,12 +6,6 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_promislimit::PromisLimitContract;
 use outbe_vaultrouter::VaultRouterContract;
 
-fn fidelity_of(storage: &StorageHandle<'_>, account: Address) -> Vec<u8> {
-    outbe_fidelity::FidelityContract::new(storage.clone())
-        .cohorts_ct_of(account)
-        .unwrap()
-}
-
 fn expect_issue_error(
     storage: &StorageHandle<'_>,
     caller: Address,
@@ -111,17 +105,16 @@ fn a_main_account_backs_another_owner_and_settlements_free_its_gratis() {
 #[test]
 fn repayments_return_collateral_to_the_source_and_interest_only_returns_nothing() {
     let mut provider = env();
-    let (credis_id, fidelity, interest) = StorageHandle::enter(&mut provider, |storage| {
+    let (credis_id, interest) = StorageHandle::enter(&mut provider, |storage| {
         bootstrap(&storage, pledge_cost());
         let credis_id = open(&storage);
-        let fidelity = fidelity_of(&storage, alice());
         advance_to(&storage, CREATED_AT + DAY);
         let record = CredisContract::new(storage.clone())
             .get_credis(credis_id)
             .unwrap();
         let interest = CredisContract::accrued_fee(&record, CREATED_AT + DAY).unwrap();
         assert!(!interest.is_zero());
-        (credis_id, fidelity, interest)
+        (credis_id, interest)
     });
     paying(&mut provider, credis_id, interest, |storage| {
         runtime::settle_credis(storage, bob(), credis_id, Address::ZERO, interest).unwrap()
@@ -164,7 +157,6 @@ fn repayments_return_collateral_to_the_source_and_interest_only_returns_nothing(
             view_balance(&storage, alice()) + view_pledged(&storage, alice()),
             pledge_cost()
         );
-        assert_eq!(fidelity_of(&storage, alice()), fidelity);
         assert!(!CredisContract::new(storage.clone())
             .credis_exists(credis_id)
             .unwrap());
@@ -221,7 +213,6 @@ fn forfeit_burns_the_pledged_gratis_of_the_unsettled_part() {
         bootstrap_for(&storage, bob(), pledge_cost());
         let id = open(&storage);
         let other = open_for(&storage, bob());
-        let fidelity = fidelity_of(&storage, alice());
         let liquid = outbe_gratis::api::balance_ct(storage.clone(), alice()).unwrap();
         let reserve = PromisLimitContract::new(storage.clone())
             .promis_limit()
@@ -255,7 +246,6 @@ fn forfeit_burns_the_pledged_gratis_of_the_unsettled_part() {
                 .unwrap(),
             reserve + pledge_cost()
         );
-        assert_eq!(fidelity_of(&storage, alice()), fidelity);
         assert_eq!(
             outbe_gratis::api::balance_ct(storage.clone(), alice()).unwrap(),
             liquid

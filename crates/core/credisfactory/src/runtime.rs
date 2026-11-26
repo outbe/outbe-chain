@@ -148,7 +148,7 @@ pub fn quote_settlement(storage: &StorageHandle<'_>, credis_id: U256) -> Result<
 }
 
 /// Collect payment first, then free the settled share of the Gratis in the main account.
-/// A zero `asset` pays in the asset of the Credis. No Fidelity mutation.
+/// A zero `asset` pays in the asset of the Credis.
 pub fn settle_credis(
     storage: StorageHandle<'_>,
     caller: Address,
@@ -270,7 +270,7 @@ pub fn forfeit_by_owner(
 }
 
 /// Burns only this Credis's remaining collateral from the pledged balance of its main account
-/// and returns it to the Promis Reserve, together. Fidelity cohorts stay untouched.
+/// and returns it to the Promis Reserve, together.
 fn burn_forfeited_collateral(
     storage: StorageHandle<'_>,
     credis_id: U256,

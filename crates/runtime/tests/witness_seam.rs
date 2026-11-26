@@ -109,7 +109,6 @@ fn gratis_request(balance: Vec<u8>, nonce: u64) -> GratisOpRequest {
             mac: gratis_mac(&keys, &operation),
             op_nonce: nonce,
         },
-        fidelity: None,
         sealed_pledge: None,
     }
 }

@@ -17,7 +17,6 @@ use outbe_system_common::addresses::CREDIS_FACTORY_ADDRESS;
 
 use alloy_sol_types::SolCall;
 use outbe_credis::CredisContract;
-use outbe_fidelity::enclave_client::test_enclave as fidelity_enclave;
 use outbe_gratis::enclave_client::test_enclave;
 use outbe_gratis::{
     decrypt_balance, decrypt_pledged, derive_account_keys, derive_view_key, modify_mac,
@@ -690,18 +689,6 @@ pub fn zero_word() -> Bytes {
     Bytes::from(vec![0u8; 32])
 }
 
-/// Positive Fidelity, so a test sees that a Credis leaves it unchanged.
-pub fn seed_fidelity(storage: StorageHandle<'_>, account: Address) {
-    const ONE_YEAR_SECS: u64 = 365 * DAY;
-    outbe_fidelity::api::cohort_in(
-        storage,
-        account,
-        U256::from(100u64),
-        CREATED_AT - ONE_YEAR_SECS,
-    )
-    .unwrap();
-}
-
 pub fn auth(op: GratisOp, owner: Address, amount: U256, op_nonce: u64) -> ModifyAuth {
     let mk = derive_account_keys(&test_enclave::state_key(), owner).unwrap();
     ModifyAuth {
@@ -740,7 +727,6 @@ pub fn view_balance(s: &StorageHandle<'_>, a: Address) -> U256 {
 /// Storage set up with the block time, sub-call stubs, and the enclave installed.
 pub fn env() -> HashMapStorageProvider {
     test_enclave::install();
-    fidelity_enclave::install();
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(CREATED_AT));
     storage.set_block_number(BLOCK_NUMBER);
@@ -780,7 +766,7 @@ pub fn env() -> HashMapStorageProvider {
     storage
 }
 
-/// Mints `amount` gratis to alice and seeds the fidelity + oracle state a pledge needs.
+/// Mints `amount` gratis to alice and seeds the oracle state a pledge needs.
 pub fn bootstrap(storage: &StorageHandle<'_>, amount: U256) {
     bootstrap_for(storage, alice(), amount);
 }
@@ -795,11 +781,9 @@ pub fn bootstrap_for(storage: &StorageHandle<'_>, who: Address, amount: U256) {
         auth(GratisOp::Mint, who, amount, 0),
     )
     .unwrap();
-    seed_fidelity(storage.clone(), who);
     seed_oracle(storage.clone(), oracle_rate());
 }
 
 pub fn teardown() {
-    fidelity_enclave::uninstall();
     test_enclave::uninstall();
 }

@@ -308,12 +308,12 @@ fn event_amount_input_hash_vector() {
     );
 }
 
-const GRATIS_OP_APPLIED_SIGNED: &str = "01000121012220000000000000000000000000000000000000000000000000000000000000001105010121017b072011111111111111111111111111111111111111111111111111111111111111110251520123";
+const GRATIS_OP_APPLIED_SIGNED: &str = "010001210122200000000000000000000000000000000000000000000000000000000000000011052011111111111111111111111111111111111111111111111111111111111111110251520123";
 const NOD_AMOUNT_READ_SIGNED: &str = "0a200000000000000000000000000000000000000000000000000000000000000011201111111111111111111111111111111111111111111111111111111111111111025152";
 const FIDELITY_INDEX_QUERIED_SIGNED: &str = "0520000000000000000000000000000000000000000000000000000000000000001120000000000000000000000000000000000000000000000000000000000000001207201111111111111111111111111111111111111111111111111111111111111111025152";
 const FIDELITY_QUERY_REJECTED_SIGNED: &str =
     "0f2011111111111111111111111111111111111111111111111111111111111111110872656a6563746564025152";
-const NOD_MINED_SIGNED: &str = "090121050121017b072011111111111111111111111111111111111111111111111111111111111111110251520123";
+const NOD_MINED_SIGNED: &str = "090121052011111111111111111111111111111111111111111111111111111111111111110251520123";
 const NOD_MINT_REJECTED_SIGNED: &str =
     "080872656a6563746564201111111111111111111111111111111111111111111111111111111111111111025152";
 
@@ -324,20 +324,12 @@ enum GratisStatusWire {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-struct FidelityOutcomeWire {
-    new_blob: Vec<u8>,
-    qualified_start_initialized: Option<u64>,
-    league: u16,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct GratisOpAppliedWire {
     status: GratisStatusWire,
     new_balance: Vec<u8>,
     new_pledged: Vec<u8>,
     event_amount: U256,
     next_op_nonce: u64,
-    fidelity: Option<FidelityOutcomeWire>,
     inputs_canonical_hash: B256,
     attestation_tag: Vec<u8>,
     encrypted_event_amount: Vec<u8>,
@@ -370,7 +362,6 @@ struct FidelityQueryRejectedWire {
 struct NodMinedWire {
     new_balance: Vec<u8>,
     next_op_nonce: u64,
-    fidelity: FidelityOutcomeWire,
     inputs_canonical_hash: B256,
     attestation_tag: Vec<u8>,
     encrypted_event_amount: Vec<u8>,
@@ -531,11 +522,6 @@ fn v1_payloads_match_tag_free_response_vectors() {
             new_pledged: vec![34],
             event_amount: U256::from(0x11u64),
             next_op_nonce: 5,
-            fidelity: Some(FidelityOutcomeWire {
-                new_blob: vec![33],
-                qualified_start_initialized: Some(123),
-                league: 7,
-            }),
             inputs_canonical_hash: hash,
             attestation_tag: tag.clone(),
             encrypted_event_amount: vec![35],
@@ -570,11 +556,6 @@ fn v1_payloads_match_tag_free_response_vectors() {
         NodMinedWire {
             new_balance: vec![33],
             next_op_nonce: 5,
-            fidelity: FidelityOutcomeWire {
-                new_blob: vec![33],
-                qualified_start_initialized: Some(123),
-                league: 7,
-            },
             inputs_canonical_hash: hash,
             attestation_tag: tag.clone(),
             encrypted_event_amount: vec![35],

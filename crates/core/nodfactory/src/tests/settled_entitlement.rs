@@ -209,40 +209,7 @@ fn unsettled_mining_is_rejected() {
 }
 
 #[test]
-fn settlement_leaves_fidelity_alone_and_mining_records_it() {
-    let fidelity = |world: &World| {
-        world
-            .provider
-            .storage
-            .iter()
-            .filter(|((address, _), _)| {
-                *address == outbe_system_common::addresses::FIDELITY_ADDRESS
-            })
-            .map(|(slot, value)| (*slot, *value))
-            .collect::<std::collections::BTreeMap<_, _>>()
-    };
-    let mut world = World::new();
-    let input = free(Address::repeat_byte(0x86));
-    let nod_id = world.issue(&input);
-    let before = fidelity(&world);
-
-    world.settle(nod_id, input.owner).unwrap();
-    assert_eq!(fidelity(&world), before, "settlement acquires no Fidelity");
-
-    let nonce = world.pow_nonce(nod_id);
-    world
-        .mine_gratis(api::MineGratisRequest {
-            caller: input.owner,
-            nod_id,
-            nonce,
-            auth: mine_auth(input.owner, input.gratis_load_minor),
-        })
-        .unwrap();
-    assert_ne!(fidelity(&world), before, "the mint records the acquisition");
-}
-
-#[test]
-fn fidelity_persistence_failure_preserves_settled_entitlement_and_mint_nonce() {
+fn gratis_persistence_failure_preserves_settled_entitlement_and_mint_nonce() {
     let mut world = World::new();
     let input = free(Address::repeat_byte(0x85));
     let nod_id = world.issue(&input);
@@ -252,7 +219,7 @@ fn fidelity_persistence_failure_preserves_settled_entitlement_and_mint_nonce() {
     let nonce = world.pow_nonce(nod_id);
     world
         .provider
-        .fail_mutation_at_address(outbe_system_common::addresses::FIDELITY_ADDRESS);
+        .fail_mutation_at_address(outbe_system_common::addresses::GRATIS_ADDRESS);
     let result = world.mine_gratis(api::MineGratisRequest {
         caller: input.owner,
         nod_id,
