@@ -718,7 +718,7 @@ impl NetworkConfig {
         )
     }
 
-    fn resolve_hyperlane_for_endpoint(
+    pub(crate) fn resolve_hyperlane_for_endpoint(
         &self,
         public_url: String,
         local_rpc_ip: Ipv4Addr,
@@ -1443,6 +1443,19 @@ genesis:
 
         let hl = vm.resolve_hyperlane_config(&vm.founders[0]).unwrap();
         assert_eq!(hl.origins[0].rpc_urls, vec!["http://10.77.0.10:18545"]);
+
+        let joiner_hl = vm
+            .resolve_hyperlane_for_endpoint(
+                "http://198.51.100.10:9007".to_owned(),
+                Ipv4Addr::new(10, 77, 0, 99),
+                18_599,
+            )
+            .unwrap();
+        assert_eq!(joiner_hl.public_url, "http://198.51.100.10:9007");
+        assert_eq!(
+            joiner_hl.origins[0].rpc_urls,
+            vec!["http://10.77.0.99:18599"]
+        );
 
         // Bare-host custom rpc_port is accepted.
         let mut bare = config_with(4);

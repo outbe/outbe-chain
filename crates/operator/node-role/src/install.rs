@@ -287,6 +287,13 @@ fn validate_environment_inner(
             .is_ok_and(|id| id > 0),
         "OUTBE_CHAIN_ID must be positive"
     );
+    if let Some(raw) = values.get("OUTBE_HYPERLANE_FUNDING_WEI") {
+        ensure!(
+            raw.parse::<alloy_primitives::U256>()
+                .is_ok_and(|amount| !amount.is_zero()),
+            "OUTBE_HYPERLANE_FUNDING_WEI must be a positive integer"
+        );
+    }
     ensure!(
         values["OUTBE_BOOTNODES"].starts_with("enode://"),
         "OUTBE_BOOTNODES is invalid"
@@ -674,6 +681,23 @@ mod tests {
         fs::write(&env_path, &bare_env).unwrap();
         let parsed = read_environment(&env_path).unwrap();
         validate_environment(&parsed).unwrap();
+
+        let mut invalid_funding = parsed.clone();
+        for (name, value) in [
+            ("OUTBE_NODE_ROLE", "founder"),
+            ("OUTBE_RPC_PORT", "8545"),
+            ("OUTBE_VM_IP", "10.77.0.10"),
+            ("OUTBE_VM_PREFIX", "24"),
+            ("OUTBE_VM_GATEWAY", "10.77.0.1"),
+            ("OUTBE_VM_DNS", "1.1.1.1"),
+            ("OUTBE_HYPERLANE_FUNDING_WEI", "0"),
+        ] {
+            invalid_funding.insert(name.to_owned(), value.to_owned());
+        }
+        let funding_err = validate_environment_for_role(&invalid_funding, NodeRole::Founder)
+            .unwrap_err()
+            .to_string();
+        assert!(funding_err.contains("positive integer"), "{funding_err}");
 
         // VM env without OUTBE_RPC_PORT must still fail closed.
         let vm_env = format!(

@@ -191,6 +191,7 @@ fn build_founder_tree(tree: &Path, chain_id: u64, ip: Ipv4Addr) {
                 "OUTBE_BOOTNODES=\"enode://abcd@{ip}:30303\"\n",
                 "OUTBE_CONSENSUS_PEERS=\"{peer_key}@{ip}:30400\"\n",
                 "OUTBE_CONSENSUS_EXTRA_ARGS=\"--consensus.use-local-defaults\"\n",
+                "OUTBE_HYPERLANE_FUNDING_WEI=\"1000000000000000000\"\n",
                 "OUTBE_CHAIN_ID=\"{chain_id}\"\n",
             ),
             ip = ip,
@@ -214,7 +215,7 @@ fn build_founder_tree(tree: &Path, chain_id: u64, ip: Ipv4Addr) {
                 "gasless = true\n\n",
                 "[health]\n",
                 "enabled = true\n",
-                "bind_address = \"127.0.0.1:9003\"\n\n",
+                "bind_address = \"{ip}:9003\"\n\n",
                 "[storage]\n",
                 "db_path = \"/opt/outbe-chain/state/hyperlane/db\"\n\n",
                 "[server]\n",
@@ -222,7 +223,7 @@ fn build_founder_tree(tree: &Path, chain_id: u64, ip: Ipv4Addr) {
                 "public_url = \"http://{ip}:9000\"\n\n",
                 "[[origin]]\n",
                 "domain = {chain_id}\n",
-                "rpc_urls = [\"http://127.0.0.1:8545\"]\n",
+                "rpc_urls = [\"http://{ip}:8545\"]\n",
                 "rpc_consensus = \"single\"\n",
                 "reorg_period = 0\n",
             ),
@@ -230,6 +231,11 @@ fn build_founder_tree(tree: &Path, chain_id: u64, ip: Ipv4Addr) {
             chain_id = chain_id
         )
         .as_bytes(),
+        0o640,
+    );
+    write_mode(
+        &tree.join("reth.toml"),
+        b"[peers]\nincoming_ip_throttle_duration = \"30s\"\n",
         0o640,
     );
 
@@ -4758,6 +4764,16 @@ async fn s10_status_fails_when_validator_consensus_peers_below_n_minus_1_or_miss
             && missing_err.contains("missing outbe_consensusStatus"),
         "{missing_err}"
     );
+
+    // A validator whose Hyperlane status endpoint is missing or unhealthy must make status fail.
+    for hyperlane in [None, Some(false)] {
+        let mut bad_hyperlane = mk_member("validator-0", MemberRole::Founder, Some(3));
+        bad_hyperlane.hyperlane_healthy = hyperlane;
+        let err = check_unhealthy_members(&[bad_hyperlane], &[ok_assess()], &[], 3)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("Hyperlane unavailable/unhealthy"), "{err}");
+    }
 
     // 2. Validator reporting `connectedPeers < n - 1` (0 or 2 in a 4-validator network) -> unhealthy.
     for low in [0u64, 2u64] {

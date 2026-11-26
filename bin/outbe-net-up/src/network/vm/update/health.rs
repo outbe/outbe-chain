@@ -227,6 +227,9 @@ fn unready_member_reason(s: &VmMemberStatus, required_peers: usize) -> String {
     if s.role == MemberRole::FullNode {
         return "not ready (vmm/rpc/consensus/tee)".to_owned();
     }
+    if s.hyperlane_healthy != Some(true) {
+        return "Hyperlane unavailable/unhealthy".to_owned();
+    }
     match s.consensus.as_ref() {
         None => "missing `outbe_consensusStatus` (fail-closed peer check)".to_owned(),
         Some(c) if c.connected_peers < required_peers as u64 => format!(

@@ -116,7 +116,15 @@ async fn run_vm_service(bin_dir: Option<&Path>, role: NodeRole) -> Result<()> {
     );
 
     let mut progress = Progress::new();
-    if role == NodeRole::JoiningValidator {
+    if role == NodeRole::Founder {
+        loop {
+            if rpc.finalized_block().await?.number > 0 {
+                break;
+            }
+            progress.update("waiting for initial finality before Hyperlane setup");
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        }
+    } else if role == NodeRole::JoiningValidator {
         loop {
             if rpc.validator(validator).await?.status == 2 {
                 break;

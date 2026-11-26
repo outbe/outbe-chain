@@ -179,6 +179,16 @@ fn merge_host_check(report: &mut RemoteHostCheckOutput, extra: RemoteHostCheckOu
     report
         .recommended_firewall_commands
         .extend(extra.recommended_firewall_commands);
+    dedup_strings(&mut report.missing);
+    dedup_strings(&mut report.conflicts);
+    dedup_strings(&mut report.recommended_forward_rules);
+    dedup_strings(&mut report.recommended_prerouting_rules);
+    dedup_strings(&mut report.recommended_firewall_commands);
+}
+
+fn dedup_strings(values: &mut Vec<String>) {
+    let mut seen = BTreeSet::new();
+    values.retain(|value| seen.insert(value.clone()));
 }
 
 pub(crate) fn run_host_checks(

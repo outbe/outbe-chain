@@ -286,6 +286,9 @@ fn member_unhealthy_reason(
     if status.role != MemberRole::FullNode && status.consensus.is_none() {
         return Some(format!("{}: missing outbe_consensusStatus", status.name));
     }
+    if status.role != MemberRole::FullNode && status.hyperlane_healthy != Some(true) {
+        return Some(format!("{}: Hyperlane unavailable/unhealthy", status.name));
+    }
     if status.role != MemberRole::FullNode
         && status.consensus_peers.unwrap_or(0) < required_peers as u64
     {
