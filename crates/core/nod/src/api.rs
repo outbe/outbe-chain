@@ -59,7 +59,7 @@ pub use outbe_core_common::settlement::settlement_deadline_of;
 /// forfeited group reads Forfeited.
 pub fn state_of(storage: &StorageHandle<'_>, item: &NodItemState) -> Result<EffectiveState> {
     let nod = NodContract::new(storage.clone());
-    if !item.is_settled && nod.group_is_forfeited.read(&item.group_key)? {
+    if !item.is_settled && nod.group_is_closed.read(&item.group_key)? {
         return Ok(EffectiveState::Forfeited);
     }
     let called_at = nod.group_called_at.read(&item.group_key)?;
@@ -157,17 +157,17 @@ pub fn sub_series_entry_price(
     Ok((!price.is_zero()).then_some(price))
 }
 
-/// Returns whether `group_key` has been forfeited after its call notice period lapsed.
-pub fn is_group_forfeited(storage: &StorageHandle<'_>, group_key: B256) -> Result<bool> {
+/// Returns whether `group_key` has been closed after its call notice period lapsed.
+pub fn is_group_closed(storage: &StorageHandle<'_>, group_key: B256) -> Result<bool> {
     NodContract::new(storage.clone())
-        .group_is_forfeited
+        .group_is_closed
         .read(&group_key)
 }
 
-/// Whether the forfeit pass has started on `group_key` or finished it.
-pub fn is_group_forfeit_started(storage: &StorageHandle<'_>, group_key: B256) -> Result<bool> {
+/// Whether the close pass has started on `group_key` or finished it.
+pub fn is_group_close_started(storage: &StorageHandle<'_>, group_key: B256) -> Result<bool> {
     let nod = NodContract::new(storage.clone());
-    Ok(nod.group_forfeiting.read(&group_key)? || nod.group_is_forfeited.read(&group_key)?)
+    Ok(nod.group_closing.read(&group_key)? || nod.group_is_closed.read(&group_key)?)
 }
 
 /// Permissionless cleanup of an unsettled forfeited Nod (`INod.clean(uint256)`).

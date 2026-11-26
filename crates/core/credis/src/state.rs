@@ -251,7 +251,7 @@ impl<'storage> CredisContract<'storage> {
         )
     }
 
-    /// A called group stays in the forfeit queue until its deadline, even when empty.
+    /// A called group stays in the close queue until its deadline, even when empty.
     pub fn leave_group(&mut self, record: &Credis) -> Result<()> {
         let key = Self::sub_series_key(record.series_id, record.sub_series);
         let group = self.sub_series_group.read(&key)?;
@@ -318,17 +318,17 @@ impl<'storage> CredisContract<'storage> {
 
     pub fn hand_to_cleanup(&mut self, group: B256) -> Result<()> {
         let deadline = self.called_deadline.read(&group)?;
-        deadline_queue::remove(&ForfeitQueue(self), group)?;
+        deadline_queue::remove(&CloseQueue(self), group)?;
         deadline_queue::push(&CleanupQueue(self), group, deadline)
     }
 
     pub fn push_called(&mut self, group: B256, deadline: u64) -> Result<()> {
         self.group_settlement_deadline.write(&group, deadline)?;
-        deadline_queue::push(&ForfeitQueue(self), group, deadline)
+        deadline_queue::push(&CloseQueue(self), group, deadline)
     }
 
     pub fn remove_called(&mut self, group: B256) -> Result<()> {
-        deadline_queue::remove(&ForfeitQueue(self), group)
+        deadline_queue::remove(&CloseQueue(self), group)
     }
 }
 
@@ -357,19 +357,19 @@ fn take_from<K: outbe_primitives::storage::types::StorageKey>(
 }
 
 /// This queue orders called groups by the UTC day that contains their settlement deadline.
-pub struct ForfeitQueue<'a, 'storage>(pub &'a CredisContract<'storage>);
+pub struct CloseQueue<'a, 'storage>(pub &'a CredisContract<'storage>);
 
-outbe_core_common::impl_deadline_queue!(ForfeitQueue<B256> {
-    root: forfeit_tree_root,
-    mid: forfeit_tree_mid,
-    leaf: forfeit_tree_leaf,
-    len: forfeit_day_len,
-    live: forfeit_day_live,
-    at: forfeit_day_at,
+outbe_core_common::impl_deadline_queue!(CloseQueue<B256> {
+    root: close_tree_root,
+    mid: close_tree_mid,
+    leaf: close_tree_leaf,
+    len: close_day_len,
+    live: close_day_live,
+    at: close_day_at,
     slot: called_group_slot,
     deadline: called_deadline,
-    sweep_day: forfeit_pass_day,
-    cursor: forfeit_cursor,
+    sweep_day: close_pass_day,
+    cursor: close_cursor,
 });
 
 /// Forfeited groups whose Credis wait to be deleted.

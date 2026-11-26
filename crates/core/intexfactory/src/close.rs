@@ -1,4 +1,4 @@
-//! Forfeit pass: closes a called group's settlement window, returns the Promis load of
+//! Close pass: closes a called group's settlement window, returns the Promis load of
 //! everything left unrealized to the Promis Limit, and hands the group to the
 //! cleanup.
 
@@ -7,31 +7,31 @@ use outbe_core_common::deadline_queue::{self, DeadlineHandler, Due};
 use outbe_primitives::{block::BlockRuntimeContext, error::Result, storage::StorageHandle};
 use outbe_system_common::pass_budget::PassBudget;
 
-use outbe_intex::{ForfeitQueue, IntexContract};
+use outbe_intex::{CloseQueue, IntexContract};
 
 use crate::errors::IntexFactoryError;
 
-pub(crate) fn forfeit_through(
+pub(crate) fn close_through(
     ctx: &BlockRuntimeContext,
     through_day: u32,
     budget: &mut PassBudget,
 ) -> Result<deadline_queue::Progress> {
     let queue = IntexContract::new(ctx.storage.clone());
     deadline_queue::run_through_day(
-        &ForfeitQueue(&queue),
+        &CloseQueue(&queue),
         ctx,
         through_day,
         budget,
-        &mut IntexForfeit::new(ctx),
+        &mut IntexClose::new(ctx),
     )
 }
 
-struct IntexForfeit<'a, 'storage> {
+struct IntexClose<'a, 'storage> {
     storage: &'a StorageHandle<'storage>,
     intex: IntexContract<'storage>,
 }
 
-impl<'a, 's> IntexForfeit<'a, 's> {
+impl<'a, 's> IntexClose<'a, 's> {
     fn new(ctx: &'a BlockRuntimeContext<'s>) -> Self {
         Self {
             storage: &ctx.storage,
@@ -41,7 +41,7 @@ impl<'a, 's> IntexForfeit<'a, 's> {
 }
 
 /// A called group forfeits as one: it is its own and only member.
-impl DeadlineHandler<B256> for IntexForfeit<'_, '_> {
+impl DeadlineHandler<B256> for IntexClose<'_, '_> {
     type Member = B256;
 
     fn due(&mut self, group: B256) -> Result<Due> {
@@ -93,7 +93,7 @@ impl DeadlineHandler<B256> for IntexForfeit<'_, '_> {
     }
 
     fn deferred(&mut self, group: B256, retry_at: u64) -> Result<()> {
-        tracing::warn!(target: "outbe::intexfactory", %group, retry_at, "forfeit pass: group deferred");
+        tracing::warn!(target: "outbe::intexfactory", %group, retry_at, "close pass: group deferred");
         Ok(())
     }
 }

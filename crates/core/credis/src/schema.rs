@@ -222,25 +222,25 @@ pub struct CredisContract {
 
     // The queue orders called groups by the UTC day that contains their settlement deadline.
     #[attribute(order = 9)]
-    pub forfeit_tree_root: outbe_primitives::storage::dsl::Value<U256>,
+    pub close_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 10)]
-    pub forfeit_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
+    pub close_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 11)]
-    pub forfeit_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
+    pub close_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 12)]
-    pub forfeit_day_len: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub close_day_len: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 13)]
-    pub forfeit_day_live: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub close_day_live: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 14)]
-    pub forfeit_day_at: outbe_primitives::storage::dsl::Map<B256, B256>,
+    pub close_day_at: outbe_primitives::storage::dsl::Map<B256, B256>,
     #[attribute(order = 15)]
     pub called_group_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
     #[attribute(order = 16)]
     pub called_deadline: outbe_primitives::storage::dsl::Map<B256, u64>,
     #[attribute(order = 17)]
-    pub forfeit_pass_day: outbe_primitives::storage::dsl::Value<u32>,
+    pub close_pass_day: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 18)]
-    pub forfeit_cursor: outbe_primitives::storage::dsl::Value<u64>,
+    pub close_cursor: outbe_primitives::storage::dsl::Value<u64>,
 
     /// Lowest `call_threshold_seconds` of at least a day ever sealed in a reference
     /// currency. With the widest window it bounds the call prices the scan visits.

@@ -1,35 +1,35 @@
-//! Forfeits the called groups whose settlement window lapsed, earliest deadline first,
+//! Closes the called groups whose settlement window lapsed, earliest deadline first,
 //! and hands their Credis to the cleanup.
 
 use alloy_primitives::B256;
 use outbe_core_common::deadline_queue::{self, DeadlineHandler, Due};
-use outbe_credis::{CredisContract, ForfeitQueue};
+use outbe_credis::{CloseQueue, CredisContract};
 
 use crate::called::emit;
 use crate::precompile::ICredisFactory;
 use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 use outbe_system_common::pass_budget::PassBudget;
 
-pub(crate) fn forfeit_through(
+pub(crate) fn close_through(
     ctx: &BlockRuntimeContext,
     through_day: u32,
     budget: &mut PassBudget,
 ) -> Result<deadline_queue::Progress> {
     let queue = CredisContract::new(ctx.storage.clone());
     deadline_queue::run_through_day(
-        &ForfeitQueue(&queue),
+        &CloseQueue(&queue),
         ctx,
         through_day,
         budget,
-        &mut CredisForfeit::new(ctx),
+        &mut CredisClose::new(ctx),
     )
 }
 
-struct CredisForfeit<'storage> {
+struct CredisClose<'storage> {
     credis: CredisContract<'storage>,
 }
 
-impl<'s> CredisForfeit<'s> {
+impl<'s> CredisClose<'s> {
     fn new(ctx: &BlockRuntimeContext<'s>) -> Self {
         Self {
             credis: CredisContract::new(ctx.storage.clone()),
@@ -38,7 +38,7 @@ impl<'s> CredisForfeit<'s> {
 }
 
 /// A called group forfeits as one: it is its own and only member.
-impl DeadlineHandler<B256> for CredisForfeit<'_> {
+impl DeadlineHandler<B256> for CredisClose<'_> {
     type Member = B256;
 
     fn due(&mut self, group: B256) -> Result<Due> {
@@ -84,7 +84,7 @@ impl DeadlineHandler<B256> for CredisForfeit<'_> {
     }
 
     fn deferred(&mut self, group: B256, retry_at: u64) -> Result<()> {
-        tracing::warn!(target: "outbe::credisfactory", %group, retry_at, "forfeit pass: group deferred");
+        tracing::warn!(target: "outbe::credisfactory", %group, retry_at, "close pass: group deferred");
         Ok(())
     }
 }

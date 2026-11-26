@@ -79,7 +79,7 @@ impl<'storage> CallPass<'storage> for IntexCallPass<'storage> {
         let pinned_ts = outbe_system_common::time::date_key_to_utc_timestamp(pinned_day)
             .map_err(crate::errors::date_step_error)?;
         let through_day = outbe_core_common::deadline_queue::deadline_day(pinned_ts)?;
-        crate::forfeited::forfeit_through(ctx, through_day, budget)
+        crate::close::close_through(ctx, through_day, budget)
     }
 
     type Bins<'a>

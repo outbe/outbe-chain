@@ -98,12 +98,12 @@ fn a_called_group_is_parked_with_its_members_and_call_time() {
         let day = IntexContract::deadline_day(close_at);
         assert_eq!(
             factory
-                .forfeit_day_at
+                .close_day_at
                 .read(&IntexContract::day_slot_key(day, 0))
                 .unwrap(),
             key
         );
-        assert_eq!(factory.forfeit_day_live.read(&day).unwrap(), 1);
+        assert_eq!(factory.close_day_live.read(&day).unwrap(), 1);
         assert_eq!(factory.called_deadline.read(&key).unwrap(), close_at);
         assert_eq!(
             factory.group_members(key).unwrap(),

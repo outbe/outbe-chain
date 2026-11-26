@@ -194,7 +194,7 @@ fn issue_item(storage: &StorageHandle<'_>, item: NodItemState) -> NodItemState {
 }
 
 thread_local! {
-    /// Groups this test issued into, for `slice` to see which leave the forfeit queue.
+    /// Groups this test issued into, for `slice` to see which leave the close queue.
     static ISSUED_GROUPS: std::cell::RefCell<std::collections::HashSet<B256>> =
         std::cell::RefCell::default();
 }
@@ -240,7 +240,7 @@ fn forfeit_block(
     timestamp: u64,
 ) -> outbe_primitives::error::Result<u32> {
     storage.with_checkpoint(|| {
-        let forfeited = forfeit_pass(storage, timestamp)?;
+        let forfeited = close_pass(storage, timestamp)?;
         crate::cleanup::cleanup(&block_at(storage, timestamp))?;
         Ok(forfeited)
     })
@@ -248,10 +248,7 @@ fn forfeit_block(
 
 /// The daily pass through the closed days before `timestamp`, one day per block, without its
 /// cleanup. Returns the groups it forfeited.
-fn forfeit_pass(
-    storage: &StorageHandle<'_>,
-    timestamp: u64,
-) -> outbe_primitives::error::Result<u32> {
+fn close_pass(storage: &StorageHandle<'_>, timestamp: u64) -> outbe_primitives::error::Result<u32> {
     let queued: Vec<_> = ISSUED_GROUPS.with(|groups| {
         groups
             .borrow()
@@ -277,7 +274,7 @@ fn forfeit_pass(
     }
     Ok(queued
         .into_iter()
-        .filter(|group| !is_queued(storage, *group) && nod.group_is_forfeited.read(group).unwrap())
+        .filter(|group| !is_queued(storage, *group) && nod.group_is_closed.read(group).unwrap())
         .count() as u32)
 }
 
@@ -846,7 +843,7 @@ fn each_group_reads_its_own_currency_series() {
     });
 }
 
-// --- Forfeit sweep ---------------------------------------------------------
+// --- Close sweep ---------------------------------------------------------
 
 /// Calls a group at `at`, returning the issued Nod.
 fn call_group(storage: &StorageHandle<'_>, owner: Address, at: u64) -> NodItemState {
@@ -1243,7 +1240,7 @@ fn a_forfeited_group_reads_forfeited_until_the_cleanup_deletes_it() {
         seed_production_nod_genesis(&storage);
         register(&storage, ISO);
         let (group_key, items) = arm_lapsed(&storage, &[(0x61, 5, false), (0x62, 7, false)]);
-        assert_eq!(forfeit_pass(&storage, past).unwrap(), 1);
+        assert_eq!(close_pass(&storage, past).unwrap(), 1);
         assert_eq!(reserve(&storage), U256::from(12u64));
         for item in &items {
             let stored = api::get_item(&storage, item.nod_id).unwrap().unwrap();
@@ -1348,7 +1345,7 @@ fn failing_members_do_not_hold_the_cleanup() {
         }
 
         let past = START + 30 * DAY + NOTICE + CLOSED_DAY_DELAY;
-        assert_eq!(forfeit_pass(storage, past).unwrap(), 1);
+        assert_eq!(close_pass(storage, past).unwrap(), 1);
         assert_eq!(
             crate::cleanup::cleanup(&block_at(storage, past)).unwrap(),
             3
@@ -1372,7 +1369,7 @@ fn a_forfeit_does_not_need_the_enclave() {
         let (group_key, _) = arm_lapsed(storage, &[(0x61, 5, false)]);
         let past = START + 30 * DAY + NOTICE + CLOSED_DAY_DELAY;
 
-        let forfeited = forfeit_pass(storage, past);
+        let forfeited = close_pass(storage, past);
         outbe_nod::test_support::uninstall();
         let deleted = crate::cleanup::cleanup(&block_at(storage, past));
         outbe_nod::test_support::install();
@@ -1800,7 +1797,7 @@ fn the_daily_pass_forfeits_without_the_daily_trigger() {
         );
 
         let past = START + 30 * DAY + NOTICE + CLOSED_DAY_DELAY;
-        forfeit_pass(storage, past).unwrap();
+        close_pass(storage, past).unwrap();
         crate::hooks::cleanup(&block_at(storage, past)).unwrap();
         assert_eq!(nod.group_nod_count.read(&group_key).unwrap(), 0);
         assert!(!is_queued(storage, group_key));
@@ -2070,7 +2067,7 @@ fn a_node_local_failure_while_forfeiting_fails_the_slice() {
         arm_lapsed(&storage, &[(0x81, 3, false)]).0
     });
     provider.fail_mutation_at_address(outbe_system_common::addresses::PROMIS_LIMIT_ADDRESS);
-    let result = StorageHandle::enter(&mut provider, |storage| forfeit_pass(&storage, past));
+    let result = StorageHandle::enter(&mut provider, |storage| close_pass(&storage, past));
     provider.clear_mutation_failure();
     assert!(matches!(
         result,

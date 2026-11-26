@@ -483,7 +483,7 @@ fn gem_contract_slot_layout_is_pinned() {
         assert_eq!(gem.group_gem_count.base_slot(), U256::from(0u64));
         assert_eq!(gem.group_called_at.base_slot(), U256::from(9u64));
         assert_eq!(gem.call_bin_tree_root.base_slot(), U256::from(10u64));
-        assert_eq!(gem.forfeit_tree_root.slot(), U256::from(18u64));
+        assert_eq!(gem.close_tree_root.slot(), U256::from(18u64));
         assert_eq!(gem.config_profile.slot(), U256::from(31u64));
         assert_eq!(
             gem.min_call_threshold_seconds.base_slot(),

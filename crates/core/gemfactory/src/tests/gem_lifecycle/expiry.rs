@@ -1,4 +1,4 @@
-//! The forfeit sweep: a called group whose notice lapsed returns its unsettled load to the
+//! The close sweep: a called group whose notice lapsed returns its unsettled load to the
 //! Promis reserve in one credit, and the cleanup deletes its unsettled gems under the
 //! block budget.
 
@@ -424,14 +424,14 @@ fn config_dev_profile_terms_a_new_group() {
     });
 }
 
-/// A corrupt gem record read is this node's store: the forfeit sweep fails the block.
+/// A corrupt gem record read is this node's store: the close sweep fails the block.
 #[test]
 fn a_corrupt_record_read_fails_the_forfeit_sweep() {
     use outbe_core_common::deadline_queue::DeadlineHandler;
     use outbe_primitives::error::{PassFailure, PrecompileError};
     with_storage(|storage| {
         let ctx = block_ctx(storage);
-        let expiry = crate::forfeited::GemForfeit::new(&ctx);
+        let expiry = crate::close::GemClose::new(&ctx);
         assert_eq!(
             expiry.classify(&PrecompileError::BodyReadCorruption("x".into())),
             PassFailure::Propagate

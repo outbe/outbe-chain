@@ -1,5 +1,5 @@
 //! The Gem lifecycle as GemFactory runs it: issuance on the live profile, settlement and
-//! burn rules, the daily call sweep and the forfeit sweep in EVM storage.
+//! burn rules, the daily call sweep and the close sweep in EVM storage.
 
 use alloy_primitives::{address, Address, B256, U256};
 use outbe_oracle::schema::OracleContract;

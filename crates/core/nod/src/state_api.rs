@@ -80,7 +80,7 @@ pub fn clean_item(storage: &StorageHandle<'_>, nod_id: U256) -> Result<()> {
         }
         let group_key = item.body().group_key;
         let contract = NodContract::new(storage.clone());
-        if !contract.group_is_forfeited.read(&group_key)? {
+        if !contract.group_is_closed.read(&group_key)? {
             return Err(NodError::NodNotForfeited.into());
         }
         let group = load_group(storage, group_key)?.ok_or(NodError::GroupNotFound)?;
@@ -254,7 +254,7 @@ impl NodContract<'_> {
         // A group that was never called stays open for the rest of its offering window:
         // NodFactory closes it once no Nod can join it.
         let empty = remaining == 0 && group.settled_nods == 0;
-        if empty && self.group_is_forfeited.read(&item.group_key)? {
+        if empty && self.group_is_closed.read(&item.group_key)? {
             self.group_nod_count.clear(&item.group_key)?;
             self.close_group(item.group_key)?;
             self.groups.delete(group.group_key)?;

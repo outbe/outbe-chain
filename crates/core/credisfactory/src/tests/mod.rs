@@ -485,21 +485,21 @@ pub fn slice(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
     crate::called::process_call_pass(&block_at(storage, timestamp)).unwrap()
 }
 
-/// Called groups still in the forfeit queue up to the deadline day of `timestamp`.
-pub fn queued_for_forfeit(
+/// Called groups still in the close queue up to the deadline day of `timestamp`.
+pub fn queued_for_close(
     storage: &StorageHandle<'_>,
     timestamp: u64,
 ) -> outbe_primitives::error::Result<u32> {
     let credis = CredisContract::new(storage.clone());
     let Some(mut day) =
-        outbe_core_common::deadline_queue::first_day(&outbe_credis::ForfeitQueue(&credis))?
+        outbe_core_common::deadline_queue::first_day(&outbe_credis::CloseQueue(&credis))?
     else {
         return Ok(0);
     };
     let last = outbe_core_common::deadline_queue::deadline_day(timestamp)?;
     let mut live = 0;
     while day <= last {
-        live += credis.forfeit_day_live.read(&day)?;
+        live += credis.close_day_live.read(&day)?;
         day += 1;
     }
     Ok(live)
@@ -542,17 +542,17 @@ pub fn daily_pass(
     }
 }
 
-fn due_forfeit_groups(
+fn due_close_groups(
     credis: &CredisContract<'_>,
     timestamp: u64,
 ) -> outbe_primitives::error::Result<Vec<B256>> {
-    let queue = outbe_credis::ForfeitQueue(credis);
+    let queue = outbe_credis::CloseQueue(credis);
     let mut due = Vec::new();
     let Some(first) = outbe_core_common::deadline_queue::first_day(&queue)? else {
         return Ok(due);
     };
     for day in first..=outbe_core_common::deadline_queue::deadline_day(timestamp)? {
-        for slot in 0..credis.forfeit_day_len.read(&day)? {
+        for slot in 0..credis.close_day_len.read(&day)? {
             let Some(group) = outbe_core_common::deadline_queue::entry_at(&queue, day, slot)?
             else {
                 continue;
@@ -573,7 +573,7 @@ pub fn forfeited_by(
     pass: impl FnOnce() -> outbe_primitives::error::Result<()>,
 ) -> outbe_primitives::error::Result<u32> {
     let credis = CredisContract::new(storage.clone());
-    let due = due_forfeit_groups(&credis, timestamp)?;
+    let due = due_close_groups(&credis, timestamp)?;
     pass()?;
     let mut forfeited = 0;
     for group in due {

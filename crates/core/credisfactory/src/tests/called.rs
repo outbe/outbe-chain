@@ -1111,7 +1111,7 @@ fn settling_a_called_credis_in_full_leaves_the_queue() {
         assert_eq!(expire(&storage, lapsed), 0);
         assert_eq!(
             CredisContract::new(storage.clone())
-                .forfeit_tree_root
+                .close_tree_root
                 .read()
                 .unwrap(),
             U256::ZERO,
@@ -1191,7 +1191,7 @@ fn a_failed_cleanup_fails_the_block_and_keeps_the_credis_queued() {
         ));
         outbe_gratis::enclave_client::test_enclave::install();
         assert!(!is_deleted(&storage, ids[0]));
-        assert_eq!(queued_for_forfeit(&storage, lapsed).unwrap(), 1);
+        assert_eq!(queued_for_close(&storage, lapsed).unwrap(), 1);
         assert_eq!(cleanup_queued_at(&storage, group), 0);
 
         assert_eq!(expire(&storage, lapsed), 1);
@@ -1258,7 +1258,7 @@ fn lapsed_group_of_three() -> (
             credis.call_latest_day.read().unwrap(),
             previous_date_key(deadline_day).unwrap()
         );
-        assert_eq!(queued_for_forfeit(&storage, lapsed).unwrap(), 1);
+        assert_eq!(queued_for_close(&storage, lapsed).unwrap(), 1);
         assert_eq!(
             view_pledged(&storage, alice()),
             pledge_cost() * U256::from(3)
@@ -1450,7 +1450,7 @@ fn every_credis_forfeit_and_cleanup_mutation_rolls_back_then_retries_once() {
         )
     );
     // R5d: verify exact per-Credis cleanup effect log ordering.
-    // CredisSeriesClosed is emitted when the forfeit pass closes the series, before
+    // CredisSeriesClosed is emitted when the close pass closes the series, before
     // cleanup of each member: CredisForfeited -> Transfer(..., 0x0, id). No Gratis event.
     let cleanup_tags: Vec<&'static str> = clean
         .get_ordered_events()

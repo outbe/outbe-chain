@@ -176,7 +176,7 @@ mod group_scans {
                 s.clone(),
             );
             let mut budget = PassBudget::new(100, 100);
-            crate::forfeited::forfeit_through(&ctx, IntexContract::deadline_day(due), &mut budget)
+            crate::close::close_through(&ctx, IntexContract::deadline_day(due), &mut budget)
                 .unwrap();
             crate::cleanup::cleanup(&ctx).unwrap();
             assert!(!outbe_intex::api::series_exists(&s, id).unwrap());
@@ -237,7 +237,7 @@ mod group_scans {
                 s.clone(),
             );
             let mut budget = PassBudget::new(100, 100);
-            crate::forfeited::forfeit_through(&ctx, IntexContract::deadline_day(due), &mut budget)
+            crate::close::close_through(&ctx, IntexContract::deadline_day(due), &mut budget)
                 .unwrap();
         });
 

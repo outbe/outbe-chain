@@ -264,7 +264,7 @@ impl GemContract<'_> {
     }
 
     /// Records every unsettled member called at once: the group leaves the trie for the
-    /// forfeit queue, where it waits on `deadline` as one entry.
+    /// close queue, where it waits on `deadline` as one entry.
     pub fn record_group_called(&mut self, group: B256, now: u64, deadline: u64) -> Result<()> {
         self.remove_call_bin(group)?;
         self.group_called_at.write(&group, now)?;
@@ -272,7 +272,7 @@ impl GemContract<'_> {
     }
 
     /// Forgets a group nothing refers to any more: its terms, its place in the call
-    /// trie and the forfeit queue, its day and its call.
+    /// trie and the close queue, its day and its call.
     pub(crate) fn close_group(&mut self, group: B256) -> Result<()> {
         self.remove_call_bin(group)?;
         self.remove_called(group)?;
@@ -299,7 +299,7 @@ impl GemContract<'_> {
     }
 
     /// Closes a called group after `GemSeriesClosed` once no settled gem remains.
-    pub fn close_group_if_empty_after_forfeit(&mut self, group: B256) -> Result<()> {
+    pub fn close_group_if_empty(&mut self, group: B256) -> Result<()> {
         let Some(body) = self.groups.get(group)? else {
             return Ok(());
         };
@@ -330,21 +330,21 @@ impl GemContract<'_> {
         self.group_unsettled_load_minor.write(&group, total)
     }
 
-    // --- Forfeit queue -------------------------------------------------------------
+    // --- Close queue -------------------------------------------------------------
 
     pub fn push_called(&mut self, group: B256, deadline: u64) -> Result<()> {
-        deadline_queue::push(&ForfeitQueue(self), group, deadline)
+        deadline_queue::push(&CloseQueue(self), group, deadline)
     }
 
     pub fn remove_called(&mut self, group: B256) -> Result<()> {
-        deadline_queue::remove(&ForfeitQueue(self), group)
+        deadline_queue::remove(&CloseQueue(self), group)
     }
 
-    /// Moves a forfeited group from the forfeit queue to the cleanup, which deletes its
+    /// Moves a closed group from the close queue to the cleanup, which deletes its
     /// unsettled gems. Done with the group's credit, so a retry never credits it twice.
     pub fn hand_to_cleanup(&mut self, group: B256) -> Result<()> {
         let deadline = self.called_deadline.read(&group)?;
-        deadline_queue::remove(&ForfeitQueue(self), group)?;
+        deadline_queue::remove(&CloseQueue(self), group)?;
         deadline_queue::push(&CleanupQueue(self), group, deadline)
     }
 
@@ -366,12 +366,12 @@ impl GemContract<'_> {
 
     #[cfg(any(test, feature = "test-utils"))]
     pub fn expiry_slot(&self, day: u32, slot: u32) -> Result<Option<B256>> {
-        deadline_queue::entry_at(&ForfeitQueue(self), day, slot)
+        deadline_queue::entry_at(&CloseQueue(self), day, slot)
     }
 
     #[cfg(any(test, feature = "test-utils"))]
     pub fn first_expiry_day(&self) -> Result<Option<u32>> {
-        deadline_queue::first_day(&ForfeitQueue(self))
+        deadline_queue::first_day(&CloseQueue(self))
     }
 
     // --- Group bins: uncalled groups by call price --------------------------------
@@ -397,19 +397,19 @@ impl GemContract<'_> {
 }
 
 /// This queue schedules called groups by the UTC day when their notice period closes.
-pub struct ForfeitQueue<'a, 'storage>(pub &'a GemContract<'storage>);
+pub struct CloseQueue<'a, 'storage>(pub &'a GemContract<'storage>);
 
-outbe_core_common::impl_deadline_queue!(ForfeitQueue<B256> {
-    root: forfeit_tree_root,
-    mid: forfeit_tree_mid,
-    leaf: forfeit_tree_leaf,
-    len: forfeit_day_len,
-    live: forfeit_day_live,
-    at: forfeit_day_at,
+outbe_core_common::impl_deadline_queue!(CloseQueue<B256> {
+    root: close_tree_root,
+    mid: close_tree_mid,
+    leaf: close_tree_leaf,
+    len: close_day_len,
+    live: close_day_live,
+    at: close_day_at,
     slot: called_group_slot,
     deadline: called_deadline,
-    sweep_day: forfeit_pass_day,
-    cursor: forfeit_cursor,
+    sweep_day: close_pass_day,
+    cursor: close_cursor,
 });
 
 /// Forfeited groups whose unsettled gems wait to be deleted.
