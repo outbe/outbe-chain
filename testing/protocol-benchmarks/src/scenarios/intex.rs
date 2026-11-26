@@ -127,7 +127,7 @@ impl BenchmarkScenario for IntexScenario {
             StorageHandle::enter(&mut provider, |storage| {
                 params.iter().try_fold(Vec::new(), |mut all, params| {
                     all.extend(
-                        outbe_intexfactory::api::issue_intex(&storage, params.clone())
+                        outbe_intexfactory::api::open_intex_series(&storage, params.clone())
                             .map_err(|error| error.to_string())?,
                     );
                     Ok::<_, String>(all)
@@ -169,7 +169,7 @@ fn measure_issue(prepared: &PreparedIntex) -> Result<Observation, String> {
             .iter()
             .try_fold(Vec::new(), |mut all, params| {
                 all.extend(
-                    outbe_intexfactory::api::issue_intex(&storage, params.clone())
+                    outbe_intexfactory::api::open_intex_series(&storage, params.clone())
                         .map_err(|error| error.to_string())?,
                 );
                 Ok::<_, String>(all)

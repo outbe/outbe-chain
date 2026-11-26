@@ -1,31 +1,7 @@
 [
   {
     "type": "function",
-    "name": "forfeitCredis",
-    "inputs": [
-      {
-        "name": "credisId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "forfeitedGratisMinor",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "forfeitedAmountMinor",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "getCallProgress",
+    "name": "callState",
     "inputs": [
       {
         "name": "credisId",
@@ -37,7 +13,7 @@
       {
         "name": "",
         "type": "tuple",
-        "internalType": "struct ICredisFactory.CallProgress",
+        "internalType": "struct ICredisFactory.CallState",
         "components": [
           {
             "name": "callWindowDays",
@@ -83,6 +59,30 @@
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "forfeitCredis",
+    "inputs": [
+      {
+        "name": "credisId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "forfeitedGratisMinor",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "forfeitedAmountMinor",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",

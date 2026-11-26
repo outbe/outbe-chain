@@ -6,11 +6,11 @@ use outbe_oracle::call_window::CallWindow;
 use outbe_primitives::{error::Result, storage::StorageHandle};
 use outbe_system_common::day_pass::PassDays;
 
-use crate::called::breach_terms;
+use crate::call::breach_terms;
 use crate::errors::GemFactoryError;
-use crate::precompile::IGemFactory::CallProgress;
+use crate::precompile::IGemFactory::CallState;
 
-pub(crate) fn call_progress(storage: &StorageHandle<'_>, gem_id: U256) -> Result<CallProgress> {
+pub(crate) fn call_state(storage: &StorageHandle<'_>, gem_id: U256) -> Result<CallState> {
     let gem = outbe_gem::api::get_view(storage, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
     if gem.effective_state(storage.now_secs()?) != GemState::Issued as u8 {
         return Err(GemFactoryError::GemNotIssued.into());
@@ -23,7 +23,7 @@ pub(crate) fn call_progress(storage: &StorageHandle<'_>, gem_id: U256) -> Result
     };
     let progress = CallWindow::progress(storage, gem.terms.reference_currency, &terms, pass)?;
     let count = progress.count;
-    Ok(CallProgress {
+    Ok(CallState {
         callWindowDays: count.window_days,
         callThresholdDays: count.threshold_days,
         daysChecked: count.days_checked,

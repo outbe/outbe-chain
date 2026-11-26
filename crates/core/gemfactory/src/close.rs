@@ -7,31 +7,31 @@ use outbe_primitives::{
 use outbe_system_common::pass_budget::PassBudget;
 
 use crate::precompile::IGemFactory::GemSeriesClosed;
-use outbe_gem::{ForfeitQueue, GemContract};
+use outbe_gem::{CloseQueue, GemContract};
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::StorageHandle;
 
-pub(crate) fn forfeit_through(
+pub(crate) fn close_through(
     ctx: &BlockRuntimeContext,
     through_day: u32,
     budget: &mut PassBudget,
 ) -> Result<deadline_queue::Progress> {
     let queue = GemContract::new(ctx.storage.clone());
-    deadline_queue::process_day(
-        &ForfeitQueue(&queue),
+    deadline_queue::run_through_day(
+        &CloseQueue(&queue),
         ctx,
         through_day,
         budget,
-        &mut GemForfeit::new(ctx),
+        &mut GemClose::new(ctx),
     )
 }
 
-pub(crate) struct GemForfeit<'a, 's> {
+pub(crate) struct GemClose<'a, 's> {
     storage: &'a StorageHandle<'s>,
     gem: GemContract<'s>,
 }
 
-impl<'a, 's> GemForfeit<'a, 's> {
+impl<'a, 's> GemClose<'a, 's> {
     pub(crate) fn new(ctx: &'a BlockRuntimeContext<'s>) -> Self {
         Self {
             storage: &ctx.storage,
@@ -41,12 +41,12 @@ impl<'a, 's> GemForfeit<'a, 's> {
 }
 
 /// A called group forfeits as one: it is its own and only member.
-impl DeadlineHandler<B256> for GemForfeit<'_, '_> {
+impl DeadlineHandler<B256> for GemClose<'_, '_> {
     type Member = B256;
 
     fn due(&mut self, group: B256) -> Result<Due> {
         Ok(match self.gem.group_called_at.read(&group)? != 0 {
-            true => Due::Process,
+            true => Due::Handle,
             false => Due::Drop,
         })
     }
@@ -64,8 +64,8 @@ impl DeadlineHandler<B256> for GemForfeit<'_, '_> {
     }
 
     /// Returns the load of the group's unsettled gems in one credit and hands the gems to
-    /// the cleanup. Nobody realized the load, so it goes back to the Promis reserve.
-    fn process_member(&mut self, group: B256, _member: B256) -> Result<()> {
+    /// the forfeit pass. Nobody realized the load, so it goes back to the Promis reserve.
+    fn handle_member(&mut self, group: B256, _member: B256) -> Result<()> {
         let load = self.gem.group_unsettled_load_minor.read(&group)?;
         let sub_series = self.gem.group_sub_series(group)?;
         if !load.is_zero() {
@@ -74,9 +74,9 @@ impl DeadlineHandler<B256> for GemForfeit<'_, '_> {
         }
         if self.gem.group_gem_count.read(&group)? == 0 {
             self.gem.remove_called(group)?;
-            self.gem.close_group_if_empty_after_forfeit(group)?;
+            self.gem.close_group_if_empty(group)?;
         } else {
-            self.gem.hand_to_cleanup(group)?;
+            self.gem.hand_to_forfeit(group)?;
         }
         for sub in sub_series {
             crate::runtime::emit_event(
@@ -95,7 +95,7 @@ impl DeadlineHandler<B256> for GemForfeit<'_, '_> {
     }
 
     fn deferred(&mut self, group: B256, retry_at: u64) -> Result<()> {
-        tracing::warn!(target: "outbe::gemfactory", %group, retry_at, "forfeit pass: group deferred");
+        tracing::warn!(target: "outbe::gemfactory", %group, retry_at, "close pass: group deferred");
         Ok(())
     }
 }

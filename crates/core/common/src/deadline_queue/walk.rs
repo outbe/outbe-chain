@@ -21,7 +21,7 @@ pub struct PassTime {
 /// This function processes closed scheduling days at or before the cutoff, earliest first.
 /// Each slot costs one visit, including an empty slot or a remaining entry.
 /// Each attempted member costs its `member_cost` in writes.
-pub fn process_through<'s, Q, H>(
+pub fn run_through<'s, Q, H>(
     queue: &Q,
     storage: &StorageHandle<'s>,
     time: PassTime,
@@ -123,7 +123,7 @@ where
 
     fn expire(&mut self, entry: Q::Entry, resume: u32) -> Result<Step> {
         match self.handler.due(entry)? {
-            Due::Process => {}
+            Due::Handle => {}
             Due::Drop => {
                 self.drop_entry(entry)?;
                 return Ok(Step::Done);
@@ -152,7 +152,7 @@ where
             let handler = &mut *self.handler;
             let outcome = self
                 .storage
-                .with_checkpoint(|| handler.process_member(entry, member));
+                .with_checkpoint(|| handler.handle_member(entry, member));
             match decide(outcome, |error| self.handler.classify(error))? {
                 Decided::Done(()) => {}
                 Decided::Stopped => {
@@ -180,7 +180,7 @@ where
     fn retire_leftover(&mut self, entry: Q::Entry) -> Result<()> {
         match self.handler.due(entry)? {
             Due::Drop => self.drop_entry(entry),
-            Due::Process | Due::Wait => self.defer(entry),
+            Due::Handle | Due::Wait => self.defer(entry),
         }
     }
 

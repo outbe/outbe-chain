@@ -19,7 +19,7 @@ pub(crate) struct GroupCall<'a, 'storage> {
 
 /// Force-call a whole group on the terms it sealed: its series count from the same day
 /// against the same call price. Returns how many series were called.
-pub(crate) fn call_if_breached(
+pub(crate) fn call_series_if_breached(
     call: GroupCall<'_, '_>,
     group: B256,
     window: &CallWindow,
@@ -45,7 +45,10 @@ pub(crate) fn call_if_breached(
     // The notices leave after the slice, once every group of the block is decided.
     for &series_id in &members {
         let member = outbe_intex::api::get_series(storage, series_id)?;
-        crate::notify::enqueue_notice(factory, crate::notify::pack_call_notice(series_id, now_ts))?;
+        crate::call_notice::enqueue_notice(
+            factory,
+            crate::call_notice::pack_call_notice(series_id, now_ts),
+        )?;
         crate::runtime::emit_event(
             storage,
             IIntexFactory::IntexSeriesCalled {

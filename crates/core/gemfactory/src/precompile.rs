@@ -78,9 +78,9 @@ pub fn dispatch(
                     auth,
                 )
             }),
-            getStatistics(_) => metadata::<IGemFactory::getStatisticsCall>(|| {
+            statistics(_) => metadata::<IGemFactory::statisticsCall>(|| {
                 let factory = GemFactoryContract::new(storage.clone());
-                Ok(IGemFactory::getStatisticsReturn {
+                Ok(IGemFactory::statisticsReturn {
                     totalGemsIssued: factory.total_gems_issued.read()?,
                     totalCapacityMinor: factory.total_capacity_minor.read()?,
                 })
@@ -97,11 +97,9 @@ pub fn dispatch(
             }),
 
             getGemFactoryPosition(c) => view(c, |c| {
-                runtime::position_data(&storage, c.gemFactoryPositionId)
+                runtime::gem_factory_position_data(&storage, c.gemFactoryPositionId)
             }),
-            getCallProgress(c) => view(c, |c| {
-                crate::call_progress::call_progress(&storage, c.gemId)
-            }),
+            callState(c) => view(c, |c| crate::call_state::call_state(&storage, c.gemId)),
         }
     })
 }

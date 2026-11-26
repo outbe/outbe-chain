@@ -1,5 +1,5 @@
-//! Forfeit pass: forfeits the called groups whose notice period lapsed, one credit per
-//! group, and hands their unsettled Nods to the cleanup.
+//! Close pass: closes the called groups whose notice period lapsed, one credit per
+//! group, and hands their unsettled Nods to the forfeit pass.
 
 use alloy_primitives::B256;
 use outbe_core_common::deadline_queue::{self, DeadlineHandler, Due};
@@ -14,30 +14,30 @@ use outbe_system_common::pass_budget::{PassBudget, WITNESS_BYTES_PER_WRITE};
 use outbe_nod::errors::NodError;
 use outbe_nod::index_keys::group_series_key;
 use outbe_nod::schema::NodContract;
-use outbe_nod::state::ForfeitQueue;
+use outbe_nod::state::CloseQueue;
 
-pub(crate) fn forfeit_through(
+pub(crate) fn close_through(
     ctx: &BlockRuntimeContext,
     through_day: u32,
     budget: &mut PassBudget,
 ) -> Result<deadline_queue::Progress> {
     let queue = NodContract::new(ctx.storage.clone());
-    deadline_queue::process_day(
-        &ForfeitQueue(&queue),
+    deadline_queue::run_through_day(
+        &CloseQueue(&queue),
         ctx,
         through_day,
         budget,
-        &mut NodForfeit::new(ctx),
+        &mut NodClose::new(ctx),
     )
 }
 
-struct NodForfeit<'a, 's> {
+struct NodClose<'a, 's> {
     storage: &'a StorageHandle<'s>,
     nod: NodContract<'s>,
     now: u64,
 }
 
-impl<'a, 's> NodForfeit<'a, 's> {
+impl<'a, 's> NodClose<'a, 's> {
     fn new(ctx: &'a BlockRuntimeContext<'s>) -> Self {
         Self {
             storage: &ctx.storage,
@@ -58,13 +58,13 @@ struct SeriesSlot {
 }
 
 /// A called group forfeits series by series, one enclave read each, so a large group spans blocks.
-impl DeadlineHandler<B256> for NodForfeit<'_, '_> {
+impl DeadlineHandler<B256> for NodClose<'_, '_> {
     type Member = SeriesSlot;
 
     fn due(&mut self, group: B256) -> Result<Due> {
         let called = self.nod.group_called_at.read(&group)? != 0;
-        Ok(match called && !self.nod.group_is_forfeited.read(&group)? {
-            true => Due::Process,
+        Ok(match called && !self.nod.group_is_closed.read(&group)? {
+            true => Due::Handle,
             false => Due::Drop,
         })
     }
@@ -89,8 +89,8 @@ impl DeadlineHandler<B256> for NodForfeit<'_, '_> {
         GROUP_LOAD_READ_COST
     }
 
-    fn process_member(&mut self, group: B256, slot: SeriesSlot) -> Result<()> {
-        self.nod.group_forfeiting.write(&group, true)?;
+    fn handle_member(&mut self, group: B256, slot: SeriesSlot) -> Result<()> {
+        self.nod.group_closing.write(&group, true)?;
         if let Some(sub_series) = self.nod.group_series.list(&group).get(slot.position)? {
             self.close_series(group, sub_series)?;
         }
@@ -102,35 +102,35 @@ impl DeadlineHandler<B256> for NodForfeit<'_, '_> {
 
     fn deferred(&mut self, group: B256, retry_at: u64) -> Result<()> {
         if self.now > self.nod.called_deadline.read(&group)? {
-            self.nod.group_forfeiting.write(&group, true)?;
+            self.nod.group_closing.write(&group, true)?;
         }
-        tracing::warn!(target: "outbe::nodfactory", %group, retry_at, "forfeit pass: group deferred");
+        tracing::warn!(target: "outbe::nodfactory", %group, retry_at, "close pass: group deferred");
         Ok(())
     }
 }
 
-impl NodForfeit<'_, '_> {
+impl NodClose<'_, '_> {
     /// Adds the series' open load to the group's credit and emits its close, once per series.
     fn close_series(&mut self, group: B256, sub_series: B256) -> Result<()> {
         let gs_key = group_series_key(group, sub_series);
         let series_id = self.nod.sub_series_series_id.read(&sub_series)?;
-        if self.nod.group_series_forfeited.read(&gs_key)? {
+        if self.nod.group_series_closed.read(&gs_key)? {
             return Ok(());
         }
         let forfeited_count = self.nod.group_series_nod_count.read(&gs_key)?;
         let forfeited_amount_minor = self.nod.read_series_open_load(group, sub_series)?;
         let total = self
             .nod
-            .group_forfeit_load_minor
+            .group_close_load_minor
             .read(&group)?
             .checked_add(forfeited_amount_minor)
             .ok_or(NodError::GroupUnsettledLoadOverflow { group_key: group })?;
-        self.nod.group_forfeit_load_minor.write(&group, total)?;
+        self.nod.group_close_load_minor.write(&group, total)?;
         self.nod
             .group_series_unsettled_load_minor_ct
             .bytes(&gs_key)
             .clear()?;
-        self.nod.group_series_forfeited.write(&gs_key, true)?;
+        self.nod.group_series_closed.write(&gs_key, true)?;
         crate::runtime::emit_event(
             self.storage,
             crate::precompile::INodFactory::NodSeriesClosed {
@@ -151,24 +151,24 @@ impl NodForfeit<'_, '_> {
         // their close once and the retry reads only the open series.
         for sub_series in self.nod.group_series.list(&group).read_all()? {
             let gs_key = group_series_key(group, sub_series);
-            if !self.nod.group_series_forfeited.read(&gs_key)? {
+            if !self.nod.group_series_closed.read(&gs_key)? {
                 return Ok(());
             }
         }
-        let load = self.nod.group_forfeit_load_minor.read(&group)?;
+        let load = self.nod.group_close_load_minor.read(&group)?;
         if !load.is_zero() {
             outbe_promislimit::PromisLimitContract::new(self.storage.clone())
                 .add(outbe_promislimit::LimitSource::Nod, load)?;
         }
-        self.nod.group_forfeit_load_minor.clear(&group)?;
-        self.nod.group_forfeiting.clear(&group)?;
+        self.nod.group_close_load_minor.clear(&group)?;
+        self.nod.group_closing.clear(&group)?;
         self.nod
             .group_unsettled_load_minor_ct
             .bytes(&group)
             .clear()?;
         if self.nod.group_nod_count.read(&group)? == 0 {
             // Nothing left to burn. The close events have fired, so the group leaves
-            // the forfeit queue without a cleanup entry.
+            // the close queue without a forfeit entry.
             self.nod.remove_called(group)?;
             let settled = self
                 .nod
@@ -177,14 +177,14 @@ impl NodForfeit<'_, '_> {
                 .map(|body| body.settled_nods)
                 .unwrap_or(0);
             if settled == 0 {
-                self.nod.close_group_if_empty_after_forfeit(group)?;
+                self.nod.close_group_if_empty(group)?;
             } else {
                 // Forfeit has run. Later removal of the settled Nods may close the group.
-                self.nod.group_is_forfeited.write(&group, true)?;
+                self.nod.group_is_closed.write(&group, true)?;
             }
         } else {
-            self.nod.group_is_forfeited.write(&group, true)?;
-            self.nod.hand_to_cleanup(group)?;
+            self.nod.group_is_closed.write(&group, true)?;
+            self.nod.hand_to_forfeit(group)?;
         }
         Ok(())
     }

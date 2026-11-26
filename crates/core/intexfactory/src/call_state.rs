@@ -6,11 +6,11 @@ use outbe_oracle::call_window::CallWindow;
 use outbe_primitives::{error::Result, storage::StorageHandle};
 use outbe_system_common::day_pass::PassDays;
 
-use crate::called::breach_terms;
+use crate::call::breach_terms;
 use crate::errors::{date_step_error, IntexFactoryError};
-use crate::precompile::IIntexFactory::CallProgress;
+use crate::precompile::IIntexFactory::CallState;
 
-pub(crate) fn call_progress(storage: &StorageHandle<'_>, intex_id: U256) -> Result<CallProgress> {
+pub(crate) fn call_state(storage: &StorageHandle<'_>, intex_id: U256) -> Result<CallState> {
     let record = outbe_intex::api::find_series_by_id(storage, intex_id)?
         .ok_or(outbe_intex::IntexError::SeriesNotFound)?;
     if outbe_intex::api::state(storage, &record)? != IntexState::Issued {
@@ -28,7 +28,7 @@ pub(crate) fn call_progress(storage: &StorageHandle<'_>, intex_id: U256) -> Resu
     };
     let progress = CallWindow::progress(storage, record.reference_currency, &terms, pass)?;
     let count = progress.count;
-    Ok(CallProgress {
+    Ok(CallState {
         callWindowDays: count.window_days,
         callThresholdDays: count.threshold_days,
         daysChecked: count.days_checked,

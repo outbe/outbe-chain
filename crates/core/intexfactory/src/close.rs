@@ -1,37 +1,37 @@
-//! Forfeit pass: closes a called group's settlement window, returns the Promis load of
+//! Close pass: closes a called group's settlement window, returns the Promis load of
 //! everything left unrealized to the Promis Limit, and hands the group to the
-//! cleanup.
+//! forfeit pass.
 
 use alloy_primitives::{B256, U256};
 use outbe_core_common::deadline_queue::{self, DeadlineHandler, Due};
 use outbe_primitives::{block::BlockRuntimeContext, error::Result, storage::StorageHandle};
 use outbe_system_common::pass_budget::PassBudget;
 
-use outbe_intex::{ForfeitQueue, IntexContract};
+use outbe_intex::{CloseQueue, IntexContract};
 
 use crate::errors::IntexFactoryError;
 
-pub(crate) fn forfeit_through(
+pub(crate) fn close_through(
     ctx: &BlockRuntimeContext,
     through_day: u32,
     budget: &mut PassBudget,
 ) -> Result<deadline_queue::Progress> {
     let queue = IntexContract::new(ctx.storage.clone());
-    deadline_queue::process_day(
-        &ForfeitQueue(&queue),
+    deadline_queue::run_through_day(
+        &CloseQueue(&queue),
         ctx,
         through_day,
         budget,
-        &mut IntexForfeit::new(ctx),
+        &mut IntexClose::new(ctx),
     )
 }
 
-struct IntexForfeit<'a, 'storage> {
+struct IntexClose<'a, 'storage> {
     storage: &'a StorageHandle<'storage>,
     intex: IntexContract<'storage>,
 }
 
-impl<'a, 's> IntexForfeit<'a, 's> {
+impl<'a, 's> IntexClose<'a, 's> {
     fn new(ctx: &'a BlockRuntimeContext<'s>) -> Self {
         Self {
             storage: &ctx.storage,
@@ -41,13 +41,13 @@ impl<'a, 's> IntexForfeit<'a, 's> {
 }
 
 /// A called group forfeits as one: it is its own and only member.
-impl DeadlineHandler<B256> for IntexForfeit<'_, '_> {
+impl DeadlineHandler<B256> for IntexClose<'_, '_> {
     type Member = B256;
 
     fn due(&mut self, group: B256) -> Result<Due> {
         Ok(match self.intex.group_member_count(group)? {
             0 => Due::Drop,
-            _ => Due::Process,
+            _ => Due::Handle,
         })
     }
 
@@ -60,7 +60,7 @@ impl DeadlineHandler<B256> for IntexForfeit<'_, '_> {
     }
 
     /// Returns the group's unrealized load to the pool in one credit.
-    fn process_member(&mut self, group: B256, _member: B256) -> Result<()> {
+    fn handle_member(&mut self, group: B256, _member: B256) -> Result<()> {
         let mut returned = U256::ZERO;
         let mut closed_events = Vec::new();
         for series_id in self.intex.group_members(group)? {
@@ -85,7 +85,7 @@ impl DeadlineHandler<B256> for IntexForfeit<'_, '_> {
             outbe_promislimit::PromisLimitContract::new(self.storage.clone())
                 .add(outbe_promislimit::LimitSource::Intex, returned)?;
         }
-        self.intex.hand_to_cleanup(group)?;
+        self.intex.hand_to_forfeit(group)?;
         for event in closed_events {
             crate::runtime::emit_event(self.storage, event)?;
         }
@@ -93,7 +93,7 @@ impl DeadlineHandler<B256> for IntexForfeit<'_, '_> {
     }
 
     fn deferred(&mut self, group: B256, retry_at: u64) -> Result<()> {
-        tracing::warn!(target: "outbe::intexfactory", %group, retry_at, "forfeit pass: group deferred");
+        tracing::warn!(target: "outbe::intexfactory", %group, retry_at, "close pass: group deferred");
         Ok(())
     }
 }

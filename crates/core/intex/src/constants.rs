@@ -19,7 +19,7 @@ pub const CALL_THRESHOLD: u32 = 21 * SECONDS_PER_DAY_U32;
 
 /// Commit-entry bond on the target-chain auction: 100M COEN in protocol units. The target
 /// escrow scales it to its payment token.
-pub const COMMIT_BOND_MINOR: u128 = 100_000_000 * SCALE_1E6_U128;
+pub const BID_BOND_MINOR: u128 = 100_000_000 * SCALE_1E6_U128;
 
 pub const SETTLED_TOKEN_NAME: &str = "Settled Intex";
 pub const SETTLED_TOKEN_SYMBOL: &str = "SINTEX";

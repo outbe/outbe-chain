@@ -49,7 +49,7 @@ pub fn dispatch(
         let registry = IntexContract::new(storage.clone());
         use IIntex::IIntexCalls::*;
         match call {
-            getIntexSeries(c) => view(c, |c| {
+            getIntex(c) => view(c, |c| {
                 let record = load_by_id(&registry, c.intexId)?;
                 let settled = registry.settled_units.read(&c.intexId)?;
                 let mined = registry.mined_units.read(&c.intexId)?;

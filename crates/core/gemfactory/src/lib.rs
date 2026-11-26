@@ -1,12 +1,12 @@
-//! GemFactory: Gem issuance, settlement and mining, the Gem call and forfeit sweeps, and
+//! GemFactory: Gem issuance, settlement and mining, the Gem call and close sweeps, and
 //! the GemFactory positions. Gem data lives in the Gem crate.
 
 pub mod api;
-pub(crate) mod call_progress;
-pub mod called;
-pub(crate) mod cleanup;
+pub mod call;
+pub(crate) mod call_state;
+pub mod close;
 pub mod errors;
-pub mod forfeited;
+pub(crate) mod forfeit;
 pub mod hooks;
 pub(crate) mod position_expiry;
 pub mod precompile;

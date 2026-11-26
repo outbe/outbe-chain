@@ -209,7 +209,7 @@ fn an_issued_day_puts_one_series_page_into_the_outbox_for_each_chain() {
     with_factory(|s| {
         let mut params = sample(7);
         params.target_chains = vec![97, 98];
-        let legs = runtime::issue_intex(&s, params).unwrap();
+        let legs = runtime::open_intex_series(&s, params).unwrap();
         runtime::send_issuance(&s, legs).unwrap();
         let outbox = IntexFactoryContract::new(s.clone()).outbox();
         for chain in [97, 98] {

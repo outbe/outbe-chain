@@ -28,7 +28,7 @@ pub fn settlement_deadline(credis: &CredisView) -> u64 {
 }
 
 /// The state a reader sees at `now`: a Called Credis past its deadline reads Forfeited
-/// until the cleanup deletes it.
+/// until the forfeit pass deletes it.
 pub fn effective_state(record: &CredisView, now: u64) -> Result<CredisState> {
     use outbe_core_common::settlement::RightState;
     Ok(
@@ -132,7 +132,7 @@ impl CredisContract<'_> {
     }
 
     /// Sum of `amount_minor` and of `outstanding_amount_minor` across the live Credis
-    /// of `account`, kept as they change. A lapsed Credis counts until the cleanup deletes
+    /// of `account`, kept as they change. A lapsed Credis counts until the forfeit pass deletes
     /// it.
     pub fn amount_and_outstanding_of(&self, account: Address) -> Result<(U256, U256)> {
         Ok((

@@ -8,7 +8,7 @@ use outbe_system_common::time::{
 };
 use outbe_system_common::units::SCALE_1E6_U256;
 
-use crate::rules::{self, calc_call_price, IssueCredisParams};
+use crate::rules::{self, compute_call_price, IssueCredisParams};
 use outbe_credis::constants::CALL_RATE_PCT;
 use outbe_credis::errors::CredisError;
 use outbe_credis::precompile::{dispatch, ICredis};
@@ -184,7 +184,7 @@ fn call(
     Ok(true)
 }
 
-/// Deletes a lapsed Credis as its group's cleanup does.
+/// Deletes a lapsed Credis as its group's forfeit pass does.
 fn forfeit_lapsed(
     credis: &mut CredisContract<'_>,
     id: U256,
@@ -278,7 +278,7 @@ fn issuance_seals_the_call_price_from_the_entry_price() {
         assert_eq!(p.call_price_minor, U256::from(820_000u64));
         assert_eq!(
             p.call_price_minor,
-            calc_call_price(entry_price(), CALL_RATE_PCT).unwrap()
+            compute_call_price(entry_price(), CALL_RATE_PCT).unwrap()
         );
         assert_eq!(
             p.terms.call_notice_period_seconds,
@@ -2572,7 +2572,7 @@ fn the_outcome_identities_hold_through_partial_settlements_and_forfeit() {
                 .unwrap()
                 .is_zero()
         );
-        // The owner's sums count a lapsed Credis until the cleanup deletes it.
+        // The owner's sums count a lapsed Credis until the forfeit pass deletes it.
         assert_eq!(
             credis.amount_and_outstanding_of(alice()).unwrap(),
             (U256::from(PRINCIPAL), U256::from(PRINCIPAL / 2))
