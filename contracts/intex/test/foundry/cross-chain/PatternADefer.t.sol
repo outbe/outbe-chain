@@ -4,14 +4,14 @@ pragma solidity 0.8.30;
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {Vm} from "forge-std/Vm.sol";
 
-import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
-import {TargetRouter} from "@contracts/target/TargetRouter.sol";
-import {ITargetRouter} from "@contracts/target/interfaces/ITargetRouter.sol";
+import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
+import {IntexAuctionTargetRouter} from "@contracts/target/IntexAuctionTargetRouter.sol";
+import {IIntexAuctionTargetRouter} from "@contracts/target/interfaces/IIntexAuctionTargetRouter.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
-import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
+import {OpenSeriesLib} from "../helpers/OpenSeriesLib.sol";
 
 /// @notice Stub Auction that synthesises `bidCount` revealed bids (default 1) on `getAuctionDetails`.
 ///         Used by the TM bids-relay tests to drive `_doSendBidsToOutbe`'s chunked send loop and the
@@ -86,11 +86,11 @@ contract StubAuctionWithBids {
 }
 
 /// @title PatternADeferTest
-/// @notice Behavioural coverage of Pattern A on `TargetRouter`. The inbound clearing/mark-called
+/// @notice Behavioural coverage of Pattern A on `IntexAuctionTargetRouter`. The inbound clearing/call notice
 ///         handlers fire an outbound relay (bids batch / owners bridge). The relay parks on
 ///         failure, and anyone can retry it via `flushPending*`. The tests force failure by
 ///         starving the relay float. A positive bridge fee with a zero native balance makes
-///         `_send` revert `NotEnoughNative`. A top-up of the float lets the flush land.
+///         `_sendTo` revert `NotEnoughNative`. A top-up of the float lets the flush land.
 contract PatternADeferTest is CrossChainTest {
     uint32 internal constant BNB_CHAIN_ID = 1;
     uint32 internal constant OUTBE_CHAIN_ID = 2;
@@ -98,9 +98,9 @@ contract PatternADeferTest is CrossChainTest {
     /// @dev Fee the loopback bridge charges. The relay must have this in native float to send.
     uint256 internal constant BRIDGE_FEE = 0.001 ether;
 
-    TargetRouter internal bnbRouter;
-    IntexNFT1155Bridge internal nftBridge;
-    IntexNFT1155Bridge internal nftBridgeOutbe;
+    IntexAuctionTargetRouter internal bnbRouter;
+    IntexNFT1155Router internal nftRouter;
+    IntexNFT1155Router internal nftRouterOutbe;
     IntexNFT1155 internal intex;
     IntexNFT1155 internal intexOutbe;
     StubAuctionWithBids internal stubAuction;
@@ -111,7 +111,7 @@ contract PatternADeferTest is CrossChainTest {
     address internal outbeIca = makeAddr("outbeIca");
     uint32 internal constant SERIES_ID_DAY = 20260301;
     bytes14 internal constant SERIES_ID = "20260301-USD-U";
-    uint256 internal constant TOKEN_ID = uint256(keccak256(abi.encodePacked(SERIES_ID)));
+    uint256 internal constant INTEX_ID = uint256(keccak256(abi.encodePacked(SERIES_ID)));
 
     function setUp() public {
         _setUpBridge();
@@ -122,22 +122,22 @@ contract PatternADeferTest is CrossChainTest {
         intexOutbe = DeployProxy.intexNFT1155(admin, admin);
 
         bnbRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
-        nftBridge = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
-        nftBridgeOutbe = DeployProxy.intexNFT1155Bridge(address(intexOutbe), address(bridge), admin);
+        nftRouter = DeployProxy.intexNFT1155Router(address(intex), address(bridge), admin);
+        nftRouterOutbe = DeployProxy.intexNFT1155Router(address(intexOutbe), address(bridge), admin);
 
-        // Wire the inbound source of the router and the remote messenger of the NFT bridge.
+        // Wire the inbound source of the router and the remote router of the NFT bridge.
         _wireOutbeIca(bnbRouter, outbeIca);
-        nftBridge.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(nftBridgeOutbe)));
+        nftRouter.setRemoteRouter(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(nftRouterOutbe)));
 
         stubAuction = new StubAuctionWithBids();
         bnbRouter.setDependencies(address(stubAuction), address(intex), admin);
 
         // The bridge burns on the local Intex.
-        intex.grantRole(intex.BRIDGE_ROLE(), address(nftBridge));
+        intex.grantRole(intex.BRIDGE_ROLE(), address(nftRouter));
         intex.grantRole(intex.ROUTER_ROLE(), address(bnbRouter));
 
-        // Series so markCalled + owner enumeration work.
-        intex.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, 10_000, 0));
+        // Series so callSeries + owner enumeration work.
+        intex.openSeries(OpenSeriesLib.params(SERIES_ID_DAY, 10_000, 0));
     }
 
     /// @dev Deliver an inbound packet to the router from the registered Outbe peer.
@@ -146,11 +146,11 @@ contract PatternADeferTest is CrossChainTest {
     }
 
     // ---------------------------------------------------------------
-    // TargetRouter - bids relay: a round that cannot pay leaves the day resumable
+    // IntexAuctionTargetRouter - bids relay: a round that cannot pay leaves the day resumable
     // ---------------------------------------------------------------
 
     function test_TM_BidsRelayStopsWhenTheFloatCannotPay() public {
-        // TM has zero native float but the bridge charges a fee, so `_send` reverts when relaying bids.
+        // TM has zero native float but the bridge charges a fee, so `_sendTo` reverts when relaying bids.
         assertEq(address(bnbRouter).balance, 0);
 
         _deliverBridge(BridgeMsgCodec.encodeIntexAuctionClearingStart(SERIES_ID_DAY));
@@ -177,7 +177,9 @@ contract PatternADeferTest is CrossChainTest {
         vm.deal(address(bnbRouter), 10 ether);
         bnbRouter.sendIntexAuctionBids(SERIES_ID_DAY);
 
-        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.NoIntexAuctionBidsToSend.selector, SERIES_ID_DAY));
+        vm.expectRevert(
+            abi.encodeWithSelector(IIntexAuctionTargetRouter.NoIntexAuctionBidsToSend.selector, SERIES_ID_DAY)
+        );
         bnbRouter.sendIntexAuctionBids(SERIES_ID_DAY);
     }
 
@@ -186,7 +188,9 @@ contract PatternADeferTest is CrossChainTest {
     function test_TM_RelayBidsBeforeClearingReverts() public {
         stubAuction.setStage(IIntexAuction.AuctionStage.RevealingBids);
 
-        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.NoIntexAuctionBidsToSend.selector, SERIES_ID_DAY));
+        vm.expectRevert(
+            abi.encodeWithSelector(IIntexAuctionTargetRouter.NoIntexAuctionBidsToSend.selector, SERIES_ID_DAY)
+        );
         bnbRouter.sendIntexAuctionBids(SERIES_ID_DAY);
     }
 
@@ -201,7 +205,7 @@ contract PatternADeferTest is CrossChainTest {
         vm.recordLogs();
         vm.prank(outbeIca);
         (bool delivered,) =
-            address(bnbRouter).call{gas: 4_500_000}(abi.encodeCall(TargetRouter.receiveFromOutbe, (packet)));
+            address(bnbRouter).call{gas: 4_500_000}(abi.encodeCall(IntexAuctionTargetRouter.receiveFromOutbe, (packet)));
         assertTrue(delivered, "the delivery itself must survive");
         _assertStopEvents(vm.getRecordedLogs(), 1, 0, 0);
 
@@ -231,13 +235,15 @@ contract PatternADeferTest is CrossChainTest {
         stubAuction.setBidCount(130);
         vm.deal(address(bnbRouter), 10 ether);
         vm.mockCallRevert(
-            address(bnbRouter), abi.encodeCall(TargetRouter.sendIntexAuctionBidsPause, (SERIES_ID_DAY)), "pause"
+            address(bnbRouter),
+            abi.encodeCall(IntexAuctionTargetRouter.sendIntexAuctionBidsPause, (SERIES_ID_DAY)),
+            "pause"
         );
         bytes memory packet = BridgeMsgCodec.encodeIntexAuctionClearingStart(SERIES_ID_DAY);
         vm.recordLogs();
         vm.prank(outbeIca);
         (bool delivered,) =
-            address(bnbRouter).call{gas: 4_500_000}(abi.encodeCall(TargetRouter.receiveFromOutbe, (packet)));
+            address(bnbRouter).call{gas: 4_500_000}(abi.encodeCall(IntexAuctionTargetRouter.receiveFromOutbe, (packet)));
         assertTrue(delivered, "the delivery itself must survive");
         _assertStopEvents(vm.getRecordedLogs(), 0, 1, 0);
     }
@@ -250,9 +256,9 @@ contract PatternADeferTest is CrossChainTest {
         for (uint256 i; i < logs.length; ++i) {
             if (logs[i].emitter != address(bnbRouter)) continue;
             bytes32 topic = logs[i].topics[0];
-            if (topic == ITargetRouter.IntexAuctionBidsPauseSent.selector) ++counts[0];
-            if (topic == ITargetRouter.IntexAuctionBidsPauseSendFailed.selector) ++counts[1];
-            if (topic == ITargetRouter.IntexAuctionBidsSendFailed.selector) ++counts[2];
+            if (topic == IIntexAuctionTargetRouter.IntexAuctionBidsPauseSent.selector) ++counts[0];
+            if (topic == IIntexAuctionTargetRouter.IntexAuctionBidsPauseSendFailed.selector) ++counts[1];
+            if (topic == IIntexAuctionTargetRouter.IntexAuctionBidsSendFailed.selector) ++counts[2];
         }
         assertEq(counts[0], pauseSent, "pause sent");
         assertEq(counts[1], pauseFailed, "pause send failed");
@@ -260,7 +266,7 @@ contract PatternADeferTest is CrossChainTest {
     }
 
     function test_TM_RelayBidsToOutbe_ExternalCallerRevertsNotSelf() public {
-        vm.expectRevert(ITargetRouter.NotSelf.selector);
+        vm.expectRevert(IIntexAuctionTargetRouter.NotSelf.selector);
         bnbRouter.sendIntexAuctionBidsToOutbe(SERIES_ID_DAY);
     }
 
@@ -298,7 +304,7 @@ contract PatternADeferTest is CrossChainTest {
 
     /// @dev Extract the `bidsCount` of every `BidsBatchSent` log, in emission order.
     function _bidsBatchSentSizes(Vm.Log[] memory logs) internal pure returns (uint256[] memory sizes) {
-        bytes32 topic = ITargetRouter.IntexAuctionBidsSent.selector;
+        bytes32 topic = IIntexAuctionTargetRouter.IntexAuctionBidsSent.selector;
         uint256 n;
         for (uint256 i = 0; i < logs.length; i++) {
             if (logs[i].topics.length != 0 && logs[i].topics[0] == topic) n++;

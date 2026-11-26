@@ -553,8 +553,8 @@ pub(super) fn seed_intex_targets(
     }
 }
 
-/// `InteroperableAddress.formatEvmV1(chain, TargetRouter)`, the sender of the bids at the hub.
-fn target_router_sender(chain: u32) -> Vec<u8> {
+/// `InteroperableAddress.formatEvmV1(chain, IntexAuctionTargetRouter)`, the sender of the bids at the hub.
+fn intex_auction_target_router_sender(chain: u32) -> Vec<u8> {
     let reference: Vec<u8> = chain
         .to_be_bytes()
         .into_iter()
@@ -563,14 +563,16 @@ fn target_router_sender(chain: u32) -> Vec<u8> {
     let mut out = vec![0x00, 0x01, 0x00, 0x00, reference.len() as u8];
     out.extend_from_slice(&reference);
     out.push(20);
-    out.extend_from_slice(outbe_core_common::addresses::TARGET_ROUTER_ADDRESS.as_slice());
+    out.extend_from_slice(
+        outbe_core_common::addresses::INTEX_AUCTION_TARGET_ROUTER_ADDRESS.as_slice(),
+    );
     out
 }
 
 fn deliver_bids_message(storage: &StorageHandle<'_>, chain: u32, payload: Vec<u8>) {
     let call = outbe_desis::precompile::IDesis::receiveMessageCall {
         receiveId: alloy_primitives::B256::ZERO,
-        sender: target_router_sender(chain).into(),
+        sender: intex_auction_target_router_sender(chain).into(),
         payload: payload.into(),
     };
     outbe_desis::precompile::dispatch(

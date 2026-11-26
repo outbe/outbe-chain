@@ -6,7 +6,7 @@ import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {IntexMetadata} from "@contracts/shared/libs/IntexMetadata.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
-import {CreateSeriesLib} from "./helpers/CreateSeriesLib.sol";
+import {OpenSeriesLib} from "./helpers/OpenSeriesLib.sol";
 import {MetadataTestLib} from "./helpers/MetadataTestLib.sol";
 import {DateKey} from "@contracts/shared/libs/DateKey.sol";
 
@@ -29,23 +29,23 @@ contract IntexNFT1155MetadataTest is Test {
     address internal user = makeAddr("user");
 
     IntexNFT1155 internal token;
-    uint256 internal iTok;
+    uint256 internal intexId;
 
     function setUp() public {
         token = DeployProxy.intexNFT1155(admin, bridger);
-        IIntexNFT1155.CreateSeriesParams memory params = CreateSeriesLib.params(SERIES_ID_DAY, CAP, CALL_PERIOD);
+        IIntexNFT1155.OpenSeriesParams memory params = OpenSeriesLib.params(SERIES_ID_DAY, CAP, CALL_PERIOD);
         params.entryPriceMinor = ENTRY_PRICE;
         params.callPriceMinor = CALL_PRICE;
         params.promisLoadMinor = PROMIS_LOAD;
         vm.prank(bridger);
-        token.createSeries(params);
+        token.openSeries(params);
         vm.prank(bridger);
         token.issueIntex(user, 10, SERIES_ID);
-        iTok = token.issuedTokenId(SERIES_ID);
+        intexId = token.issuedIntexId(SERIES_ID);
     }
 
-    function _json(uint256 tokenId) internal view returns (bytes memory) {
-        return MetadataTestLib.decodeJsonDataUri(token.uri(tokenId));
+    function _json(uint256 intexId) internal view returns (bytes memory) {
+        return MetadataTestLib.decodeJsonDataUri(token.uri(intexId));
     }
 
     function _assertContains(bytes memory json, string memory needle) internal pure {
@@ -77,16 +77,16 @@ contract IntexNFT1155MetadataTest is Test {
 
     function test_uri_ShortSeriesId_TrimsPadding() public {
         bytes14 shortId = "20260623-USD";
-        IIntexNFT1155.CreateSeriesParams memory params = CreateSeriesLib.params(20260623, CAP, CALL_PERIOD);
+        IIntexNFT1155.OpenSeriesParams memory params = OpenSeriesLib.params(20260623, CAP, CALL_PERIOD);
         params.seriesId = shortId;
         vm.prank(bridger);
-        token.createSeries(params);
-        uint256 issued = token.issuedTokenId(shortId);
+        token.openSeries(params);
+        uint256 issued = token.issuedIntexId(shortId);
         _assertContains(_json(issued), "\"name\":\"Intex 20260623-USD\",");
     }
 
     function test_uri_IssuedToken_RendersIdentity() public view {
-        bytes memory json = _json(iTok);
+        bytes memory json = _json(intexId);
         _assertContains(json, string.concat("\"name\":\"Intex ", string(abi.encodePacked(SERIES_ID)), "\","));
         _assertContains(
             json, "\"description\":\"Units of Intex series 20260622-USD-U from the Emission Day 20260622 auction."
@@ -100,12 +100,12 @@ contract IntexNFT1155MetadataTest is Test {
         assertFalse(json.contains("Floor Price"), "no floor price");
         _assertContains(json, "{\"trait_type\":\"Call Price\",\"value\":2.28,\"display_type\":\"number\"}");
         _assertContains(json, "{\"trait_type\":\"Promis Load\",\"value\":100000,\"display_type\":\"number\"}");
-        assertFalse(json.contains("\"Called At\""), "no call rows before markCalled");
-        assertFalse(json.contains("\"Call Deadline\""), "no call rows before markCalled");
+        assertFalse(json.contains("\"Called At\""), "no call rows before callSeries");
+        assertFalse(json.contains("\"Call Deadline\""), "no call rows before callSeries");
     }
 
     function test_uri_ExcludesRetiredTraits() public view {
-        bytes memory json = _json(iTok);
+        bytes memory json = _json(intexId);
         assertFalse(json.contains("Total Supply"), "supply is per-chain local, not rendered");
         assertFalse(json.contains("Issued Intex Count"), "cap is a series parameter, not a trait");
         assertFalse(json.contains("Issued At"), "emission day carries the date semantics");
@@ -115,10 +115,10 @@ contract IntexNFT1155MetadataTest is Test {
 
     function test_uri_Called_AddsCallTimestamps() public {
         vm.prank(bridger);
-        token.markCalled(SERIES_ID, uint32(block.timestamp));
+        token.callSeries(SERIES_ID, uint32(block.timestamp));
         uint256 calledAt = block.timestamp;
 
-        bytes memory json = _json(iTok);
+        bytes memory json = _json(intexId);
         _assertContains(json, "{\"trait_type\":\"Series State\",\"value\":\"Called\"}");
         _assertContains(
             json,
@@ -145,15 +145,15 @@ contract IntexNFT1155MetadataTest is Test {
 
     function test_uri_Forfeited_DerivedFromClock() public {
         vm.prank(bridger);
-        token.markCalled(SERIES_ID, uint32(block.timestamp));
+        token.callSeries(SERIES_ID, uint32(block.timestamp));
         uint256 deadline = block.timestamp + CALL_PERIOD;
-        uint256 closeAt = deadline + token.readData(SERIES_ID).callTrigger.transitMargin;
+        uint256 closeAt = deadline + token.getIntexSeries(SERIES_ID).callTrigger.transitMargin;
 
         vm.warp(closeAt);
-        _assertContains(_json(iTok), "{\"trait_type\":\"Series State\",\"value\":\"Called\"}");
+        _assertContains(_json(intexId), "{\"trait_type\":\"Series State\",\"value\":\"Called\"}");
 
         vm.warp(closeAt + 1);
-        bytes memory json = _json(iTok);
+        bytes memory json = _json(intexId);
         _assertContains(json, "{\"trait_type\":\"Series State\",\"value\":\"Forfeited\"}");
         _assertContains(json, string.concat("{\"trait_type\":\"Call Deadline\",\"value\":", vm.toString(deadline), ","));
         bytes memory svg = json.decodeSvg();
@@ -187,7 +187,7 @@ contract IntexNFT1155MetadataTest is Test {
     }
 
     function test_svg_FormatsHumanValues() public view {
-        bytes memory svg = _json(iTok).decodeSvg();
+        bytes memory svg = _json(intexId).decodeSvg();
         assertTrue(svg.contains(">INTEX</text>"), "header");
         assertTrue(svg.contains(bytes(abi.encodePacked(SERIES_ID))), "composite id");
         assertTrue(svg.contains(">1</text>"), "entry price");

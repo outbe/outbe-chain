@@ -304,22 +304,24 @@ contract EscrowAdapterWinnersTest is Test {
         uint128 bobLock = _lock(bob, 500_000, 1);
         _apply(_one(alice), 0, 0, true);
 
-        uint32 returnableAt = uint32(block.timestamp) + escrow.RETURN_ABANDON_DELAY();
+        uint32 returnableAt = uint32(block.timestamp) + escrow.ASSET_ESCROW_TIMEOUT();
         vm.expectRevert(
-            abi.encodeWithSelector(IEscrowAdapter.ReturnNotYetAbandoned.selector, returnableAt, uint32(block.timestamp))
+            abi.encodeWithSelector(
+                IEscrowAdapter.IntexAuctionAssetEscrowTimeoutNotOver.selector, returnableAt, uint32(block.timestamp)
+            )
         );
-        escrow.returnAbandonedIntexAuctionAsset(DAY, alice);
+        escrow.returnIntexAuctionAssetAfterTimeout(DAY, alice);
 
         vm.warp(returnableAt);
-        escrow.returnAbandonedIntexAuctionAsset(DAY, alice);
-        escrow.returnAbandonedIntexAuctionAsset(DAY, bob);
+        escrow.returnIntexAuctionAssetAfterTimeout(DAY, alice);
+        escrow.returnIntexAuctionAssetAfterTimeout(DAY, bob);
         assertEq(token.balanceOf(alice), aliceLock - _paid(3), "the winner's change");
         assertEq(token.balanceOf(bob), bobLock, "the loser's principal");
         assertEq(escrow.getIntexAuctionBidLock(DAY, alice).quantity, 3, "the units stay for the auction");
         assertEq(uint8(escrow.getIntexAuctionBidLock(DAY, bob).status), uint8(IEscrowAdapter.LockStatus.None));
 
         vm.expectRevert(IEscrowAdapter.NothingToReturn.selector);
-        escrow.returnAbandonedIntexAuctionAsset(DAY, alice);
+        escrow.returnIntexAuctionAssetAfterTimeout(DAY, alice);
         assertEq(_close(alice), 3, "the WinNote is still redeemed");
     }
 

@@ -7,7 +7,7 @@ import {BaseScript} from "./BaseScript.s.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
-import {TargetRouter} from "@contracts/target/TargetRouter.sol";
+import {IntexAuctionTargetRouter} from "@contracts/target/IntexAuctionTargetRouter.sol";
 
 /// @title ConfigureTarget
 /// @author Outbe
@@ -23,7 +23,7 @@ contract ConfigureTarget is BaseScript {
         address nft;
         address escrow;
         address auction;
-        address nftBridge;
+        address nftRouter;
         address router;
         address compact;
         address wcoen;
@@ -37,8 +37,8 @@ contract ConfigureTarget is BaseScript {
             nft: predictProxy(factory, deployer, "IntexNFT1155"),
             escrow: predictProxy(factory, deployer, "EscrowAdapter"),
             auction: predictProxy(factory, deployer, "IntexAuction"),
-            nftBridge: predictProxy(factory, deployer, "IntexNFT1155Bridge"),
-            router: predictProxy(factory, deployer, "TargetRouter"),
+            nftRouter: predictProxy(factory, deployer, "IntexNFT1155Router"),
+            router: predictProxy(factory, deployer, "IntexAuctionTargetRouter"),
             compact: vm.envAddress("COMPACT_ADDRESS"),
             wcoen: vm.envAddress("WCOEN_TOKEN")
         });
@@ -53,7 +53,7 @@ contract ConfigureTarget is BaseScript {
         requireDeployed(t.nft);
         requireDeployed(t.escrow);
         requireDeployed(t.auction);
-        requireDeployed(t.nftBridge);
+        requireDeployed(t.nftRouter);
         requireDeployed(t.router);
 
         IntexAuction auction = IntexAuction(t.auction);
@@ -73,20 +73,20 @@ contract ConfigureTarget is BaseScript {
             console.log("EscrowAdapter wired");
         }
 
-        TargetRouter router = TargetRouter(payable(t.router));
+        IntexAuctionTargetRouter router = IntexAuctionTargetRouter(payable(t.router));
         if (
             address(router.intexAuction()) != t.auction || address(router.intexContract()) != t.nft
                 || address(router.escrow()) != t.escrow
         ) {
             requireDeployerAdmin(t.router, deployer);
             router.setDependencies(t.auction, t.nft, t.escrow);
-            console.log("TargetRouter wired");
+            console.log("IntexAuctionTargetRouter wired");
         }
 
         grantRoleIfMissing(t.auction, auction.RELAYER_ROLE(), t.router, deployer);
         grantRoleIfMissing(t.escrow, escrow.RELAYER_ROLE(), t.router, deployer);
         IntexNFT1155 nft = IntexNFT1155(t.nft);
         grantRoleIfMissing(t.nft, nft.ROUTER_ROLE(), t.router, deployer);
-        grantRoleIfMissing(t.nft, nft.BRIDGE_ROLE(), t.nftBridge, deployer);
+        grantRoleIfMissing(t.nft, nft.BRIDGE_ROLE(), t.nftRouter, deployer);
     }
 }

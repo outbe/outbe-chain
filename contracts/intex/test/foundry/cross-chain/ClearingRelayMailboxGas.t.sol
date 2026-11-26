@@ -5,8 +5,8 @@ import {Test, Vm} from "forge-std/Test.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 import {IERC7786GatewaySource} from "@openzeppelin/contracts/interfaces/draft-IERC7786.sol";
 
-import {TargetRouter} from "@contracts/target/TargetRouter.sol";
-import {ITargetRouter} from "@contracts/target/interfaces/ITargetRouter.sol";
+import {IntexAuctionTargetRouter} from "@contracts/target/IntexAuctionTargetRouter.sol";
+import {IIntexAuctionTargetRouter} from "@contracts/target/interfaces/IIntexAuctionTargetRouter.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
 import {IGatewayQuote} from "@crosschain/interfaces/IGatewayQuote.sol";
 import {IMailbox} from "@crosschain/interfaces/IHyperlane.sol";
@@ -169,7 +169,7 @@ abstract contract RelayGasBase is Test {
     uint32 internal constant EMISSION_DAY = 20260501;
     uint256 internal constant SEEDED_BIDS = 256;
 
-    TargetRouter internal router;
+    IntexAuctionTargetRouter internal router;
     StoredBidStub internal stub;
     address internal admin = address(this);
     address internal outbeIca = address(0x0B1);
@@ -261,7 +261,8 @@ contract ClearingRelayRealMailboxTest is RelayGasBase {
         vm.recordLogs();
         vm.prank(outbeIca);
         uint256 before = gasleft();
-        (bool delivered,) = address(router).call{gas: cap}(abi.encodeCall(TargetRouter.receiveFromOutbe, (message)));
+        (bool delivered,) =
+            address(router).call{gas: cap}(abi.encodeCall(IntexAuctionTargetRouter.receiveFromOutbe, (message)));
         emit log_named_uint("floor_cap", cap);
         emit log_named_uint("floor_spent", before - gasleft());
         assertTrue(delivered, "the floor could not even carry the delivery");
@@ -271,7 +272,9 @@ contract ClearingRelayRealMailboxTest is RelayGasBase {
         assertEq(totalPages, 4, "256 bids span four chunks");
         assertFalse(done, "the floor is not meant to finish a 256-bid day");
         assertGe(nextPage, 1, "the floor placed no chunk at all");
-        assertTrue(_sawTopic(ITargetRouter.IntexAuctionBidsPauseSent.selector), "the remainder was not reported");
+        assertTrue(
+            _sawTopic(IIntexAuctionTargetRouter.IntexAuctionBidsPauseSent.selector), "the remainder was not reported"
+        );
     }
 
     function _sawTopic(bytes32 topic) private returns (bool) {

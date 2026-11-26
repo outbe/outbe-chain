@@ -3,7 +3,7 @@ pragma solidity 0.8.30;
 
 import {IIntexAuction} from "../interfaces/IIntexAuction.sol";
 import {IIntexNFT1155} from "../../shared/interfaces/IIntexNFT1155.sol";
-import {ITargetRouter} from "../interfaces/ITargetRouter.sol";
+import {IIntexAuctionTargetRouter} from "../interfaces/IIntexAuctionTargetRouter.sol";
 import {BridgeMsgCodec} from "../../shared/libs/BridgeMsgCodec.sol";
 import {IntexGas} from "../../shared/libs/IntexGas.sol";
 import {LowLevelCall} from "@openzeppelin/contracts/utils/LowLevelCall.sol";
@@ -13,13 +13,13 @@ import {
     IntexIssuanceState,
     FailedIntexAuctionProceedsSend,
     IntexAuctionReturnState,
-    TargetRouterStorage
-} from "../TargetRouterStorage.sol";
+    IntexAuctionTargetRouterStorage
+} from "../IntexAuctionTargetRouterStorage.sol";
 
 /// @dev Self-call shims the router exposes for per-item isolation. The library calls them on
 ///      `address(this)` from the delegated library context, so `msg.sender == address(this)` holds
 ///      inside the shim.
-interface ITargetRouterShims {
+interface IIntexAuctionTargetRouterShims {
     function sendIntexAuctionBidsToOutbe(uint32 emissionDay) external;
     function sendIntexAuctionBidsPause(uint32 emissionDay) external;
     function applyIntexSeriesCallNotice(bytes14 seriesId, uint64 calledAt) external;
@@ -28,7 +28,7 @@ interface ITargetRouterShims {
 
 /// @title TargetInbound
 /// @author Outbe
-/// @notice Inbound message handlers of {TargetRouter}, linked as an external library so their bodies stay off
+/// @notice Inbound message handlers of {IntexAuctionTargetRouter}, linked as an external library so their bodies stay off
 ///         the router's EIP-170 runtime size. Every function runs via DELEGATECALL in the router's context.
 library TargetInbound {
     /// @notice Whether a finished round owes the origin a remainder report. A round that sent nothing has
@@ -51,9 +51,11 @@ library TargetInbound {
     ///      - a schedule the day can no longer honour
     ///      - an unknown day state
     ///      Anything else propagates so the relayer redelivers.
-    function handleIntexAuctionStart(TargetRouterStorage storage $, uint32 srcChainId, bytes calldata message)
-        external
-    {
+    function handleIntexAuctionStart(
+        IntexAuctionTargetRouterStorage storage $,
+        uint32 srcChainId,
+        bytes calldata message
+    ) external {
         (uint32 emissionDay, IIntexAuction.AuctionSchedule memory schedule, IIntexAuction.AuctionParams memory params) =
             BridgeMsgCodec.decodeAuctionParams(message);
 
@@ -83,9 +85,11 @@ library TargetInbound {
     ///      - a day this chain never opened
     ///      A day whose commit stage is still running propagates. Time alone makes the transition
     ///      valid, so the relayer redelivers. Only the outbound intexAuctionBidsSendState is caught (parked on failure).
-    function handleIntexAuctionClearingStart(TargetRouterStorage storage $, uint32 srcChainId, bytes calldata message)
-        external
-    {
+    function handleIntexAuctionClearingStart(
+        IntexAuctionTargetRouterStorage storage $,
+        uint32 srcChainId,
+        bytes calldata message
+    ) external {
         uint32 emissionDay = BridgeMsgCodec.decodeIntexAuctionClearingStart(message);
 
         try $.intexAuction.startAuctionClearing(emissionDay) {}
@@ -111,20 +115,23 @@ library TargetInbound {
         IntexAuctionBidsSendState storage state = $.intexAuctionBidsSendState[emissionDay];
         if (state.done) return;
         if (gasleft() <= IntexGas.SEND_PAUSE_GAS) {
-            emit ITargetRouter.IntexAuctionBidsSendFailed(emissionDay, state.nextPage, state.totalPages, "");
+            emit IIntexAuctionTargetRouter.IntexAuctionBidsSendFailed(emissionDay, state.nextPage, state.totalPages, "");
             return;
         }
         uint16 pageBefore = state.nextPage;
-        try ITargetRouterShims(address(this)).sendIntexAuctionBidsToOutbe{gas: gasleft() - IntexGas.SEND_PAUSE_GAS}(
+        try IIntexAuctionTargetRouterShims(address(this))
+        .sendIntexAuctionBidsToOutbe{gas: gasleft() - IntexGas.SEND_PAUSE_GAS}(
             emissionDay
         ) {}
         catch (bytes memory errorData) {
-            emit ITargetRouter.IntexAuctionBidsSendFailed(emissionDay, state.nextPage, state.totalPages, errorData);
+            emit IIntexAuctionTargetRouter.IntexAuctionBidsSendFailed(
+                emissionDay, state.nextPage, state.totalPages, errorData
+            );
         }
         if (advanced(state, pageBefore)) {
-            try ITargetRouterShims(address(this)).sendIntexAuctionBidsPause(emissionDay) {}
+            try IIntexAuctionTargetRouterShims(address(this)).sendIntexAuctionBidsPause(emissionDay) {}
             catch (bytes memory errorData) {
-                emit ITargetRouter.IntexAuctionBidsPauseSendFailed(
+                emit IIntexAuctionTargetRouter.IntexAuctionBidsPauseSendFailed(
                     emissionDay, state.nextPage, state.totalPages, errorData
                 );
             }
@@ -138,9 +145,11 @@ library TargetInbound {
     ///      - a result that fails the auction's permanent sanity bounds
     ///      A day whose reveal stage has not closed yet (clock skew) propagates so the relayer
     ///      redelivers.
-    function handleIntexAuctionResult(TargetRouterStorage storage $, uint32 srcChainId, bytes calldata message)
-        external
-    {
+    function handleIntexAuctionResult(
+        IntexAuctionTargetRouterStorage storage $,
+        uint32 srcChainId,
+        bytes calldata message
+    ) external {
         (uint32 emissionDay, BridgeMsgCodec.IntexAuctionChainResult memory r) =
             BridgeMsgCodec.decodeIntexAuctionResult(message);
 
@@ -183,9 +192,11 @@ library TargetInbound {
     ///      - a day that is already canceled (duplicate)
     ///      - a day with a result, or one that failed (obsolete)
     ///      A day this chain has not started is recorded as canceled.
-    function handleIntexAuctionCancel(TargetRouterStorage storage $, uint32 srcChainId, bytes calldata message)
-        external
-    {
+    function handleIntexAuctionCancel(
+        IntexAuctionTargetRouterStorage storage $,
+        uint32 srcChainId,
+        bytes calldata message
+    ) external {
         (uint32 emissionDay, uint8 reason) = BridgeMsgCodec.decodeIntexAuctionCancel(message);
 
         try $.intexAuction.cancelAuction(emissionDay, reason) {}
@@ -210,7 +221,7 @@ library TargetInbound {
     /// @dev Whether the auction this chain holds for `emissionDay` was opened under the START's terms. The reveal
     ///      end is left out: CLEARING snaps it forward, and a START repeated after that is still the same START.
     function _sameAuction(
-        TargetRouterStorage storage $,
+        IntexAuctionTargetRouterStorage storage $,
         uint32 emissionDay,
         IIntexAuction.AuctionSchedule memory schedule,
         IIntexAuction.AuctionParams memory params
@@ -222,7 +233,7 @@ library TargetInbound {
 
     /// @dev Whether the result this chain holds for `emissionDay` is the one the RESULT carries.
     function _sameResult(
-        TargetRouterStorage storage $,
+        IntexAuctionTargetRouterStorage storage $,
         uint32 emissionDay,
         BridgeMsgCodec.IntexAuctionChainResult memory result
     ) private view returns (bool) {
@@ -230,7 +241,7 @@ library TargetInbound {
     }
 
     /// @dev Whether this chain reads the day as failed. A day it never opened is not.
-    function _failed(TargetRouterStorage storage $, uint32 emissionDay) private view returns (bool) {
+    function _failed(IntexAuctionTargetRouterStorage storage $, uint32 emissionDay) private view returns (bool) {
         if (address($.intexAuction).code.length == 0) return false;
         try $.intexAuction.auctionStage(emissionDay) returns (IIntexAuction.AuctionStage stage) {
             return stage == IIntexAuction.AuctionStage.Failed;
@@ -269,7 +280,9 @@ library TargetInbound {
     ///      - a chunk whose header disagrees with the day's run
     ///      - a series whose stored params differ from the chunk's
     ///      The last applied page emits `IntexSeriesAllReceived`.
-    function handleIntexSeries(TargetRouterStorage storage $, uint32 srcChainId, bytes calldata message) external {
+    function handleIntexSeries(IntexAuctionTargetRouterStorage storage $, uint32 srcChainId, bytes calldata message)
+        external
+    {
         (uint32 emissionDay, uint16 pageIndex, uint16 totalPages, BridgeMsgCodec.IntexSeriesPayload[] memory series) =
             BridgeMsgCodec.decodeIntexSeries(message);
 
@@ -317,12 +330,14 @@ library TargetInbound {
             _applyIssuance($, srcChainId, series[s], known[s]);
         }
 
-        if (seen == totalPages) emit ITargetRouter.IntexSeriesAllReceived(emissionDay, srcChainId, totalPages);
+        if (seen == totalPages) {
+            emit IIntexAuctionTargetRouter.IntexSeriesAllReceived(emissionDay, srcChainId, totalPages);
+        }
     }
 
     /// @dev Create the series if this chain has not seen it.
     function _applyIssuance(
-        TargetRouterStorage storage $,
+        IntexAuctionTargetRouterStorage storage $,
         uint32 srcChainId,
         BridgeMsgCodec.IntexSeriesPayload memory payload,
         bool seriesKnown
@@ -330,8 +345,8 @@ library TargetInbound {
         // Create-if-absent: any of a day's chunks may be the first to name a series.
         if (!seriesKnown) {
             $.intexContract
-                .createSeries(
-                    IIntexNFT1155.CreateSeriesParams({
+                .openSeries(
+                    IIntexNFT1155.OpenSeriesParams({
                         seriesId: payload.seriesId,
                         emissionDay: payload.emissionDay,
                         issuedAt: payload.issuedAt,
@@ -368,12 +383,12 @@ library TargetInbound {
     }
 
     /// @dev Whether the series this chain holds was created under exactly the chunk's terms.
-    function _sameSeries(TargetRouterStorage storage $, BridgeMsgCodec.IntexSeriesPayload memory payload)
+    function _sameSeries(IntexAuctionTargetRouterStorage storage $, BridgeMsgCodec.IntexSeriesPayload memory payload)
         private
         view
         returns (bool)
     {
-        IIntexNFT1155.SeriesData memory d = $.intexContract.readData(payload.seriesId);
+        IIntexNFT1155.SeriesData memory d = $.intexContract.getIntexSeries(payload.seriesId);
         return d.emissionDay == payload.emissionDay && d.issuanceCurrency == payload.issuanceCurrency
             && d.referenceCurrency == payload.referenceCurrency && d.issuedUnits == payload.issuedUnits
             && d.promisLoadMinor == payload.promisLoadMinor && d.entryPriceMinor == payload.entryPriceMinor
@@ -384,16 +399,18 @@ library TargetInbound {
     }
 
     function _ignoreMessage(uint8 msgType, uint32 emissionDay, uint8 reason) private {
-        emit ITargetRouter.IntexAuctionMessageIgnored(msgType, emissionDay, reason);
+        emit IIntexAuctionTargetRouter.IntexAuctionMessageIgnored(msgType, emissionDay, reason);
     }
 
     /// @notice Decode REFUND_INSTRUCTIONS and forward finalization instructions to the EscrowAdapter.
     /// @dev The handler acknowledges without effect a page
     ///      already applied, or one arriving after the escrow closed the day or the day failed.
     ///      Bidders it would have settled recover through the auction's `returnIntexAuctionAsset` path.
-    function handleIntexAuctionWinners(TargetRouterStorage storage $, uint32 srcChainId, bytes calldata message)
-        external
-    {
+    function handleIntexAuctionWinners(
+        IntexAuctionTargetRouterStorage storage $,
+        uint32 srcChainId,
+        bytes calldata message
+    ) external {
         (
             uint32 emissionDay,
             uint16 pageIndex,
@@ -437,7 +454,7 @@ library TargetInbound {
             _sendOrKeepFailedIntexAuctionProceeds($, emissionDay, pageIndex, totalPaid);
         }
 
-        emit ITargetRouter.IntexAuctionWinnersReceived(
+        emit IIntexAuctionTargetRouter.IntexAuctionWinnersReceived(
             emissionDay, srcChainId, pageIndex, totalPages, uint32(winners.length)
         );
     }
@@ -446,9 +463,11 @@ library TargetInbound {
     ///         will not take it yet.
     /// @dev The handler acknowledges a zero call time without effect. No series can take it, and a
     ///      slot reads zero as empty.
-    function handleIntexSeriesCallNotice(TargetRouterStorage storage $, uint32 srcChainId, bytes calldata message)
-        external
-    {
+    function handleIntexSeriesCallNotice(
+        IntexAuctionTargetRouterStorage storage $,
+        uint32 srcChainId,
+        bytes calldata message
+    ) external {
         (uint32 emissionDay, uint64 calledAt, bytes14[] memory seriesIds) =
             BridgeMsgCodec.decodeIntexSeriesCallNotice(message);
         if (calledAt == 0) {
@@ -463,7 +482,7 @@ library TargetInbound {
     /// @dev An unseen series keeps the mark in its slot. An already called one gets no event. Any
     ///      other failure slots it for `retryIntexSeriesCallNoticeApply`.
     function _applyIntexSeriesCallNotice(
-        TargetRouterStorage storage $,
+        IntexAuctionTargetRouterStorage storage $,
         uint32 srcChainId,
         bytes14 seriesId,
         uint64 calledAt
@@ -472,7 +491,8 @@ library TargetInbound {
             _slotIntexSeriesCallNotice($, srcChainId, seriesId, calledAt, "");
             return;
         }
-        try ITargetRouterShims(address(this)).applyIntexSeriesCallNotice{gas: IntexGas.CALL_NOTICE_APPLY_CAP}(
+        try IIntexAuctionTargetRouterShims(address(this))
+        .applyIntexSeriesCallNotice{gas: IntexGas.CALL_NOTICE_APPLY_CAP}(
             seriesId, calledAt
         ) {}
         catch (bytes memory reason) {
@@ -485,25 +505,28 @@ library TargetInbound {
     }
 
     function _slotIntexSeriesCallNotice(
-        TargetRouterStorage storage $,
+        IntexAuctionTargetRouterStorage storage $,
         uint32 srcChainId,
         bytes14 seriesId,
         uint64 calledAt,
         bytes memory errorData
     ) private {
         $.failedIntexSeriesCallNoticeApplies[seriesId] = calledAt;
-        emit ITargetRouter.IntexSeriesCallNoticeApplyFailed(seriesId, srcChainId, errorData);
+        emit IIntexAuctionTargetRouter.IntexSeriesCallNoticeApplyFailed(seriesId, srcChainId, errorData);
     }
 
     /// @dev Apply the Called mark waiting for a series that has just been created. A failure re-announces
     ///      the slot.
-    function _applySlottedIntexSeriesCallNotice(TargetRouterStorage storage $, uint32 srcChainId, bytes14 seriesId)
-        private
-    {
+    function _applySlottedIntexSeriesCallNotice(
+        IntexAuctionTargetRouterStorage storage $,
+        uint32 srcChainId,
+        bytes14 seriesId
+    ) private {
         uint64 calledAt = $.failedIntexSeriesCallNoticeApplies[seriesId];
         if (calledAt == 0) return;
         delete $.failedIntexSeriesCallNoticeApplies[seriesId];
-        try ITargetRouterShims(address(this)).applyIntexSeriesCallNotice{gas: IntexGas.CALL_NOTICE_APPLY_CAP}(
+        try IIntexAuctionTargetRouterShims(address(this))
+        .applyIntexSeriesCallNotice{gas: IntexGas.CALL_NOTICE_APPLY_CAP}(
             seriesId, calledAt
         ) {}
         catch (bytes memory reason) {
@@ -515,18 +538,18 @@ library TargetInbound {
     ///      transport/float hiccup never rolls back the finalization (the WCOEN is already held here).
     ///      Retried via `retryIntexAuctionProceedsSend`.
     function _sendOrKeepFailedIntexAuctionProceeds(
-        TargetRouterStorage storage $,
+        IntexAuctionTargetRouterStorage storage $,
         uint32 emissionDay,
         uint16 pageIndex,
         uint128 amount
     ) private {
-        try ITargetRouterShims(address(this)).sendIntexAuctionProceedsExt(emissionDay, pageIndex, amount) {}
+        try IIntexAuctionTargetRouterShims(address(this)).sendIntexAuctionProceedsExt(emissionDay, pageIndex, amount) {}
         catch (bytes memory reason) {
             uint256 idx = $.nextFailedIntexAuctionProceedsSendIdx++;
             $.failedIntexAuctionProceedsSend[idx] = FailedIntexAuctionProceedsSend({
                 emissionDay: emissionDay, pageIndex: pageIndex, amount: amount, exists: true, done: false
             });
-            emit ITargetRouter.IntexAuctionProceedsSendFailed(idx, emissionDay, pageIndex, amount, reason);
+            emit IIntexAuctionTargetRouter.IntexAuctionProceedsSendFailed(idx, emissionDay, pageIndex, amount, reason);
         }
     }
 }

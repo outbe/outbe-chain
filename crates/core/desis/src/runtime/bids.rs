@@ -1,5 +1,5 @@
 use super::*;
-use outbe_core_common::addresses::{ERC7786_HUB_ADDRESS, TARGET_ROUTER_ADDRESS};
+use outbe_core_common::addresses::{ERC7786_HUB_ADDRESS, INTEX_AUCTION_TARGET_ROUTER_ADDRESS};
 use outbe_intexfactory::transport::wire::{decode_bids_message, evm_chain_of, BidsMessage};
 use outbe_primitives::error::PassFailure;
 
@@ -245,7 +245,7 @@ pub fn receive_bids_message(
     if caller != ERC7786_HUB_ADDRESS {
         return Err(DesisError::UnauthorizedOrigin(caller).into());
     }
-    let src_chain_id = evm_chain_of(sender, TARGET_ROUTER_ADDRESS);
+    let src_chain_id = evm_chain_of(sender, INTEX_AUCTION_TARGET_ROUTER_ADDRESS);
     let message = decode_bids_message(payload);
     let mut contract = storage.contract::<DesisContract>();
     let ignore = |contract: &mut DesisContract<'_>, day: u32, chain: u32, reason: u8| {

@@ -43,24 +43,24 @@ contract EscrowAdapter is
     /// @notice See `EscrowTimes.UNFINALIZED_RETURN_DELAY`.
     uint32 public constant UNFINALIZED_RETURN_DELAY = EscrowTimes.UNFINALIZED_RETURN_DELAY;
 
-    /// @notice Escrow-local safety window on `unlockAbandonedIntexAuctionBidBond`, anchored at the bond's
+    /// @notice Escrow-local safety window on `unlockIntexAuctionBidBondAfterTimeout`, anchored at the bond's
     ///         `lockedAt`. Deliberately time-only (never consults the auction) so a bond survives
     ///         an auction-contract rotation. MUST exceed the auction-side no-reveal gate
-    ///         (`revealEnd + UNREVEALED_BOND_LOCK_PERIOD`), which holds while auction schedules
-    ///         span less than 29 days (daily series span ~2).
-    uint32 public constant BID_BOND_ABANDON_DELAY = 30 days;
+    ///         (`revealEnd + UNREVEALED_BOND_LOCK_PERIOD`), at most 3 days after a lock with a day of
+    ///         commit and a day of reveal.
+    uint32 public constant BID_BOND_ESCROW_TIMEOUT = 4 days;
 
-    /// @notice Escrow-local safety window on `returnAbandonedIntexAuctionAsset`, anchored at the lock's
+    /// @notice Escrow-local safety window on `returnIntexAuctionAssetAfterTimeout`, anchored at the lock's
     ///         `lockedAt`. Time-only, so the money survives an auction that no longer works.
     ///         MUST exceed `UNFINALIZED_RETURN_DELAY`.
-    uint32 public constant RETURN_ABANDON_DELAY = 30 days;
+    uint32 public constant ASSET_ESCROW_TIMEOUT = 4 days;
 
     /// @dev `reason` of `IntexAuctionAssetReturned`.
     uint8 private constant ASSET_RETURN = 0;
-    uint8 private constant ASSET_RETURN_ABANDONED = 1;
+    uint8 private constant ASSET_RETURN_ESCROW_TIMEOUT = 1;
 
     /// @dev `reason` of `IntexAuctionBidBondUnlocked` for the safety path; the auction gives the other two.
-    uint8 private constant BOND_UNLOCK_ABANDONED = 2;
+    uint8 private constant BOND_UNLOCK_ESCROW_TIMEOUT = 2;
 
     /// @custom:storage-location erc7201:outbe.intex.EscrowAdapter
     struct EscrowAdapterStorage {
@@ -333,14 +333,14 @@ contract EscrowAdapter is
     }
 
     /// @inheritdoc IEscrowAdapter
-    function unlockAbandonedIntexAuctionBidBond(uint32 emissionDay, address bidder) external override nonReentrant {
+    function unlockIntexAuctionBidBondAfterTimeout(uint32 emissionDay, address bidder) external override nonReentrant {
         IntexAuctionBidBond storage bond = _s().bidBonds[emissionDay][bidder];
         if (bond.amount == 0) revert IntexAuctionBidBondNotFound();
-        uint32 unlockableAt = bond.lockedAt + BID_BOND_ABANDON_DELAY;
+        uint32 unlockableAt = bond.lockedAt + BID_BOND_ESCROW_TIMEOUT;
         if (block.timestamp < unlockableAt) {
-            revert IntexAuctionBidBondNotYetAbandoned(unlockableAt, uint32(block.timestamp));
+            revert IntexAuctionBidBondEscrowTimeoutNotOver(unlockableAt, uint32(block.timestamp));
         }
-        _unlockIntexAuctionBidBond(emissionDay, bidder, BOND_UNLOCK_ABANDONED);
+        _unlockIntexAuctionBidBond(emissionDay, bidder, BOND_UNLOCK_ESCROW_TIMEOUT);
     }
 
     /// @dev Delete the bond record, withdraw from The Compact, and pay the stored bidder.
@@ -479,14 +479,16 @@ contract EscrowAdapter is
     }
 
     /// @inheritdoc IEscrowAdapter
-    function returnAbandonedIntexAuctionAsset(uint32 emissionDay, address bidder) external override nonReentrant {
+    function returnIntexAuctionAssetAfterTimeout(uint32 emissionDay, address bidder) external override nonReentrant {
         EscrowAdapterStorage storage $ = _s();
         IntexAuctionBidLock storage lock = $.bidLocks[emissionDay][bidder];
         if (lock.status == LockStatus.None) revert LockNotActive();
-        uint32 returnableAt = lock.lockedAt + RETURN_ABANDON_DELAY;
-        if (block.timestamp < returnableAt) revert ReturnNotYetAbandoned(returnableAt, uint32(block.timestamp));
+        uint32 returnableAt = lock.lockedAt + ASSET_ESCROW_TIMEOUT;
+        if (block.timestamp < returnableAt) {
+            revert IntexAuctionAssetEscrowTimeoutNotOver(returnableAt, uint32(block.timestamp));
+        }
         _release(
-            emissionDay, $.auctionEscrowState[emissionDay], lock, bidder, lock.lockedAmount, ASSET_RETURN_ABANDONED
+            emissionDay, $.auctionEscrowState[emissionDay], lock, bidder, lock.lockedAmount, ASSET_RETURN_ESCROW_TIMEOUT
         );
     }
 

@@ -20,7 +20,7 @@ use outbe_system_common::day_pass::PinnedDay;
 use outbe_system_common::pass_budget::PassBudget;
 use outbe_system_common::time::EmissionDate;
 
-use crate::constants::MAX_SERIES_PER_MARK;
+use crate::constants::MAX_SERIES_PER_CALL_NOTICE;
 use crate::schema::IntexFactoryContract;
 use outbe_intex::{CallBins, IntexContract};
 
@@ -182,7 +182,7 @@ pub(crate) fn notify_called(
     members: &[SeriesId],
 ) -> Result<()> {
     let chains = crate::targets::series_target_chains(storage)?;
-    for chunk in members.chunks(MAX_SERIES_PER_MARK) {
+    for chunk in members.chunks(MAX_SERIES_PER_CALL_NOTICE) {
         let series: Vec<FixedBytes<14>> = chunk.iter().map(|id| (*id).into()).collect();
         crate::outbox::push_to(
             storage,

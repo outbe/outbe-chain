@@ -3,7 +3,7 @@
 use super::*;
 use alloy_primitives::B256;
 use alloy_sol_types::SolValue;
-use outbe_core_common::addresses::{ERC7786_HUB_ADDRESS, TARGET_ROUTER_ADDRESS};
+use outbe_core_common::addresses::{ERC7786_HUB_ADDRESS, INTEX_AUCTION_TARGET_ROUTER_ADDRESS};
 use outbe_intexfactory::transport::wire::{
     MSG_BIDS_PAGE, MSG_BIDS_PAUSE, MSG_BIDS_TOTALS, MSG_INTEX_AUCTION_CLEARING_START,
     MSG_INTEX_AUCTION_START,
@@ -86,11 +86,11 @@ fn deliver(
     dispatch(s.clone(), &call.abi_encode(), caller, U256::ZERO)
 }
 
-fn from_target_router(s: &StorageHandle, payload: Vec<u8>) -> Bytes {
+fn from_intex_auction_target_router(s: &StorageHandle, payload: Vec<u8>) -> Bytes {
     deliver(
         s,
         ERC7786_HUB_ADDRESS,
-        interop(SRC_CHAIN, TARGET_ROUTER_ADDRESS),
+        interop(SRC_CHAIN, INTEX_AUCTION_TARGET_ROUTER_ADDRESS),
         payload,
     )
     .unwrap()
@@ -113,15 +113,15 @@ fn chain_bids(s: &StorageHandle, chain: u32) -> u32 {
 }
 
 #[test]
-fn the_hub_delivers_a_page_and_its_totals_from_target_router() {
+fn the_hub_delivers_a_page_and_its_totals_from_intex_auction_target_router() {
     with_targets(&[SRC_CHAIN], |s| {
         open_revealing(&s);
-        let answer = from_target_router(&s, bids_page(SRC_CHAIN, 3));
+        let answer = from_intex_auction_target_router(&s, bids_page(SRC_CHAIN, 3));
         assert_eq!(
             IDesis::receiveMessageCall::abi_decode_returns(&answer).unwrap(),
             IDesis::receiveMessageCall::SELECTOR
         );
-        from_target_router(&s, bids_totals(3));
+        from_intex_auction_target_router(&s, bids_totals(3));
         assert_eq!(chain_bids(&s, SRC_CHAIN), 3);
         let completed = s
             .contract::<DesisContract>()
@@ -139,7 +139,7 @@ fn only_the_hub_may_deliver() {
         assert!(deliver(
             &s,
             bidder(9),
-            interop(SRC_CHAIN, TARGET_ROUTER_ADDRESS),
+            interop(SRC_CHAIN, INTEX_AUCTION_TARGET_ROUTER_ADDRESS),
             bids_page(SRC_CHAIN, 1)
         )
         .is_err());
@@ -169,7 +169,7 @@ fn a_page_whose_body_names_another_chain_is_ignored() {
     let mut storage = fixture_provider(&[SRC_CHAIN]);
     StorageHandle::enter(&mut storage, |s| {
         open_revealing(&s);
-        from_target_router(&s, bids_page(SRC_CHAIN + 1, 1));
+        from_intex_auction_target_router(&s, bids_page(SRC_CHAIN + 1, 1));
         assert_eq!(chain_bids(&s, SRC_CHAIN), 0);
     });
     assert_eq!(
@@ -187,7 +187,7 @@ fn a_page_from_a_chain_outside_the_day_is_ignored() {
         deliver(
             &s,
             ERC7786_HUB_ADDRESS,
-            interop(other, TARGET_ROUTER_ADDRESS),
+            interop(other, INTEX_AUCTION_TARGET_ROUTER_ADDRESS),
             bids_page(other, 1),
         )
         .unwrap();
@@ -207,7 +207,7 @@ fn a_page_before_the_reveal_reverts_so_the_hub_delivers_it_again() {
         assert!(deliver(
             &s,
             ERC7786_HUB_ADDRESS,
-            interop(SRC_CHAIN, TARGET_ROUTER_ADDRESS),
+            interop(SRC_CHAIN, INTEX_AUCTION_TARGET_ROUTER_ADDRESS),
             bids_page(SRC_CHAIN, 1)
         )
         .is_err());
@@ -219,7 +219,7 @@ fn a_pause_queues_the_next_round_with_the_gas_of_the_first() {
     let mut storage = fixture_provider(&[SRC_CHAIN]);
     StorageHandle::enter(&mut storage, |s| {
         open_clearing(&s, 10);
-        from_target_router(&s, bids_pause());
+        from_intex_auction_target_router(&s, bids_pause());
     });
     let rounds = outbox_of_type(&mut storage, MSG_INTEX_AUCTION_CLEARING_START);
     assert_eq!(rounds.len(), 2);
@@ -234,7 +234,7 @@ fn a_pause_after_the_intake_closed_is_ignored() {
         open_clearing(&s, 10);
         relay_bids(&s, SRC_CHAIN, 1, 200);
         clear(&s);
-        from_target_router(&s, bids_pause());
+        from_intex_auction_target_router(&s, bids_pause());
     });
     assert_eq!(
         outbox_of_type(&mut storage, MSG_INTEX_AUCTION_CLEARING_START).len(),

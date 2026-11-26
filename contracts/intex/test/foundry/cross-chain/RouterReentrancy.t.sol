@@ -5,7 +5,7 @@ import {ReferenceCurrencyPriceLib} from "../helpers/ReferenceCurrencyPriceLib.so
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 
-import {TargetRouter} from "@contracts/target/TargetRouter.sol";
+import {IntexAuctionTargetRouter} from "@contracts/target/IntexAuctionTargetRouter.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 
@@ -30,20 +30,21 @@ contract ReentrancyProbeAuction {
         external
     {
         observed = true;
-        (bool ok, bytes memory ret) = router.call(abi.encodeCall(TargetRouter.receiveFromOutbe, (bytes(""))));
+        (bool ok, bytes memory ret) =
+            router.call(abi.encodeCall(IntexAuctionTargetRouter.receiveFromOutbe, (bytes(""))));
         guardHeld = !ok && ret.length >= 4 && bytes4(ret) == REENTRANCY_GUARD_REENTRANT_CALL;
     }
 }
 
 /// @title RouterReentrancyTest
-/// @notice Behavioural test that `TargetRouter.receiveFromOutbe` runs under OZ `nonReentrant`.
+/// @notice Behavioural test that `IntexAuctionTargetRouter.receiveFromOutbe` runs under OZ `nonReentrant`.
 /// @dev A downstream callee (the auction) tries to re-enter the router's inbound entry mid-dispatch.
 ///      The re-entry reverts with `ReentrancyGuardReentrantCall` iff the `nonReentrant` modifier is
 ///      active on `receiveFromOutbe`.
 contract RouterReentrancyTest is CrossChainTest {
     uint32 internal constant OUTBE_CHAIN_ID = 2;
 
-    TargetRouter internal bnbRouter;
+    IntexAuctionTargetRouter internal bnbRouter;
 
     address internal admin = address(this);
     address internal outbeIca = makeAddr("outbeIca");
@@ -70,6 +71,6 @@ contract RouterReentrancyTest is CrossChainTest {
         _deliver(OUTBE_CHAIN_ID, outbeIca, address(bnbRouter), packet);
 
         assertTrue(probeAuction.observed(), "TM auction callback never ran");
-        assertTrue(probeAuction.guardHeld(), "TargetRouter.receiveFromOutbe missing nonReentrant");
+        assertTrue(probeAuction.guardHeld(), "IntexAuctionTargetRouter.receiveFromOutbe missing nonReentrant");
     }
 }

@@ -336,7 +336,7 @@ interface IIntexAuction {
     ///         - A loser of a finalized day collects its principal and its bid is cleared.
     ///         - A bidder whose day never finalized collects its principal after the escrow's
     ///           delay. Its bid stays until the day finalizes, since the bids relay may still read it.
-    ///         The escrow-local `returnAbandonedIntexAuctionAsset` is the fallback if this contract stops working.
+    ///         The escrow-local `returnIntexAuctionAssetAfterTimeout` is the fallback if this contract stops working.
     /// @param emissionDay Emission day (yyyymmdd).
     /// @param bidder Bidder whose refund is being claimed.
     function returnIntexAuctionAsset(uint32 emissionDay, address bidder) external;
@@ -351,7 +351,7 @@ interface IIntexAuction {
     /// @notice Permissionless commit-bond claim for a bidder who committed but never revealed.
     ///         A canceled-day auction releases immediately. Otherwise the bond is claimable
     ///         only after `revealEnd + UNREVEALED_BOND_LOCK_PERIOD`. Pays the stored bidder, not the
-    ///         caller. The escrow-local time-based valve (`unlockAbandonedIntexAuctionBidBond`) is the fallback
+    ///         caller. The escrow-local time-based valve (`unlockIntexAuctionBidBondAfterTimeout`) is the fallback
     ///         if the auction contract itself is rotated away.
     /// @param emissionDay Emission day (yyyymmdd).
     /// @param bidder Bidder whose bond is being claimed.

@@ -1,9 +1,9 @@
 //! The outbox of a module: its messages to each target chain, sent in order through
-//! `CrosschainBridge.callRemoteWithGasLimit` to `receiveFromOutbe` of TargetRouter.
+//! `CrosschainBridge.callRemoteWithGasLimit` to `receiveFromOutbe` of IntexAuctionTargetRouter.
 
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::{sol, SolCall};
-use outbe_core_common::addresses::TARGET_ROUTER_ADDRESS;
+use outbe_core_common::addresses::INTEX_AUCTION_TARGET_ROUTER_ADDRESS;
 use outbe_primitives::error::{PassFailure, PrecompileError, Result};
 use outbe_primitives::storage::dsl::{Bytes as StorageBytes, Map};
 use outbe_primitives::storage::StorageHandle;
@@ -363,7 +363,7 @@ fn send(
     let call = callRemoteWithGasLimitCall {
         domain: chain_id,
         calls: vec![Call {
-            to: TARGET_ROUTER_ADDRESS,
+            to: INTEX_AUCTION_TARGET_ROUTER_ADDRESS,
             value: U256::ZERO,
             data: receiveFromOutbeCall {
                 message: payload.clone(),
