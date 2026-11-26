@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
-import {MarkBatchLib} from "../helpers/MarkBatchLib.sol";
+import {CallNoticeBatchLib} from "../helpers/CallNoticeBatchLib.sol";
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 
 import {IntexAuctionTargetRouter} from "@contracts/target/IntexAuctionTargetRouter.sol";
@@ -11,9 +11,9 @@ import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {OpenSeriesLib} from "../helpers/OpenSeriesLib.sol";
 
-/// @dev MARK_CALLED carries the origin's stamp, so a slow delivery still yields the deadline
+/// @dev INTEX_SERIES_CALL_NOTICE carries the origin's stamp, so a slow delivery still yields the deadline
 ///      settlement honours rather than a later one.
-contract MarkCalledClockTest is CrossChainTest {
+contract CallNoticeClockTest is CrossChainTest {
     uint32 internal constant OUTBE_CHAIN_ID = 2;
     uint32 internal constant EMISSION_DAY = 20260501;
     bytes14 internal constant SERIES_ID = "20260501-USD-U";
@@ -40,7 +40,7 @@ contract MarkCalledClockTest is CrossChainTest {
             OUTBE_CHAIN_ID,
             outbeIca,
             address(router),
-            BridgeMsgCodec.encodeIntexSeriesCallNotice(EMISSION_DAY, calledAt, MarkBatchLib.one(SERIES_ID))
+            BridgeMsgCodec.encodeIntexSeriesCallNotice(EMISSION_DAY, calledAt, CallNoticeBatchLib.one(SERIES_ID))
         );
     }
 

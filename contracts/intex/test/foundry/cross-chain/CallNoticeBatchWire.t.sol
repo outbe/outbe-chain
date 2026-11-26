@@ -10,11 +10,11 @@ import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {OpenSeriesLib} from "../helpers/OpenSeriesLib.sol";
-import {MarkBatchLib} from "../helpers/MarkBatchLib.sol";
+import {CallNoticeBatchLib} from "../helpers/CallNoticeBatchLib.sol";
 
-/// @dev One day's series in one reference currency travel as a single mark message, and the target
+/// @dev One day's series in one reference currency travel as a single call notice, and the target
 ///      applies every series it carries.
-contract MarkBatchWireTest is CrossChainTest {
+contract CallNoticeBatchWireTest is CrossChainTest {
     uint32 internal constant OUTBE_CHAIN_ID = 2;
 
     uint32 internal constant EMISSION_DAY = 20250101;
@@ -53,7 +53,7 @@ contract MarkBatchWireTest is CrossChainTest {
 
     function test_oneMessageCarriesTheWholeGroupToTheTarget() public {
         _createBoth();
-        bytes14[] memory batch = MarkBatchLib.two(USD_SERIES, EUR_SERIES);
+        bytes14[] memory batch = CallNoticeBatchLib.two(USD_SERIES, EUR_SERIES);
 
         _deliver(
             OUTBE_CHAIN_ID,
@@ -62,8 +62,8 @@ contract MarkBatchWireTest is CrossChainTest {
             BridgeMsgCodec.encodeIntexSeriesCallNotice(EMISSION_DAY, uint32(block.timestamp), batch)
         );
 
-        assertEq(_state(USD_SERIES), uint8(IIntexNFT1155.IntexState.Called), "USD series marked");
-        assertEq(_state(EUR_SERIES), uint8(IIntexNFT1155.IntexState.Called), "EUR series marked");
+        assertEq(_state(USD_SERIES), uint8(IIntexNFT1155.IntexState.Called), "USD series called");
+        assertEq(_state(EUR_SERIES), uint8(IIntexNFT1155.IntexState.Called), "EUR series called");
     }
 
     /// @notice One series missing on the target must not cost the rest of its batch.
@@ -75,7 +75,7 @@ contract MarkBatchWireTest is CrossChainTest {
             outbeIca,
             address(bnbRouter),
             BridgeMsgCodec.encodeIntexSeriesCallNotice(
-                EMISSION_DAY, uint32(block.timestamp), MarkBatchLib.two(USD_SERIES, EUR_SERIES)
+                EMISSION_DAY, uint32(block.timestamp), CallNoticeBatchLib.two(USD_SERIES, EUR_SERIES)
             )
         );
 

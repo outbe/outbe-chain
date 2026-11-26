@@ -32,7 +32,7 @@ contract IntexNFT1155RouterSingleTest is CrossChainTest {
     address private user = address(0x1);
     uint32 private constant SERIES_ID_DAY = 20260401;
     bytes14 private constant SERIES_ID = "20260401-USD-U";
-    uint256 private constant TOKEN_ID = uint256(keccak256(abi.encodePacked(SERIES_ID)));
+    uint256 private constant INTEX_ID = uint256(keccak256(abi.encodePacked(SERIES_ID)));
     uint256 private constant AMOUNT = 100;
     uint32 private constant ISSUED_UNITS = 10_000;
 
@@ -96,13 +96,13 @@ contract IntexNFT1155RouterSingleTest is CrossChainTest {
 
     function test_send() public {
         SendParam memory sendParam =
-            SendParam({dstChainId: B_CHAIN_ID, to: bytes32(uint256(uint160(user))), intexId: TOKEN_ID, units: AMOUNT});
+            SendParam({dstChainId: B_CHAIN_ID, to: bytes32(uint256(uint160(user))), intexId: INTEX_ID, units: AMOUNT});
 
         uint256 fee = adapterA.quoteSend(sendParam);
 
         // Check initial balances
-        assertEq(tokenA.balanceOf(user, TOKEN_ID), AMOUNT);
-        assertEq(tokenB.balanceOf(user, TOKEN_ID), 0);
+        assertEq(tokenA.balanceOf(user, INTEX_ID), AMOUNT);
+        assertEq(tokenB.balanceOf(user, INTEX_ID), 0);
 
         // Send tokens
         vm.prank(user);
@@ -112,13 +112,13 @@ contract IntexNFT1155RouterSingleTest is CrossChainTest {
         _deliverAToB();
 
         // Check final balances
-        assertEq(tokenA.balanceOf(user, TOKEN_ID), 0);
-        assertEq(tokenB.balanceOf(user, TOKEN_ID), AMOUNT);
+        assertEq(tokenA.balanceOf(user, INTEX_ID), 0);
+        assertEq(tokenB.balanceOf(user, INTEX_ID), AMOUNT);
     }
 
     function test_a_single_send_has_its_own_message_and_arrives_as_one_receive() public {
         SendParam memory sendParam =
-            SendParam({dstChainId: B_CHAIN_ID, to: bytes32(uint256(uint160(user))), intexId: TOKEN_ID, units: 40});
+            SendParam({dstChainId: B_CHAIN_ID, to: bytes32(uint256(uint160(user))), intexId: INTEX_ID, units: 40});
         uint256 fee = adapterA.quoteSend(sendParam);
         vm.prank(user);
         adapterA.send{value: fee}(sendParam);
@@ -129,20 +129,20 @@ contract IntexNFT1155RouterSingleTest is CrossChainTest {
 
         vm.recordLogs();
         vm.expectEmit(true, true, true, true, address(adapterB));
-        emit IIntexNFT1155Router.IntexCrosschainReceived(receiveId, A_CHAIN_ID, user, TOKEN_ID, 40);
+        emit IIntexNFT1155Router.IntexCrosschainReceived(receiveId, A_CHAIN_ID, user, INTEX_ID, 40);
         _deliverAToB();
         assertEq(_countTopic(IIntexNFT1155Router.IntexCrosschainBatchReceived.selector), 0, "no batch event");
-        assertEq(tokenB.balanceOf(user, TOKEN_ID), 40);
+        assertEq(tokenB.balanceOf(user, INTEX_ID), 40);
     }
 
     function test_a_failed_single_receive_is_reported_received_on_its_retry() public {
         uint32 failDay = 20260402;
         bytes14 failSeries = "20260402-USD-U";
-        uint256 failTokenId = uint256(keccak256(abi.encodePacked(failSeries)));
+        uint256 failIntexId = uint256(keccak256(abi.encodePacked(failSeries)));
         tokenA.openSeries(OpenSeriesLib.params(failDay, ISSUED_UNITS, 0));
         tokenA.issueIntex(user, AMOUNT, failSeries);
         SendParam memory sendParam = SendParam({
-            dstChainId: B_CHAIN_ID, to: bytes32(uint256(uint160(user))), intexId: failTokenId, units: AMOUNT
+            dstChainId: B_CHAIN_ID, to: bytes32(uint256(uint160(user))), intexId: failIntexId, units: AMOUNT
         });
         uint256 fee = adapterA.quoteSend(sendParam);
         vm.prank(user);
@@ -161,13 +161,13 @@ contract IntexNFT1155RouterSingleTest is CrossChainTest {
 
         tokenB.openSeries(OpenSeriesLib.params(failDay, ISSUED_UNITS, 0));
         vm.expectEmit(true, true, true, true, address(adapterB));
-        emit IIntexNFT1155Router.IntexCrosschainReceived(receiveId, A_CHAIN_ID, user, failTokenId, uint32(AMOUNT));
+        emit IIntexNFT1155Router.IntexCrosschainReceived(receiveId, A_CHAIN_ID, user, failIntexId, uint32(AMOUNT));
         adapterB.retryIntexCrosschainReceive(receiveId, 0);
     }
 
     function test_send_without_the_fee_does_not_use_the_float() public {
         SendParam memory sendParam =
-            SendParam({dstChainId: B_CHAIN_ID, to: bytes32(uint256(uint160(user))), intexId: TOKEN_ID, units: AMOUNT});
+            SendParam({dstChainId: B_CHAIN_ID, to: bytes32(uint256(uint160(user))), intexId: INTEX_ID, units: AMOUNT});
         vm.deal(address(adapterA), 1 ether);
 
         vm.prank(user);
@@ -175,14 +175,14 @@ contract IntexNFT1155RouterSingleTest is CrossChainTest {
         adapterA.send(sendParam);
 
         assertEq(address(adapterA).balance, 1 ether, "the float is untouched");
-        assertEq(tokenA.balanceOf(user, TOKEN_ID), AMOUNT, "nothing burned");
+        assertEq(tokenA.balanceOf(user, INTEX_ID), AMOUNT, "nothing burned");
     }
 
     function test_send_partial_amount() public {
         uint256 sendAmount = AMOUNT / 2;
 
         SendParam memory sendParam = SendParam({
-            dstChainId: B_CHAIN_ID, to: bytes32(uint256(uint160(user))), intexId: TOKEN_ID, units: sendAmount
+            dstChainId: B_CHAIN_ID, to: bytes32(uint256(uint160(user))), intexId: INTEX_ID, units: sendAmount
         });
 
         uint256 fee = adapterA.quoteSend(sendParam);
@@ -191,15 +191,15 @@ contract IntexNFT1155RouterSingleTest is CrossChainTest {
         adapterA.send{value: fee}(sendParam);
         _deliverAToB();
 
-        assertEq(tokenA.balanceOf(user, TOKEN_ID), AMOUNT - sendAmount);
-        assertEq(tokenB.balanceOf(user, TOKEN_ID), sendAmount);
+        assertEq(tokenA.balanceOf(user, INTEX_ID), AMOUNT - sendAmount);
+        assertEq(tokenB.balanceOf(user, INTEX_ID), sendAmount);
     }
 
     function test_send_to_different_address() public {
         address recipient = address(0x2);
 
         SendParam memory sendParam = SendParam({
-            dstChainId: B_CHAIN_ID, to: bytes32(uint256(uint160(recipient))), intexId: TOKEN_ID, units: AMOUNT
+            dstChainId: B_CHAIN_ID, to: bytes32(uint256(uint160(recipient))), intexId: INTEX_ID, units: AMOUNT
         });
 
         uint256 fee = adapterA.quoteSend(sendParam);
@@ -208,38 +208,38 @@ contract IntexNFT1155RouterSingleTest is CrossChainTest {
         adapterA.send{value: fee}(sendParam);
         _deliverAToB();
 
-        assertEq(tokenA.balanceOf(user, TOKEN_ID), 0);
-        assertEq(tokenB.balanceOf(recipient, TOKEN_ID), AMOUNT);
+        assertEq(tokenA.balanceOf(user, INTEX_ID), 0);
+        assertEq(tokenB.balanceOf(recipient, INTEX_ID), AMOUNT);
     }
 
     function test_roundtrip() public {
         // Send A -> B
         SendParam memory sendParamAB =
-            SendParam({dstChainId: B_CHAIN_ID, to: bytes32(uint256(uint160(user))), intexId: TOKEN_ID, units: AMOUNT});
+            SendParam({dstChainId: B_CHAIN_ID, to: bytes32(uint256(uint160(user))), intexId: INTEX_ID, units: AMOUNT});
 
         uint256 feeAB = adapterA.quoteSend(sendParamAB);
         vm.prank(user);
         adapterA.send{value: feeAB}(sendParamAB);
         _deliverAToB();
 
-        assertEq(tokenB.balanceOf(user, TOKEN_ID), AMOUNT);
+        assertEq(tokenB.balanceOf(user, INTEX_ID), AMOUNT);
 
         // Send B -> A
         SendParam memory sendParamBToA =
-            SendParam({dstChainId: A_CHAIN_ID, to: bytes32(uint256(uint160(user))), intexId: TOKEN_ID, units: AMOUNT});
+            SendParam({dstChainId: A_CHAIN_ID, to: bytes32(uint256(uint160(user))), intexId: INTEX_ID, units: AMOUNT});
 
         uint256 feeBToA = adapterB.quoteSend(sendParamBToA);
         vm.prank(user);
         adapterB.send{value: feeBToA}(sendParamBToA);
         _deliverBToA();
 
-        assertEq(tokenA.balanceOf(user, TOKEN_ID), AMOUNT);
-        assertEq(tokenB.balanceOf(user, TOKEN_ID), 0);
+        assertEq(tokenA.balanceOf(user, INTEX_ID), AMOUNT);
+        assertEq(tokenB.balanceOf(user, INTEX_ID), 0);
     }
 
     function test_revert_invalid_receiver() public {
         SendParam memory sendParam =
-            SendParam({dstChainId: B_CHAIN_ID, to: bytes32(0), intexId: TOKEN_ID, units: AMOUNT});
+            SendParam({dstChainId: B_CHAIN_ID, to: bytes32(0), intexId: INTEX_ID, units: AMOUNT});
 
         vm.expectRevert(IIntexNFT1155Router.InvalidReceiver.selector);
         adapterA.quoteSend(sendParam);
@@ -249,7 +249,7 @@ contract IntexNFT1155RouterSingleTest is CrossChainTest {
         SendParam memory sendParam = SendParam({
             dstChainId: B_CHAIN_ID,
             to: bytes32(uint256(uint160(user))),
-            intexId: TOKEN_ID,
+            intexId: INTEX_ID,
             units: AMOUNT + 1 // More than balance
         });
 
@@ -266,7 +266,7 @@ contract IntexNFT1155RouterSingleTest is CrossChainTest {
 
         // Send tokens A -> B
         SendParam memory sendParam =
-            SendParam({dstChainId: B_CHAIN_ID, to: bytes32(uint256(uint160(user))), intexId: TOKEN_ID, units: AMOUNT});
+            SendParam({dstChainId: B_CHAIN_ID, to: bytes32(uint256(uint160(user))), intexId: INTEX_ID, units: AMOUNT});
 
         uint256 fee = adapterA.quoteSend(sendParam);
         vm.prank(user);
@@ -285,12 +285,12 @@ contract IntexNFT1155RouterSingleTest is CrossChainTest {
         // must park the transfer (not unwind the packet and strand the burned tokens).
         uint32 failDay = 20260402;
         bytes14 failSeries = "20260402-USD-U";
-        uint256 failTokenId = uint256(keccak256(abi.encodePacked(failSeries)));
+        uint256 failIntexId = uint256(keccak256(abi.encodePacked(failSeries)));
         tokenA.openSeries(OpenSeriesLib.params(failDay, ISSUED_UNITS, 0));
         tokenA.issueIntex(user, AMOUNT, failSeries);
 
         SendParam memory sendParam = SendParam({
-            dstChainId: B_CHAIN_ID, to: bytes32(uint256(uint160(user))), intexId: failTokenId, units: AMOUNT
+            dstChainId: B_CHAIN_ID, to: bytes32(uint256(uint160(user))), intexId: failIntexId, units: AMOUNT
         });
         uint256 fee = adapterA.quoteSend(sendParam);
         vm.prank(user);
@@ -305,8 +305,8 @@ contract IntexNFT1155RouterSingleTest is CrossChainTest {
         _deliverAToB();
 
         // Source burned, destination not minted, transfer parked under the bridge receiveId.
-        assertEq(tokenA.balanceOf(user, failTokenId), 0, "source burned");
-        assertEq(tokenB.balanceOf(user, failTokenId), 0, "not minted yet");
+        assertEq(tokenA.balanceOf(user, failIntexId), 0, "source burned");
+        assertEq(tokenB.balanceOf(user, failIntexId), 0, "not minted yet");
         (address to,, uint256 amount, bool exists) = adapterB.getFailedCrosschainReceive(receiveId, 0);
         assertTrue(exists, "crosschainMint parked");
         assertEq(to, user);
@@ -315,7 +315,7 @@ contract IntexNFT1155RouterSingleTest is CrossChainTest {
         // Fix the cause on B, then retry -> minted and entry cleared.
         tokenB.openSeries(OpenSeriesLib.params(failDay, ISSUED_UNITS, 0));
         adapterB.retryIntexCrosschainReceive(receiveId, 0);
-        assertEq(tokenB.balanceOf(user, failTokenId), AMOUNT, "minted on retry");
+        assertEq(tokenB.balanceOf(user, failIntexId), AMOUNT, "minted on retry");
 
         (,,, bool existsAfter) = adapterB.getFailedCrosschainReceive(receiveId, 0);
         assertFalse(existsAfter, "entry cleared");
@@ -331,12 +331,12 @@ contract IntexNFT1155RouterSingleTest is CrossChainTest {
         // Park an inbound on B for a series that exists on A only.
         uint32 failDay = 20260402;
         bytes14 failSeries = "20260402-USD-U";
-        uint256 failTokenId = uint256(keccak256(abi.encodePacked(failSeries)));
+        uint256 failIntexId = uint256(keccak256(abi.encodePacked(failSeries)));
         tokenA.openSeries(OpenSeriesLib.params(failDay, ISSUED_UNITS, 0));
         tokenA.issueIntex(user, AMOUNT, failSeries);
 
         SendParam memory sendParam = SendParam({
-            dstChainId: B_CHAIN_ID, to: bytes32(uint256(uint160(user))), intexId: failTokenId, units: AMOUNT
+            dstChainId: B_CHAIN_ID, to: bytes32(uint256(uint160(user))), intexId: failIntexId, units: AMOUNT
         });
         uint256 fee = adapterA.quoteSend(sendParam);
         vm.prank(user);
@@ -346,7 +346,7 @@ contract IntexNFT1155RouterSingleTest is CrossChainTest {
         bytes32 receiveId = keccak256(abi.encode(_interop(A_CHAIN_ID, address(adapterA)), packet));
         _deliverAToB();
 
-        assertEq(tokenA.balanceOf(user, failTokenId), 0, "source burned");
+        assertEq(tokenA.balanceOf(user, failIntexId), 0, "source burned");
         (,,, bool parked) = adapterB.getFailedCrosschainReceive(receiveId, 0);
         assertTrue(parked, "parked on B");
 
@@ -366,8 +366,8 @@ contract IntexNFT1155RouterSingleTest is CrossChainTest {
 
         // Deliver the reverse packet on A -> owner re-minted, cross-chain supply conserved.
         _deliverBToA();
-        assertEq(tokenA.balanceOf(user, failTokenId), AMOUNT, "owner re-minted on origin");
-        assertEq(tokenB.balanceOf(user, failTokenId), 0, "nothing on destination");
+        assertEq(tokenA.balanceOf(user, failIntexId), AMOUNT, "owner re-minted on origin");
+        assertEq(tokenB.balanceOf(user, failIntexId), 0, "nothing on destination");
 
         // A second reclaim reverts - the entry is gone.
         vm.expectRevert(
@@ -384,6 +384,6 @@ contract IntexNFT1155RouterSingleTest is CrossChainTest {
 
     function test_crosschainReceiveOne_externalCallerRevertsNotSelf() public {
         vm.expectRevert(IIntexNFT1155Router.NotSelf.selector);
-        adapterB.crosschainReceiveOne(address(0xCAFE), TOKEN_ID, 1);
+        adapterB.crosschainReceiveOne(address(0xCAFE), INTEX_ID, 1);
     }
 }

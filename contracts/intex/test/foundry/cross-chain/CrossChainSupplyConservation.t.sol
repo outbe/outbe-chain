@@ -23,7 +23,7 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
 
     uint32 private constant SERIES_ID_DAY = 20260401;
     bytes14 private constant SERIES_ID = "20260401-USD-U";
-    uint256 private constant TOKEN_ID = uint256(keccak256(abi.encodePacked(SERIES_ID)));
+    uint256 private constant INTEX_ID = uint256(keccak256(abi.encodePacked(SERIES_ID)));
     uint32 private constant ISSUED_UNITS = 10_000;
 
     IntexNFT1155 private tokenA;
@@ -59,14 +59,14 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         tokenA.issueIntex(user, minted, SERIES_ID);
 
         uint256 bridged = 60;
-        _send(adapterA, adapterB, A_CHAIN_ID, user, TOKEN_ID, bridged);
+        _send(adapterA, adapterB, A_CHAIN_ID, user, INTEX_ID, bridged);
 
         // Source burns exactly `bridged`; destination mints exactly `bridged`.
-        assertEq(tokenA.totalSupply(TOKEN_ID), minted - bridged, "A.totalSupply -= bridged");
-        assertEq(tokenB.totalSupply(TOKEN_ID), bridged, "B.totalSupply += bridged");
+        assertEq(tokenA.totalSupply(INTEX_ID), minted - bridged, "A.totalSupply -= bridged");
+        assertEq(tokenB.totalSupply(INTEX_ID), bridged, "B.totalSupply += bridged");
 
         // SI-08: the global pool equals the original mint.
-        uint256 totalAcrossChains = tokenA.totalSupply(TOKEN_ID) + tokenB.totalSupply(TOKEN_ID);
+        uint256 totalAcrossChains = tokenA.totalSupply(INTEX_ID) + tokenB.totalSupply(INTEX_ID);
         assertEq(totalAcrossChains, minted, "SI-08: sum preserved");
     }
 
@@ -74,15 +74,15 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         uint256 minted = 100;
         tokenA.issueIntex(user, minted, SERIES_ID);
 
-        _send(adapterA, adapterB, A_CHAIN_ID, user, TOKEN_ID, minted);
-        assertEq(tokenA.totalSupply(TOKEN_ID), 0, "A drained after outbound");
-        assertEq(tokenB.totalSupply(TOKEN_ID), minted, "B holds the bridged units");
+        _send(adapterA, adapterB, A_CHAIN_ID, user, INTEX_ID, minted);
+        assertEq(tokenA.totalSupply(INTEX_ID), 0, "A drained after outbound");
+        assertEq(tokenB.totalSupply(INTEX_ID), minted, "B holds the bridged units");
 
-        _send(adapterB, adapterA, B_CHAIN_ID, user, TOKEN_ID, minted);
-        assertEq(tokenA.totalSupply(TOKEN_ID), minted, "A restored after return");
-        assertEq(tokenB.totalSupply(TOKEN_ID), 0, "B drained after return");
+        _send(adapterB, adapterA, B_CHAIN_ID, user, INTEX_ID, minted);
+        assertEq(tokenA.totalSupply(INTEX_ID), minted, "A restored after return");
+        assertEq(tokenB.totalSupply(INTEX_ID), 0, "B drained after return");
 
-        uint256 totalAcrossChains = tokenA.totalSupply(TOKEN_ID) + tokenB.totalSupply(TOKEN_ID);
+        uint256 totalAcrossChains = tokenA.totalSupply(INTEX_ID) + tokenB.totalSupply(INTEX_ID);
         assertEq(totalAcrossChains, minted, "SI-08: sum preserved end-to-end");
     }
 
@@ -92,25 +92,25 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         // minted on B - the missing amount lives in failedCrosschainReceives.
         uint32 parkDay = 20260601;
         bytes14 parkSeries = "20260601-USD-U";
-        uint256 parkTokenId = uint256(keccak256(abi.encodePacked(parkSeries)));
+        uint256 parkIntexId = uint256(keccak256(abi.encodePacked(parkSeries)));
         tokenA.openSeries(OpenSeriesLib.params(parkDay, ISSUED_UNITS, 0));
 
         uint256 minted = 100;
         uint256 bridged = 100;
         tokenA.issueIntex(user, minted, parkSeries);
 
-        bytes32 receiveId = _send(adapterA, adapterB, A_CHAIN_ID, user, parkTokenId, bridged);
+        bytes32 receiveId = _send(adapterA, adapterB, A_CHAIN_ID, user, parkIntexId, bridged);
 
         // Source-side: the source intex burned the bridged amount; the supply on A is the remainder.
-        assertEq(tokenA.totalSupply(parkTokenId), minted - bridged, "A.totalSupply -= bridged");
-        assertEq(tokenB.totalSupply(parkTokenId), 0, "B not minted (series missing)");
+        assertEq(tokenA.totalSupply(parkIntexId), minted - bridged, "A.totalSupply -= bridged");
+        assertEq(tokenB.totalSupply(parkIntexId), 0, "B not minted (series missing)");
 
         // Park entry holds the in-flight amount, so the global accounting still adds up.
         (,, uint256 parkedAmount, bool exists) = adapterB.getFailedCrosschainReceive(receiveId, 0);
         assertTrue(exists, "park entry present");
         assertEq(parkedAmount, bridged, "park amount == bridged");
 
-        uint256 total = tokenA.totalSupply(parkTokenId) + tokenB.totalSupply(parkTokenId) + parkedAmount;
+        uint256 total = tokenA.totalSupply(parkIntexId) + tokenB.totalSupply(parkIntexId) + parkedAmount;
         assertEq(total, minted, "SI-09: source-burned == dest-minted + dest-parked");
 
         // Fix the destination cause and retry - parked moves into B.totalSupply with no
@@ -118,11 +118,11 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         tokenB.openSeries(OpenSeriesLib.params(parkDay, ISSUED_UNITS, 0));
         adapterB.retryIntexCrosschainReceive(receiveId, 0);
 
-        assertEq(tokenB.totalSupply(parkTokenId), bridged, "B.totalSupply == bridged after retry");
+        assertEq(tokenB.totalSupply(parkIntexId), bridged, "B.totalSupply == bridged after retry");
         (,,, bool stillExists) = adapterB.getFailedCrosschainReceive(receiveId, 0);
         assertFalse(stillExists, "park entry cleared on retry");
 
-        uint256 totalAfterRetry = tokenA.totalSupply(parkTokenId) + tokenB.totalSupply(parkTokenId);
+        uint256 totalAfterRetry = tokenA.totalSupply(parkIntexId) + tokenB.totalSupply(parkIntexId);
         assertEq(totalAfterRetry, minted, "SI-09: sum preserved after retry");
     }
 
@@ -130,18 +130,18 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         // A series that exists on A but not B: bridging A->B parks on B (crosschainMint reverts).
         uint32 parkDay = 20260601;
         bytes14 parkSeries = "20260601-USD-U";
-        uint256 parkTokenId = uint256(keccak256(abi.encodePacked(parkSeries)));
+        uint256 parkIntexId = uint256(keccak256(abi.encodePacked(parkSeries)));
         tokenA.openSeries(OpenSeriesLib.params(parkDay, ISSUED_UNITS, 0));
 
         uint256 minted = 100;
         tokenA.issueIntex(user, minted, parkSeries);
 
-        bytes32 receiveId = _send(adapterA, adapterB, A_CHAIN_ID, user, parkTokenId, minted);
+        bytes32 receiveId = _send(adapterA, adapterB, A_CHAIN_ID, user, parkIntexId, minted);
 
         (,, uint256 parkedAmount, bool exists) = adapterB.getFailedCrosschainReceive(receiveId, 0);
         assertTrue(exists, "parked on B");
         assertEq(parkedAmount, minted, "park holds the in-flight units");
-        assertEq(tokenA.totalSupply(parkTokenId), 0, "A burned the bridged units");
+        assertEq(tokenA.totalSupply(parkIntexId), 0, "A burned the bridged units");
 
         // Retry can never clear it while B lacks the series. Reclaim to the origin is the only
         // exit.
@@ -152,9 +152,9 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
 
         // Deliver the reverse SEND_MULTI on A -> owner re-minted, global supply conserved end-to-end.
         _deliver(B_CHAIN_ID, address(adapterB), address(adapterA), bridge.lastPayload());
-        assertEq(tokenA.totalSupply(parkTokenId), minted, "A restored via reclaim");
-        assertEq(tokenB.totalSupply(parkTokenId), 0, "B holds nothing");
-        assertEq(tokenA.balanceOf(user, parkTokenId), minted, "owner whole on origin");
+        assertEq(tokenA.totalSupply(parkIntexId), minted, "A restored via reclaim");
+        assertEq(tokenB.totalSupply(parkIntexId), 0, "B holds nothing");
+        assertEq(tokenA.balanceOf(user, parkIntexId), minted, "owner whole on origin");
 
         // A second reclaim reverts - the entry is gone.
         vm.expectRevert(
@@ -250,12 +250,12 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
 
         // The hop bought no time: one second past the original deadline the return hop is refused.
         vm.warp(deadlineB + 1);
-        uint256[] memory tokenIds = new uint256[](1);
-        tokenIds[0] = id;
+        uint256[] memory intexIds = new uint256[](1);
+        intexIds[0] = id;
         uint256[] memory amounts = new uint256[](1);
         amounts[0] = 60;
         BatchSendParam memory back = BatchSendParam({
-            dstChainId: A_CHAIN_ID, to: bytes32(uint256(uint160(user))), intexIds: tokenIds, units: amounts
+            dstChainId: A_CHAIN_ID, to: bytes32(uint256(uint160(user))), intexIds: intexIds, units: amounts
         });
         uint256 fee = adapterB.quoteBatchSend(back);
         vm.prank(user);
@@ -269,14 +269,14 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
 
         tokenA.issueIntex(user, minted, SERIES_ID);
         if (bridged > 0) {
-            _send(adapterA, adapterB, A_CHAIN_ID, user, TOKEN_ID, bridged);
+            _send(adapterA, adapterB, A_CHAIN_ID, user, INTEX_ID, bridged);
         }
 
-        uint256 totalAcrossChains = tokenA.totalSupply(TOKEN_ID) + tokenB.totalSupply(TOKEN_ID);
+        uint256 totalAcrossChains = tokenA.totalSupply(INTEX_ID) + tokenB.totalSupply(INTEX_ID);
         assertEq(totalAcrossChains, minted, "SI-08: sum preserved");
     }
 
-    /// @dev Bridge a single tokenId to `recipient` on the destination and deliver the packet.
+    /// @dev Bridge a single intexId to `recipient` on the destination and deliver the packet.
     ///      Returns the destination `receiveId` (matching `MockERC7786Bridge._deliver`) so a parked
     ///      inbound can be retried.
     function _send(
@@ -284,18 +284,18 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         IntexNFT1155Router to,
         uint32 srcChainId,
         address recipient,
-        uint256 tokenId,
+        uint256 intexId,
         uint256 amount
     ) internal returns (bytes32 receiveId) {
         uint32 dstChainId = srcChainId == A_CHAIN_ID ? B_CHAIN_ID : A_CHAIN_ID;
 
-        uint256[] memory tokenIds = new uint256[](1);
-        tokenIds[0] = tokenId;
+        uint256[] memory intexIds = new uint256[](1);
+        intexIds[0] = intexId;
         uint256[] memory amounts = new uint256[](1);
         amounts[0] = amount;
 
         BatchSendParam memory params = BatchSendParam({
-            dstChainId: dstChainId, to: bytes32(uint256(uint160(recipient))), intexIds: tokenIds, units: amounts
+            dstChainId: dstChainId, to: bytes32(uint256(uint160(recipient))), intexIds: intexIds, units: amounts
         });
 
         uint256 fee = from.quoteBatchSend(params);

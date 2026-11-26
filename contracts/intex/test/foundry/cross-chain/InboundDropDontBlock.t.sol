@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
-import {MarkBatchLib} from "../helpers/MarkBatchLib.sol";
+import {CallNoticeBatchLib} from "../helpers/CallNoticeBatchLib.sol";
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 
 import {IntexAuctionTargetRouter} from "@contracts/target/IntexAuctionTargetRouter.sol";
@@ -52,30 +52,30 @@ contract InboundRevertAndRedeliverTest is CrossChainTest {
     }
 
     // ---------------------------------------------------------------
-    // IntexAuctionTargetRouter - premature MARK_CALLED waits in the series' slot, then applies once the series lands
+    // IntexAuctionTargetRouter - premature INTEX_SERIES_CALL_NOTICE waits in the series' slot, then applies once the series lands
     // ---------------------------------------------------------------
 
-    /// @notice MARK_CALLED for a series the BNB intex has never seen waits in its slot rather than
+    /// @notice INTEX_SERIES_CALL_NOTICE for a series the BNB intex has never seen waits in its slot rather than
     ///         rejecting. A batch carries several series, and one missing series must not reject
     ///         the message.
-    function test_TM_PrematureMarkCalled_Parks() public {
+    function test_TM_PrematureCallNotice_Parks() public {
         bytes memory packet = BridgeMsgCodec.encodeIntexSeriesCallNotice(
-            SERIES_ID_DAY, uint32(block.timestamp), MarkBatchLib.one(SERIES_ID)
+            SERIES_ID_DAY, uint32(block.timestamp), CallNoticeBatchLib.one(SERIES_ID)
         );
         _deliverToTM(packet);
 
         assertEq(
             bnbRouter.failedIntexSeriesCallNoticeApply(SERIES_ID),
             uint32(block.timestamp),
-            "the mark waits for its series"
+            "the call notice waits for its series"
         );
     }
 
-    /// @notice Once the prerequisite (the series) lands, applying the slotted mark flips the series to
+    /// @notice Once the prerequisite (the series) lands, applying the slotted call notice flips the series to
     ///         Called. The out-of-order arrival resolves without a redelivery.
-    function test_TM_ParkedMarkCalledFlushesAfterSeriesLands() public {
+    function test_TM_ParkedCallNoticeFlushesAfterSeriesLands() public {
         bytes memory packet = BridgeMsgCodec.encodeIntexSeriesCallNotice(
-            SERIES_ID_DAY, uint32(block.timestamp), MarkBatchLib.one(SERIES_ID)
+            SERIES_ID_DAY, uint32(block.timestamp), CallNoticeBatchLib.one(SERIES_ID)
         );
 
         // Premature: no series yet -> slotted.

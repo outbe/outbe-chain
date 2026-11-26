@@ -12,7 +12,7 @@ import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {IntexGas} from "@contracts/shared/libs/IntexGas.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {OpenSeriesLib} from "../helpers/OpenSeriesLib.sol";
-import {MarkBatchLib} from "../helpers/MarkBatchLib.sol";
+import {CallNoticeBatchLib} from "../helpers/CallNoticeBatchLib.sol";
 import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
 import {MultiRecipientSendParam} from "@contracts/shared/interfaces/IIntexNFT1155Router.sol";
 import {IntexNFT1155RouterCodec} from "@contracts/shared/libs/IntexNFT1155RouterCodec.sol";
@@ -62,7 +62,7 @@ contract GasBudgetTest is CrossChainTest {
     }
 
     function test_TheQuoteCoversAFullBatchThatApplies() public {
-        bytes14[] memory batch = MarkBatchLib.sized(SERIES_PREFIX, BridgeMsgCodec.MAX_SERIES_PER_CALL_NOTICE);
+        bytes14[] memory batch = CallNoticeBatchLib.sized(SERIES_PREFIX, BridgeMsgCodec.MAX_SERIES_PER_CALL_NOTICE);
         _seed(batch);
 
         uint256 spent = _measure(batch);
@@ -79,7 +79,7 @@ contract GasBudgetTest is CrossChainTest {
         _wireOutbeIca(mocked, outbeIca);
         mocked.setDependencies(makeAddr("auction"), address(poisoned), makeAddr("escrow"));
 
-        bytes14[] memory batch = MarkBatchLib.sized(SERIES_PREFIX, BridgeMsgCodec.MAX_SERIES_PER_CALL_NOTICE);
+        bytes14[] memory batch = CallNoticeBatchLib.sized(SERIES_PREFIX, BridgeMsgCodec.MAX_SERIES_PER_CALL_NOTICE);
         batch[0] = POISON;
         bytes memory packet = BridgeMsgCodec.encodeIntexSeriesCallNotice(EMISSION_DAY, uint32(block.timestamp), batch);
         bytes memory call = abi.encodeCall(IntexAuctionTargetRouter.receiveFromOutbe, (packet));
@@ -94,8 +94,8 @@ contract GasBudgetTest is CrossChainTest {
     }
 
     function test_TheQuoteCoversAFullBatchThatParks() public {
-        // No series exist, so every mark reverts and parks - the heavier of the two paths.
-        bytes14[] memory batch = MarkBatchLib.sized(SERIES_PREFIX, BridgeMsgCodec.MAX_SERIES_PER_CALL_NOTICE);
+        // No series exist, so every call notice reverts and parks - the heavier of the two paths.
+        bytes14[] memory batch = CallNoticeBatchLib.sized(SERIES_PREFIX, BridgeMsgCodec.MAX_SERIES_PER_CALL_NOTICE);
 
         uint256 spent = _measure(batch);
 
@@ -112,7 +112,7 @@ contract GasBudgetTest is CrossChainTest {
 
     /// @dev Existing series whose apply the token refuses: each failure event carries the revert data.
     function test_TheQuoteCoversAFullBatchWhoseApplyIsRefused() public {
-        bytes14[] memory batch = MarkBatchLib.sized(SERIES_PREFIX, BridgeMsgCodec.MAX_SERIES_PER_CALL_NOTICE);
+        bytes14[] memory batch = CallNoticeBatchLib.sized(SERIES_PREFIX, BridgeMsgCodec.MAX_SERIES_PER_CALL_NOTICE);
         _seed(batch);
         intex.revokeRole(intex.ROUTER_ROLE(), address(router));
         bytes memory packet = BridgeMsgCodec.encodeIntexSeriesCallNotice(EMISSION_DAY, uint32(block.timestamp), batch);
@@ -129,15 +129,15 @@ contract GasBudgetTest is CrossChainTest {
         }
     }
 
-    function test_TheQuoteCoversASingleSeriesMark() public {
-        bytes14[] memory one = MarkBatchLib.one(SERIES_PREFIX);
+    function test_TheQuoteCoversASingleSeriesCallNotice() public {
+        bytes14[] memory one = CallNoticeBatchLib.one(SERIES_PREFIX);
         _seed(one);
         emit log_named_uint("apply_batch1", _measure(one));
 
-        bytes14[] memory absent = MarkBatchLib.sized("20260501-EUR-U", 1);
+        bytes14[] memory absent = CallNoticeBatchLib.sized("20260501-EUR-U", 1);
         emit log_named_uint("park_batch1", _measure(absent));
 
-        assertLt(_measure(one), IntexGas.intexSeriesCallNotice(1), "a single mark must fit the quote");
+        assertLt(_measure(one), IntexGas.intexSeriesCallNotice(1), "a single call notice must fit the quote");
     }
 
     /// @dev The costliest chunk the batcher can emit: every series slot filled.
@@ -184,13 +184,13 @@ contract GasBudgetTest is CrossChainTest {
         intex.grantRole(intex.BRIDGE_ROLE(), address(src));
         dstToken.grantRole(dstToken.BRIDGE_ROLE(), address(dst));
 
-        bytes14[] memory one = MarkBatchLib.one(SERIES_PREFIX);
+        bytes14[] memory one = CallNoticeBatchLib.one(SERIES_PREFIX);
         _seed(one);
         dstToken.openSeries(OpenSeriesLib.params(EMISSION_DAY, 10_000, 0));
 
         // `multiSend` burns the whole batch from its caller and fans it out to `recipients`.
         address sender = address(0x3000);
-        uint256 tokenId = intex.issuedIntexId(SERIES_PREFIX);
+        uint256 intexId = intex.issuedIntexId(SERIES_PREFIX);
         intex.issueIntex(sender, items, SERIES_PREFIX);
 
         bytes32[] memory to = new bytes32[](items);
@@ -198,7 +198,7 @@ contract GasBudgetTest is CrossChainTest {
         uint256[] memory amounts = new uint256[](items);
         for (uint256 i = 0; i < items; ++i) {
             to[i] = bytes32(uint256(uint160(address(uint160(0x4000 + i)))));
-            ids[i] = tokenId;
+            ids[i] = intexId;
             amounts[i] = 1;
         }
 
@@ -230,11 +230,11 @@ contract GasBudgetTest is CrossChainTest {
         intex.grantRole(intex.BRIDGE_ROLE(), address(src));
         dstToken.grantRole(dstToken.BRIDGE_ROLE(), address(dst));
 
-        _seed(MarkBatchLib.one(SERIES_PREFIX));
+        _seed(CallNoticeBatchLib.one(SERIES_PREFIX));
         dstToken.openSeries(OpenSeriesLib.params(EMISSION_DAY, 10_000, 0));
 
         address sender = address(0x3000);
-        uint256 tokenId = intex.issuedIntexId(SERIES_PREFIX);
+        uint256 intexId = intex.issuedIntexId(SERIES_PREFIX);
         intex.issueIntex(sender, items, SERIES_PREFIX);
 
         // One receiver that rejects every mint, so every item takes the recording path.
@@ -244,7 +244,7 @@ contract GasBudgetTest is CrossChainTest {
         uint256[] memory amounts = new uint256[](items);
         for (uint256 i = 0; i < items; ++i) {
             to[i] = bytes32(uint256(uint160(address(rejecting))));
-            ids[i] = tokenId;
+            ids[i] = intexId;
             amounts[i] = 1;
         }
 
@@ -271,7 +271,7 @@ contract GasBudgetTest is CrossChainTest {
         mocked.setDependencies(makeAddr("auction"), address(poisoned), makeAddr("escrow"));
 
         bytes memory packet = BridgeMsgCodec.encodeIntexSeriesCallNotice(
-            EMISSION_DAY, uint32(block.timestamp), MarkBatchLib.two(POISON, SERIES_PREFIX)
+            EMISSION_DAY, uint32(block.timestamp), CallNoticeBatchLib.two(POISON, SERIES_PREFIX)
         );
         bytes memory call = abi.encodeCall(IntexAuctionTargetRouter.receiveFromOutbe, (packet));
         vm.prank(outbeIca);
@@ -295,7 +295,7 @@ contract GasBurningIntex {
         poison = _poison;
     }
 
-    /// @dev The inbound path asks before it marks. Every series here is live.
+    /// @dev The inbound path asks before it calls a series. Every series here is live.
     function seriesExists(bytes14) external pure returns (bool) {
         return true;
     }

@@ -23,7 +23,7 @@ contract BridgeRecipientValidationTest is CrossChainTest {
     address private user = address(0x1);
     uint32 private constant SERIES_ID_DAY = 20260401;
     bytes14 private constant SERIES_ID = "20260401-USD-U";
-    uint256 private constant TOKEN_ID = uint256(keccak256(abi.encodePacked(SERIES_ID)));
+    uint256 private constant INTEX_ID = uint256(keccak256(abi.encodePacked(SERIES_ID)));
     uint256 private constant AMOUNT = 100;
 
     /// @dev A bytes32 with a bit set above the low 160 - not a canonical left-padded address.
@@ -49,7 +49,7 @@ contract BridgeRecipientValidationTest is CrossChainTest {
 
     function _ids() private pure returns (uint256[] memory ids) {
         ids = new uint256[](1);
-        ids[0] = TOKEN_ID;
+        ids[0] = INTEX_ID;
     }
 
     function _amounts() private pure returns (uint256[] memory amts) {
@@ -60,8 +60,8 @@ contract BridgeRecipientValidationTest is CrossChainTest {
     function test_send_rejectsMalformedRecipientBeforeBurn() public {
         _expectMalformed();
         vm.prank(user);
-        adapter.send{value: FEE}(SendParam({dstChainId: B_CHAIN_ID, to: DIRTY, intexId: TOKEN_ID, units: AMOUNT}));
-        assertEq(token.balanceOf(user, TOKEN_ID), AMOUNT, "no burn on malformed recipient");
+        adapter.send{value: FEE}(SendParam({dstChainId: B_CHAIN_ID, to: DIRTY, intexId: INTEX_ID, units: AMOUNT}));
+        assertEq(token.balanceOf(user, INTEX_ID), AMOUNT, "no burn on malformed recipient");
     }
 
     function test_batchSend_rejectsMalformedRecipientBeforeBurn() public {
@@ -70,7 +70,7 @@ contract BridgeRecipientValidationTest is CrossChainTest {
         adapter.batchSend{value: FEE}(
             BatchSendParam({dstChainId: B_CHAIN_ID, to: DIRTY, intexIds: _ids(), units: _amounts()})
         );
-        assertEq(token.balanceOf(user, TOKEN_ID), AMOUNT, "no burn on malformed recipient");
+        assertEq(token.balanceOf(user, INTEX_ID), AMOUNT, "no burn on malformed recipient");
     }
 
     function test_multiSend_rejectsMalformedRecipientBeforeBurn() public {
@@ -83,16 +83,16 @@ contract BridgeRecipientValidationTest is CrossChainTest {
                 dstChainId: B_CHAIN_ID, recipients: recipients, intexIds: _ids(), units: _amounts()
             })
         );
-        assertEq(token.balanceOf(user, TOKEN_ID), AMOUNT, "no burn on malformed recipient");
+        assertEq(token.balanceOf(user, INTEX_ID), AMOUNT, "no burn on malformed recipient");
     }
 
     /// @notice A canonical recipient still passes the guard and burns on the source.
     function test_send_canonicalRecipientStillSends() public {
         SendParam memory p =
-            SendParam({dstChainId: B_CHAIN_ID, to: bytes32(uint256(uint160(user))), intexId: TOKEN_ID, units: AMOUNT});
+            SendParam({dstChainId: B_CHAIN_ID, to: bytes32(uint256(uint160(user))), intexId: INTEX_ID, units: AMOUNT});
         uint256 fee = adapter.quoteSend(p);
         vm.prank(user);
         adapter.send{value: fee}(p);
-        assertEq(token.balanceOf(user, TOKEN_ID), 0, "burned on valid send");
+        assertEq(token.balanceOf(user, INTEX_ID), 0, "burned on valid send");
     }
 }

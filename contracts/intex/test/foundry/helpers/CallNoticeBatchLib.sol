@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
-/// @dev Builds the series batches MARK_CALLED carries.
-library MarkBatchLib {
+/// @dev Builds the series batches INTEX_SERIES_CALL_NOTICE carries.
+library CallNoticeBatchLib {
     /// @notice A batch of one series.
     function one(bytes14 seriesId) internal pure returns (bytes14[] memory batch) {
         batch = new bytes14[](1);

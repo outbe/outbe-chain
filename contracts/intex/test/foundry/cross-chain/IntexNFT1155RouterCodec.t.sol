@@ -69,15 +69,15 @@ contract IntexNFT1155RouterCodecTest is Test {
     }
 
     function test_BatchRoundTrip_PreservesFields() public view {
-        uint256[] memory tokenIds = new uint256[](2);
-        tokenIds[0] = 20260601;
-        tokenIds[1] = 20260602;
+        uint256[] memory intexIds = new uint256[](2);
+        intexIds[0] = 20260601;
+        intexIds[1] = 20260602;
         uint256[] memory amounts = new uint256[](2);
         amounts[0] = 5;
         amounts[1] = 7;
 
         IntexNFT1155RouterCodec.BatchPayload memory p =
-            IntexNFT1155RouterCodec.BatchPayload({to: _bytes32(address(0xA11CE)), intexIds: tokenIds, units: amounts});
+            IntexNFT1155RouterCodec.BatchPayload({to: _bytes32(address(0xA11CE)), intexIds: intexIds, units: amounts});
 
         bytes memory encoded = IntexNFT1155RouterCodec.encodeBatch(p);
 
@@ -87,9 +87,9 @@ contract IntexNFT1155RouterCodecTest is Test {
 
         IntexNFT1155RouterCodec.BatchPayload memory decoded = harness.decodeBatch(encoded);
         assertEq(decoded.to, p.to, "to round-trips");
-        assertEq(decoded.intexIds.length, 2, "tokenIds length");
-        assertEq(decoded.intexIds[0], tokenIds[0], "tokenId 0");
-        assertEq(decoded.intexIds[1], tokenIds[1], "tokenId 1");
+        assertEq(decoded.intexIds.length, 2, "intexIds length");
+        assertEq(decoded.intexIds[0], intexIds[0], "intexId 0");
+        assertEq(decoded.intexIds[1], intexIds[1], "intexId 1");
         assertEq(decoded.units[0], amounts[0], "amount 0");
         assertEq(decoded.units[1], amounts[1], "amount 1");
     }
@@ -98,15 +98,15 @@ contract IntexNFT1155RouterCodecTest is Test {
         bytes32[] memory recipients = new bytes32[](2);
         recipients[0] = _bytes32(address(0xA11CE));
         recipients[1] = _bytes32(address(0xCAFE));
-        uint256[] memory tokenIds = new uint256[](2);
-        tokenIds[0] = 20260601;
-        tokenIds[1] = 20260602;
+        uint256[] memory intexIds = new uint256[](2);
+        intexIds[0] = 20260601;
+        intexIds[1] = 20260602;
         uint256[] memory amounts = new uint256[](2);
         amounts[0] = 3;
         amounts[1] = 4;
 
         IntexNFT1155RouterCodec.MultiPayload memory p =
-            IntexNFT1155RouterCodec.MultiPayload({recipients: recipients, intexIds: tokenIds, units: amounts});
+            IntexNFT1155RouterCodec.MultiPayload({recipients: recipients, intexIds: intexIds, units: amounts});
 
         bytes memory encoded = IntexNFT1155RouterCodec.encodeMulti(p);
         assertEq(uint8(encoded[0]), IntexNFT1155RouterCodec.BODY_VERSION_V1, "version byte V1");
@@ -116,7 +116,7 @@ contract IntexNFT1155RouterCodecTest is Test {
         assertEq(decoded.recipients.length, 2, "recipients length");
         assertEq(decoded.recipients[0], recipients[0], "recipient 0");
         assertEq(decoded.recipients[1], recipients[1], "recipient 1");
-        assertEq(decoded.intexIds[0], tokenIds[0], "tokenId 0");
+        assertEq(decoded.intexIds[0], intexIds[0], "intexId 0");
         assertEq(decoded.units[1], amounts[1], "amount 1");
     }
 
@@ -229,7 +229,7 @@ contract IntexNFT1155RouterCodecTest is Test {
 
     // --- decodeMulti array-length mismatches ---
 
-    function test_DecodeMulti_MismatchTokenIds_RevertsArrayLengthMismatch() public {
+    function test_DecodeMulti_MismatchIntexIds_RevertsArrayLengthMismatch() public {
         IntexNFT1155RouterCodec.MultiPayload memory p = _emptyMulti();
         p.recipients = new bytes32[](2);
         p.intexIds = new uint256[](1);

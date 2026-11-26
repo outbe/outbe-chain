@@ -65,9 +65,9 @@ contract IntexNFT1155UupsTest is Test {
 
         bytes32 implSlot = vm.load(address(nft), ERC1967Utils.IMPLEMENTATION_SLOT);
         assertEq(address(uint160(uint256(implSlot))), address(newImpl));
-        uint256 tokenId = nft.issuedIntexId(OpenSeriesLib.seriesId(7));
-        assertEq(nft.balanceOf(stranger, tokenId), 3);
-        assertEq(nft.totalSupply(tokenId), 3);
+        uint256 intexId = nft.issuedIntexId(OpenSeriesLib.seriesId(7));
+        assertEq(nft.balanceOf(stranger, intexId), 3);
+        assertEq(nft.totalSupply(intexId), 3);
         assertTrue(nft.hasRole(nft.ROUTER_ROLE(), bridger));
     }
 }

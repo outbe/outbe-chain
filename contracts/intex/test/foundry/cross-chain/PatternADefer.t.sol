@@ -86,11 +86,11 @@ contract StubAuctionWithBids {
 }
 
 /// @title PatternADeferTest
-/// @notice Behavioural coverage of Pattern A on `IntexAuctionTargetRouter`. The inbound clearing/mark-called
+/// @notice Behavioural coverage of Pattern A on `IntexAuctionTargetRouter`. The inbound clearing/call notice
 ///         handlers fire an outbound relay (bids batch / owners bridge). The relay parks on
 ///         failure, and anyone can retry it via `flushPending*`. The tests force failure by
 ///         starving the relay float. A positive bridge fee with a zero native balance makes
-///         `_send` revert `NotEnoughNative`. A top-up of the float lets the flush land.
+///         `_sendTo` revert `NotEnoughNative`. A top-up of the float lets the flush land.
 contract PatternADeferTest is CrossChainTest {
     uint32 internal constant BNB_CHAIN_ID = 1;
     uint32 internal constant OUTBE_CHAIN_ID = 2;
@@ -111,7 +111,7 @@ contract PatternADeferTest is CrossChainTest {
     address internal outbeIca = makeAddr("outbeIca");
     uint32 internal constant SERIES_ID_DAY = 20260301;
     bytes14 internal constant SERIES_ID = "20260301-USD-U";
-    uint256 internal constant TOKEN_ID = uint256(keccak256(abi.encodePacked(SERIES_ID)));
+    uint256 internal constant INTEX_ID = uint256(keccak256(abi.encodePacked(SERIES_ID)));
 
     function setUp() public {
         _setUpBridge();
@@ -150,7 +150,7 @@ contract PatternADeferTest is CrossChainTest {
     // ---------------------------------------------------------------
 
     function test_TM_BidsRelayStopsWhenTheFloatCannotPay() public {
-        // TM has zero native float but the bridge charges a fee, so `_send` reverts when relaying bids.
+        // TM has zero native float but the bridge charges a fee, so `_sendTo` reverts when relaying bids.
         assertEq(address(bnbRouter).balance, 0);
 
         _deliverBridge(BridgeMsgCodec.encodeIntexAuctionClearingStart(SERIES_ID_DAY));

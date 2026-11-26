@@ -34,13 +34,13 @@ contract IntexNFT1155Erc4906Test is Test {
     }
 
     /// @dev Drains recorded logs; counts MetadataUpdate emits and checks the de-indexed shape.
-    function _metadataUpdates() internal returns (uint256 count, uint256 lastTokenId) {
+    function _metadataUpdates() internal returns (uint256 count, uint256 lastIntexId) {
         Vm.Log[] memory logs = vm.getRecordedLogs();
         for (uint256 i = 0; i < logs.length; i++) {
             if (logs[i].emitter != address(nft) || logs[i].topics[0] != METADATA_UPDATE_TOPIC) continue;
             count++;
-            assertEq(logs[i].topics.length, 1, "tokenId must be non-indexed");
-            lastTokenId = abi.decode(logs[i].data, (uint256));
+            assertEq(logs[i].topics.length, 1, "intexId must be non-indexed");
+            lastIntexId = abi.decode(logs[i].data, (uint256));
         }
     }
 
@@ -56,9 +56,9 @@ contract IntexNFT1155Erc4906Test is Test {
         vm.startPrank(bridger);
 
         nft.openSeries(OpenSeriesLib.params(SERIES_ID_DAY, CAP, CALL_PERIOD));
-        (uint256 count, uint256 tokenId) = _metadataUpdates();
+        (uint256 count, uint256 intexId) = _metadataUpdates();
         assertEq(count, 1, "openSeries emits once");
-        assertEq(tokenId, intexId);
+        assertEq(intexId, intexId);
 
         nft.issueIntex(user, 10, SERIES_ID);
         (count,) = _metadataUpdates();
@@ -69,9 +69,9 @@ contract IntexNFT1155Erc4906Test is Test {
         assertEq(count, 0, "burnIntex is supply-only");
 
         nft.callSeries(SERIES_ID, uint32(block.timestamp));
-        (count, tokenId) = _metadataUpdates();
+        (count, intexId) = _metadataUpdates();
         assertEq(count, 1, "callSeries changes the document");
-        assertEq(tokenId, intexId);
+        assertEq(intexId, intexId);
 
         nft.crosschainBurn(user, user, intexId, 1);
         nft.crosschainMint(user3, intexId, 1);

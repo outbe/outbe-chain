@@ -13,13 +13,13 @@ import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 contract NFT1155SupplyHandler is Test {
     IntexNFT1155 internal intex;
     bytes14 internal seriesId;
-    uint256 internal tokenId;
+    uint256 internal intexId;
     address[] internal bidders;
 
     constructor(IntexNFT1155 _intex, bytes14 _seriesId, address[] memory _bidders) {
         intex = _intex;
         seriesId = _seriesId;
-        tokenId = _intex.issuedIntexId(_seriesId);
+        intexId = _intex.issuedIntexId(_seriesId);
         bidders = _bidders;
     }
 
@@ -31,10 +31,10 @@ contract NFT1155SupplyHandler is Test {
 
     function burn(uint256 bidderSeed, uint256 qtySeed) external {
         address from = bidders[bound(bidderSeed, 0, bidders.length - 1)];
-        uint256 bal = intex.balanceOf(from, tokenId);
+        uint256 bal = intex.balanceOf(from, intexId);
         if (bal == 0) return;
         uint256 qty = bound(qtySeed, 1, bal);
-        try intex.crosschainBurn(from, from, tokenId, qty) {} catch {}
+        try intex.crosschainBurn(from, from, intexId, qty) {} catch {}
     }
 }
 

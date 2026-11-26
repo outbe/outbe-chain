@@ -5,7 +5,7 @@ import {Vm} from "forge-std/Vm.sol";
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
-import {MarkBatchLib} from "../helpers/MarkBatchLib.sol";
+import {CallNoticeBatchLib} from "../helpers/CallNoticeBatchLib.sol";
 import {OpenSeriesLib} from "../helpers/OpenSeriesLib.sol";
 import {IssuanceBatchLib} from "../helpers/IssuanceBatch.sol";
 
@@ -16,10 +16,10 @@ import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {InboundReason} from "@contracts/shared/libs/InboundReason.sol";
 
-/// A Called mark for a series that this chain has not seen waits in one slot per series. The router
-/// applies it when ISSUANCE creates the series. The router acknowledges a mark that the series
+/// A call notice for a series that this chain has not seen waits in one slot per series. The router
+/// applies it when ISSUANCE creates the series. The router acknowledges a call notice that the series
 /// already carries, without effect.
-contract IntexAuctionTargetRouterMarkSlotTest is CrossChainTest {
+contract IntexAuctionTargetRouterCallNoticeSlotTest is CrossChainTest {
     uint32 internal constant OUTBE_CHAIN_ID = 2;
     uint32 internal constant DAY = 20_250_101;
 
@@ -31,7 +31,7 @@ contract IntexAuctionTargetRouterMarkSlotTest is CrossChainTest {
     function setUp() public {
         _setUpBridge();
         intex = DeployProxy.intexNFT1155(address(this), address(this));
-        // The origin-as-target shape: a mark is a pure state flip here as anywhere.
+        // The origin-as-target shape: a call notice is a pure state flip here as anywhere.
         router = DeployProxy.targetRouter(address(bridge), address(this), uint32(block.chainid));
 
         _wireOutbeIca(router, outbeIca);
@@ -48,7 +48,7 @@ contract IntexAuctionTargetRouterMarkSlotTest is CrossChainTest {
 
     function _called() internal view returns (bytes memory) {
         return BridgeMsgCodec.encodeIntexSeriesCallNotice(
-            DAY, uint32(block.timestamp), MarkBatchLib.one(OpenSeriesLib.seriesId(DAY))
+            DAY, uint32(block.timestamp), CallNoticeBatchLib.one(OpenSeriesLib.seriesId(DAY))
         );
     }
 
@@ -82,7 +82,7 @@ contract IntexAuctionTargetRouterMarkSlotTest is CrossChainTest {
 
     // --- unknown series: slot, then apply on creation ---
 
-    function test_AMarkForAnUnknownSeriesWaitsInItsSlot() public {
+    function test_ACallNoticeForAnUnknownSeriesWaitsInItsSlot() public {
         vm.expectEmit(true, true, true, true, address(router));
         emit IIntexAuctionTargetRouter.IntexSeriesCallNoticeApplyFailed(series, uint32(block.chainid), "");
         _deliver(_called());
@@ -105,7 +105,7 @@ contract IntexAuctionTargetRouterMarkSlotTest is CrossChainTest {
         assertEq(router.failedIntexSeriesCallNoticeApply(series), uint32(block.timestamp), "the notice waits");
     }
 
-    /// @dev A mark moves no balances, so a waiting Called lands with the issuance that creates the series
+    /// @dev A call notice moves no balances, so a waiting Called lands with the issuance that creates the series
     ///      rather than holding for the valve.
     function test_IssuanceCreatingTheSeriesAppliesAWaitingCalled() public {
         _deliver(_called());
@@ -157,7 +157,9 @@ contract IntexAuctionTargetRouterMarkSlotTest is CrossChainTest {
         bytes14 other = OpenSeriesLib.seriesId(DAY + 1);
         intex.openSeries(OpenSeriesLib.params(DAY + 1, 10, 0));
         vm.recordLogs();
-        _deliver(BridgeMsgCodec.encodeIntexSeriesCallNotice(DAY + 1, uint32(block.timestamp), MarkBatchLib.one(other)));
+        _deliver(
+            BridgeMsgCodec.encodeIntexSeriesCallNotice(DAY + 1, uint32(block.timestamp), CallNoticeBatchLib.one(other))
+        );
         assertEq(_routerTopics().length, 0, "a notice the token takes gives no router event");
         assertEq(uint8(intex.getIntexSeries(other).state), uint8(IIntexNFT1155.IntexState.Called));
     }
@@ -173,10 +175,10 @@ contract IntexAuctionTargetRouterMarkSlotTest is CrossChainTest {
         assertEq(uint8(_state()), uint8(IIntexNFT1155.IntexState.Forfeited), "created past its deadline");
     }
 
-    function test_ARedeliveredMarkThatSettlesTheSlotClearsIt() public {
+    function test_ARedeliveredCallNoticeThatSettlesTheSlotClearsIt() public {
         _deliver(_called());
         _deliver(_issuance()); // series created, and the waiting Called lands with it
-        // The bridge redelivers the mark: it applies directly now, so nothing may keep waiting.
+        // The bridge redelivers the call notice: it applies directly now, so nothing may keep waiting.
         _deliver(_called());
         assertEq(uint8(_state()), uint8(IIntexNFT1155.IntexState.Called), "applied on redelivery");
         assertEq(router.failedIntexSeriesCallNoticeApply(series), 0, "the settled slot is cleared");
@@ -212,7 +214,7 @@ contract IntexAuctionTargetRouterMarkSlotTest is CrossChainTest {
 
     function test_AZeroCallTimeForAnUnknownSeriesIsInvalidAndNotSlotted() public {
         _expectZeroCallTimeIgnored();
-        _deliver(BridgeMsgCodec.encodeIntexSeriesCallNotice(DAY, 0, MarkBatchLib.one(series)));
+        _deliver(BridgeMsgCodec.encodeIntexSeriesCallNotice(DAY, 0, CallNoticeBatchLib.one(series)));
         assertEq(router.failedIntexSeriesCallNoticeApply(series), 0, "nothing waits");
 
         vm.expectRevert(
@@ -224,7 +226,7 @@ contract IntexAuctionTargetRouterMarkSlotTest is CrossChainTest {
     function test_AZeroCallTimeForAnExistingSeriesIsInvalidAndLeavesItIssued() public {
         intex.openSeries(OpenSeriesLib.params(DAY, 10, 0));
         _expectZeroCallTimeIgnored();
-        _deliver(BridgeMsgCodec.encodeIntexSeriesCallNotice(DAY, 0, MarkBatchLib.one(series)));
+        _deliver(BridgeMsgCodec.encodeIntexSeriesCallNotice(DAY, 0, CallNoticeBatchLib.one(series)));
         assertEq(uint8(_state()), uint8(IIntexNFT1155.IntexState.Issued), "the series stays Issued");
         assertEq(router.failedIntexSeriesCallNoticeApply(series), 0, "nothing waits");
     }

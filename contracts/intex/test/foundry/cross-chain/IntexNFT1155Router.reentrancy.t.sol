@@ -85,7 +85,7 @@ contract IntexNFT1155RouterReentrancyTest is CrossChainTest {
     address private user = address(0x1);
     uint32 private constant SERIES_ID_DAY = 20260401;
     bytes14 private constant SERIES_ID = "20260401-USD-U";
-    uint256 private constant TOKEN_ID = uint256(keccak256(abi.encodePacked(SERIES_ID)));
+    uint256 private constant INTEX_ID = uint256(keccak256(abi.encodePacked(SERIES_ID)));
     uint256 private constant AMOUNT = 100;
     uint32 private constant ISSUED_UNITS = 10_000;
 
@@ -116,7 +116,7 @@ contract IntexNFT1155RouterReentrancyTest is CrossChainTest {
         ReentrantBatchProbe probe = new ReentrantBatchProbe(address(adapterB));
 
         uint256[] memory ids = new uint256[](1);
-        ids[0] = TOKEN_ID;
+        ids[0] = INTEX_ID;
         uint256[] memory amts = new uint256[](1);
         amts[0] = AMOUNT;
 

@@ -44,8 +44,8 @@ contract IntexNFT1155MetadataTest is Test {
         intexId = token.issuedIntexId(SERIES_ID);
     }
 
-    function _json(uint256 tokenId) internal view returns (bytes memory) {
-        return MetadataTestLib.decodeJsonDataUri(token.uri(tokenId));
+    function _json(uint256 intexId) internal view returns (bytes memory) {
+        return MetadataTestLib.decodeJsonDataUri(token.uri(intexId));
     }
 
     function _assertContains(bytes memory json, string memory needle) internal pure {

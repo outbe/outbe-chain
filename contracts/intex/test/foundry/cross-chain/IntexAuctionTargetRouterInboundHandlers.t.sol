@@ -3,7 +3,7 @@ pragma solidity 0.8.30;
 
 import {AuctionResultLib} from "../helpers/AuctionResultLib.sol";
 
-import {MarkBatchLib} from "../helpers/MarkBatchLib.sol";
+import {CallNoticeBatchLib} from "../helpers/CallNoticeBatchLib.sol";
 import {ReferenceCurrencyPriceLib} from "../helpers/ReferenceCurrencyPriceLib.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
@@ -127,8 +127,8 @@ contract IntexAuctionTargetRouterInboundHandlersTest is CrossChainTest {
         assertEq(_countLogs(IIntexAuctionTargetRouter.IntexAuctionBidsTotalsSent.selector), 0, "no re-relay");
     }
 
-    // --- _handleMarkCalled: the mark is a pure state flip and never touches balances ---
-    function test_handleMarkCalled_leavesBalancesUntouched() public {
+    // --- _handleCallNotice: the call notice is a pure state flip and never touches balances ---
+    function test_handleCallNotice_leavesBalancesUntouched() public {
         uint32 local = uint32(block.chainid);
         IntexAuctionTargetRouter localRouter = DeployProxy.targetRouter(address(bridge), admin, local);
         address localIca = makeAddr("localIca");
@@ -140,20 +140,20 @@ contract IntexAuctionTargetRouterInboundHandlersTest is CrossChainTest {
         intex.grantRole(intex.AUCTION_ROLE(), admin);
         intex.issueIntex(bidder, 5, SERIES_ID);
 
-        uint256 tokenId = intex.issuedIntexId(SERIES_ID);
-        assertEq(intex.balanceOf(bidder, tokenId), 5);
+        uint256 intexId = intex.issuedIntexId(SERIES_ID);
+        assertEq(intex.balanceOf(bidder, intexId), 5);
 
         _deliver(
             local,
             localIca,
             address(localRouter),
             BridgeMsgCodec.encodeIntexSeriesCallNotice(
-                EMISSION_DAY, uint32(block.timestamp), MarkBatchLib.one(SERIES_ID)
+                EMISSION_DAY, uint32(block.timestamp), CallNoticeBatchLib.one(SERIES_ID)
             )
         );
 
         assertEq(uint8(intex.getIntexSeries(SERIES_ID).state), uint8(IIntexNFT1155.IntexState.Called), "series Called");
-        assertEq(intex.balanceOf(bidder, tokenId), 5, "balances untouched by the mark");
+        assertEq(intex.balanceOf(bidder, intexId), 5, "balances untouched by the mark");
     }
 
     function _countLogs(bytes32 sig) internal returns (uint256 n) {

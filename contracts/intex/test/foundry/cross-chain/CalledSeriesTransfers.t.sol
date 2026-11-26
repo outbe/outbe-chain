@@ -22,7 +22,7 @@ contract CalledSeriesTransfersTest is CrossChainTest {
     address internal admin = address(this);
     address internal owner = address(0xCAFE);
     address internal stranger = address(0xBEEF);
-    uint256 internal tokenId;
+    uint256 internal intexId;
 
     function setUp() public {
         _setUpBridge();
@@ -34,26 +34,26 @@ contract CalledSeriesTransfersTest is CrossChainTest {
 
         intex.openSeries(OpenSeriesLib.params(EMISSION_DAY, 10_000, 1 days));
         intex.issueIntex(owner, 10, SERIES_ID);
-        tokenId = intex.issuedIntexId(SERIES_ID);
+        intexId = intex.issuedIntexId(SERIES_ID);
         intex.callSeries(SERIES_ID, uint32(block.timestamp));
     }
 
     function _param(address to, uint256 amount) internal view returns (SendParam memory) {
-        return SendParam({dstChainId: DST_CHAIN_ID, to: bytes32(uint256(uint160(to))), intexId: tokenId, units: amount});
+        return SendParam({dstChainId: DST_CHAIN_ID, to: bytes32(uint256(uint160(to))), intexId: intexId, units: amount});
     }
 
     function test_ABridgeHopToAnotherAddressPasses() public {
         vm.prank(owner);
         nftRouter.send(_param(stranger, 4));
 
-        assertEq(intex.balanceOf(owner, tokenId), 6, "burned on the source, bound for the new owner");
+        assertEq(intex.balanceOf(owner, intexId), 6, "burned on the source, bound for the new owner");
     }
 
     function test_AMultiSendFansOutToOthers() public {
         bytes32[] memory to = new bytes32[](1);
         to[0] = bytes32(uint256(uint160(stranger)));
         uint256[] memory ids = new uint256[](1);
-        ids[0] = tokenId;
+        ids[0] = intexId;
         uint256[] memory amounts = new uint256[](1);
         amounts[0] = 1;
 
@@ -61,23 +61,23 @@ contract CalledSeriesTransfersTest is CrossChainTest {
         nftRouter.multiSend(
             MultiRecipientSendParam({dstChainId: DST_CHAIN_ID, recipients: to, intexIds: ids, units: amounts})
         );
-        assertEq(intex.balanceOf(owner, tokenId), 9);
+        assertEq(intex.balanceOf(owner, intexId), 9);
     }
 
     function test_APlainTransferPassesUntilTheDeadline() public {
         vm.warp(block.timestamp + 1 days);
         vm.prank(owner);
-        intex.safeTransferFrom(owner, stranger, tokenId, 1, "");
+        intex.safeTransferFrom(owner, stranger, intexId, 1, "");
 
-        assertEq(intex.balanceOf(stranger, tokenId), 1);
+        assertEq(intex.balanceOf(stranger, intexId), 1);
     }
 
     function test_APlainTransferPastTheDeadlineIsRefused() public {
         uint32 deadline = uint32(block.timestamp + 1 days);
         vm.warp(uint256(deadline) + 1);
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.TransferAfterDeadline.selector, tokenId, deadline));
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.TransferAfterDeadline.selector, intexId, deadline));
         vm.prank(owner);
-        intex.safeTransferFrom(owner, stranger, tokenId, 1, "");
+        intex.safeTransferFrom(owner, stranger, intexId, 1, "");
     }
 
     function test_BeforeTheCallTheBridgeStillCarriesToAnyone() public {
@@ -85,14 +85,14 @@ contract CalledSeriesTransfersTest is CrossChainTest {
         bytes14 open = "20260502-USD-U";
         intex.issueIntex(owner, 5, open);
 
-        uint256 openTokenId = intex.issuedIntexId(open);
+        uint256 openIntexId = intex.issuedIntexId(open);
         vm.prank(owner);
         nftRouter.send(
             SendParam({
-                dstChainId: DST_CHAIN_ID, to: bytes32(uint256(uint160(stranger))), intexId: openTokenId, units: 2
+                dstChainId: DST_CHAIN_ID, to: bytes32(uint256(uint160(stranger))), intexId: openIntexId, units: 2
             })
         );
 
-        assertEq(intex.balanceOf(owner, openTokenId), 3, "an uncalled series stays freely bridgeable");
+        assertEq(intex.balanceOf(owner, openIntexId), 3, "an uncalled series stays freely bridgeable");
     }
 }

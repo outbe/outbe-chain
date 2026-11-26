@@ -66,15 +66,15 @@ contract InboundFailureIsolationTest is CrossChainTest {
 
     /// @dev SEND_BATCH (V2 abi.encode): 2 items. Item 0 targets SERIES_GOOD, item 1 SERIES_BAD.
     function _batchPacket(address recipient) internal pure returns (bytes memory) {
-        uint256[] memory tokenIds = new uint256[](2);
-        tokenIds[0] = TOKEN_GOOD;
-        tokenIds[1] = TOKEN_BAD;
+        uint256[] memory intexIds = new uint256[](2);
+        intexIds[0] = TOKEN_GOOD;
+        intexIds[1] = TOKEN_BAD;
         uint256[] memory amounts = new uint256[](2);
         amounts[0] = 50;
         amounts[1] = 75;
         return IntexNFT1155RouterCodec.encodeBatch(
             IntexNFT1155RouterCodec.BatchPayload({
-                to: bytes32(uint256(uint160(recipient))), intexIds: tokenIds, units: amounts
+                to: bytes32(uint256(uint160(recipient))), intexIds: intexIds, units: amounts
             })
         );
     }
@@ -84,14 +84,14 @@ contract InboundFailureIsolationTest is CrossChainTest {
         bytes32[] memory recipients = new bytes32[](2);
         recipients[0] = bytes32(uint256(uint160(goodRecipient)));
         recipients[1] = bytes32(uint256(uint160(badRecipient)));
-        uint256[] memory tokenIds = new uint256[](2);
-        tokenIds[0] = TOKEN_GOOD;
-        tokenIds[1] = TOKEN_BAD;
+        uint256[] memory intexIds = new uint256[](2);
+        intexIds[0] = TOKEN_GOOD;
+        intexIds[1] = TOKEN_BAD;
         uint256[] memory amounts = new uint256[](2);
         amounts[0] = 50;
         amounts[1] = 75;
         return IntexNFT1155RouterCodec.encodeMulti(
-            IntexNFT1155RouterCodec.MultiPayload({recipients: recipients, intexIds: tokenIds, units: amounts})
+            IntexNFT1155RouterCodec.MultiPayload({recipients: recipients, intexIds: intexIds, units: amounts})
         );
     }
 
@@ -110,10 +110,10 @@ contract InboundFailureIsolationTest is CrossChainTest {
         assertEq(intex.balanceOf(recipient, TOKEN_GOOD), 50, "good item must be minted");
 
         // Bad item recorded in failedCrosschainReceives, NOT minted.
-        (address to, uint256 tokenId, uint256 amount, bool exists) =
+        (address to, uint256 intexId, uint256 amount, bool exists) =
             nftRouterBnb.getFailedCrosschainReceive(receiveId, 1);
         assertEq(to, recipient, "failed entry.to");
-        assertEq(tokenId, TOKEN_BAD, "failed entry.tokenId");
+        assertEq(intexId, TOKEN_BAD, "failed entry.intexId");
         assertEq(amount, 75, "failed entry.amount");
         assertTrue(exists, "failed entry must exist");
 
@@ -246,13 +246,13 @@ contract InboundFailureIsolationTest is CrossChainTest {
         _deliverInbound(_batchPacket(recipient));
 
         // Second batch: same recipient, distinct payload (single good item) -> distinct receiveId.
-        uint256[] memory tokenIds = new uint256[](1);
-        tokenIds[0] = TOKEN_GOOD;
+        uint256[] memory intexIds = new uint256[](1);
+        intexIds[0] = TOKEN_GOOD;
         uint256[] memory amounts = new uint256[](1);
         amounts[0] = 100;
         bytes memory packet = IntexNFT1155RouterCodec.encodeBatch(
             IntexNFT1155RouterCodec.BatchPayload({
-                to: bytes32(uint256(uint160(recipient))), intexIds: tokenIds, units: amounts
+                to: bytes32(uint256(uint160(recipient))), intexIds: intexIds, units: amounts
             })
         );
         _deliverInbound(packet);

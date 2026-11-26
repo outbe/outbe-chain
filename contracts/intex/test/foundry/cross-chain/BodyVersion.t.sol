@@ -3,7 +3,7 @@ pragma solidity 0.8.30;
 
 import {AuctionResultLib} from "../helpers/AuctionResultLib.sol";
 
-import {MarkBatchLib} from "../helpers/MarkBatchLib.sol";
+import {CallNoticeBatchLib} from "../helpers/CallNoticeBatchLib.sol";
 import {BidPackLib} from "../helpers/BidPackLib.sol";
 import {ReferenceCurrencyPriceLib} from "../helpers/ReferenceCurrencyPriceLib.sol";
 import {Test} from "forge-std/Test.sol";
@@ -55,7 +55,8 @@ contract BodyVersionTest is Test {
         assertEq(uint8(encoded[1]), BridgeMsgCodec.MSG_INTEX_AUCTION_RESULT, "auctionResult.msgType");
         assertEq(encoded.length, BridgeMsgCodec.MIN_LEN_INTEX_AUCTION_RESULT, "auctionResult.length");
 
-        encoded = BridgeMsgCodec.encodeIntexSeriesCallNotice(20260212, CALLED_AT, MarkBatchLib.one("20260212-TRY-U"));
+        encoded =
+            BridgeMsgCodec.encodeIntexSeriesCallNotice(20260212, CALLED_AT, CallNoticeBatchLib.one("20260212-TRY-U"));
         assertEq(uint8(encoded[0]), BridgeMsgCodec.BODY_VERSION_V1, "callSeries.version");
         assertEq(uint8(encoded[1]), BridgeMsgCodec.MSG_INTEX_SERIES_CALL_NOTICE, "callSeries.msgType");
         assertEq(encoded.length, BridgeMsgCodec.MIN_LEN_INTEX_SERIES_CALL_NOTICE, "callSeries.length");
@@ -105,10 +106,10 @@ contract BodyVersionTest is Test {
         assertEq(r.wonBidsCount, 5);
     }
 
-    function test_BridgeCodec_MarkCalled_RoundTrip() public view {
+    function test_BridgeCodec_CallNotice_RoundTrip() public view {
         bytes memory packet =
-            BridgeMsgCodec.encodeIntexSeriesCallNotice(20260212, CALLED_AT, MarkBatchLib.one("20260212-TRY-U"));
-        bytes14 seriesId = this.exposedDecodeMarkCalled(packet);
+            BridgeMsgCodec.encodeIntexSeriesCallNotice(20260212, CALLED_AT, CallNoticeBatchLib.one("20260212-TRY-U"));
+        bytes14 seriesId = this.exposedDecodeIntexSeriesCallNotice(packet);
         assertEq(seriesId, bytes14("20260212-TRY-U"));
     }
 
@@ -130,12 +131,12 @@ contract BodyVersionTest is Test {
         this.exposedDecodeAuctionResult(packet);
     }
 
-    function test_BridgeCodec_UnknownBodyVersion_MarkCalled_Reverts() public {
+    function test_BridgeCodec_UnknownBodyVersion_CallNotice_Reverts() public {
         bytes memory packet =
-            BridgeMsgCodec.encodeIntexSeriesCallNotice(20260212, CALLED_AT, MarkBatchLib.one("20260212-TRY-U"));
+            BridgeMsgCodec.encodeIntexSeriesCallNotice(20260212, CALLED_AT, CallNoticeBatchLib.one("20260212-TRY-U"));
         packet[0] = 0xAA;
         vm.expectRevert(abi.encodeWithSelector(BridgeMsgCodec.UnsupportedBodyVersion.selector, 0xAA));
-        this.exposedDecodeMarkCalled(packet);
+        this.exposedDecodeIntexSeriesCallNotice(packet);
     }
 
     function test_BridgeCodec_UnknownBodyVersion_BidsBatch_Reverts() public {
@@ -237,7 +238,7 @@ contract BodyVersionTest is Test {
         return BridgeMsgCodec.decodeIntexAuctionResult(p);
     }
 
-    function exposedDecodeMarkCalled(bytes calldata p) external pure returns (bytes14) {
+    function exposedDecodeIntexSeriesCallNotice(bytes calldata p) external pure returns (bytes14) {
         (,, bytes14[] memory seriesIds) = BridgeMsgCodec.decodeIntexSeriesCallNotice(p);
         return seriesIds[0];
     }

@@ -71,8 +71,8 @@ contract InboundValidationTest is CrossChainTest {
         _deliver(OUTBE_CHAIN_ID, outbeIca, address(bnbRouter), packet);
     }
 
-    function test_TM_ShortMarkCalled_RevertsInvalidPayloadLength() public {
-        // MARK_CALLED min length = 6 (bodyVersion + msgType + seriesId(4)). Build a 5-byte packet.
+    function test_TM_ShortCallNotice_RevertsInvalidPayloadLength() public {
+        // INTEX_SERIES_CALL_NOTICE min length = 6 (bodyVersion + msgType + seriesId(4)). Build a 5-byte packet.
         uint24 truncatedSeriesId = 20_250;
         bytes memory packet = abi.encodePacked(
             BridgeMsgCodec.BODY_VERSION_V1, BridgeMsgCodec.MSG_INTEX_SERIES_CALL_NOTICE, truncatedSeriesId
@@ -174,11 +174,11 @@ contract InboundValidationTest is CrossChainTest {
     function test_NFTBatch_OverCap_RevertsBatchTooLarge() public {
         // Inbound decoded array length is capped at MAX_BATCH_SIZE.
         uint256 over = IntexNFT1155RouterCodec.MAX_BATCH_SIZE + 1;
-        uint256[] memory tokenIds = new uint256[](over);
+        uint256[] memory intexIds = new uint256[](over);
         uint256[] memory amounts = new uint256[](over);
         bytes memory packet = IntexNFT1155RouterCodec.encodeBatch(
             IntexNFT1155RouterCodec.BatchPayload({
-                to: bytes32(uint256(uint160(address(0xCAFE)))), intexIds: tokenIds, units: amounts
+                to: bytes32(uint256(uint160(address(0xCAFE)))), intexIds: intexIds, units: amounts
             })
         );
         vm.expectRevert(
@@ -193,12 +193,12 @@ contract InboundValidationTest is CrossChainTest {
         // An all-zero recipient passes the high-bit check but is explicitly rejected.
         bytes32[] memory recipients = new bytes32[](1);
         recipients[0] = bytes32(0);
-        uint256[] memory tokenIds = new uint256[](1);
-        tokenIds[0] = 1;
+        uint256[] memory intexIds = new uint256[](1);
+        intexIds[0] = 1;
         uint256[] memory amounts = new uint256[](1);
         amounts[0] = 100;
         bytes memory packet = IntexNFT1155RouterCodec.encodeMulti(
-            IntexNFT1155RouterCodec.MultiPayload({recipients: recipients, intexIds: tokenIds, units: amounts})
+            IntexNFT1155RouterCodec.MultiPayload({recipients: recipients, intexIds: intexIds, units: amounts})
         );
         vm.expectRevert(IIntexNFT1155Router.InvalidReceiver.selector);
         _deliverToBatch(packet);
@@ -223,12 +223,12 @@ contract InboundValidationTest is CrossChainTest {
         bytes32 badRecipient = bytes32(uint256(1) << 200);
         bytes32[] memory recipients = new bytes32[](1);
         recipients[0] = badRecipient;
-        uint256[] memory tokenIds = new uint256[](1);
-        tokenIds[0] = 1;
+        uint256[] memory intexIds = new uint256[](1);
+        intexIds[0] = 1;
         uint256[] memory amounts = new uint256[](1);
         amounts[0] = 100;
         bytes memory packet = IntexNFT1155RouterCodec.encodeMulti(
-            IntexNFT1155RouterCodec.MultiPayload({recipients: recipients, intexIds: tokenIds, units: amounts})
+            IntexNFT1155RouterCodec.MultiPayload({recipients: recipients, intexIds: intexIds, units: amounts})
         );
         vm.expectRevert(abi.encodeWithSelector(IntexNFT1155RouterCodec.MalformedAddress.selector, badRecipient));
         _deliverToBatch(packet);
@@ -255,10 +255,10 @@ contract InboundValidationTest is CrossChainTest {
         // before the per-item loop touches any recipient or crosschainMint.
         uint256 over = IntexNFT1155RouterCodec.MAX_BATCH_SIZE + 1;
         bytes32[] memory recipients = new bytes32[](over);
-        uint256[] memory tokenIds = new uint256[](over);
+        uint256[] memory intexIds = new uint256[](over);
         uint256[] memory amounts = new uint256[](over);
         bytes memory packet = IntexNFT1155RouterCodec.encodeMulti(
-            IntexNFT1155RouterCodec.MultiPayload({recipients: recipients, intexIds: tokenIds, units: amounts})
+            IntexNFT1155RouterCodec.MultiPayload({recipients: recipients, intexIds: intexIds, units: amounts})
         );
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -270,12 +270,12 @@ contract InboundValidationTest is CrossChainTest {
 
     function test_NFTBatch_MultiArrayMismatch_RevertsArrayLengthMismatch() public {
         // SEND_MULTI array-length mismatch propagates the codec revert through dispatch.
-        // recipients.length != tokenIds.length is enough to trip decodeMulti's guard.
+        // recipients.length != intexIds.length is enough to trip decodeMulti's guard.
         bytes32[] memory recipients = new bytes32[](2);
         recipients[0] = bytes32(uint256(uint160(address(0xCAFE))));
         recipients[1] = bytes32(uint256(uint160(address(0xBEEF))));
-        uint256[] memory tokenIds = new uint256[](1);
-        tokenIds[0] = 1;
+        uint256[] memory intexIds = new uint256[](1);
+        intexIds[0] = 1;
         uint256[] memory amounts = new uint256[](2);
         amounts[0] = 10;
         amounts[1] = 20;
@@ -283,7 +283,7 @@ contract InboundValidationTest is CrossChainTest {
             IntexNFT1155RouterCodec.BODY_VERSION_V1,
             IntexNFT1155RouterCodec.SEND_MULTI,
             abi.encode(
-                IntexNFT1155RouterCodec.MultiPayload({recipients: recipients, intexIds: tokenIds, units: amounts})
+                IntexNFT1155RouterCodec.MultiPayload({recipients: recipients, intexIds: intexIds, units: amounts})
             )
         );
         vm.expectRevert(IntexNFT1155RouterCodec.ArrayLengthMismatch.selector);
@@ -298,14 +298,14 @@ contract InboundValidationTest is CrossChainTest {
     }
 
     /// @dev Build a one-item SEND_BATCH packet for a single recipient.
-    function _batch(address to, uint256 tokenId_, uint256 amount_) internal pure returns (bytes memory) {
-        uint256[] memory tokenIds = new uint256[](1);
-        tokenIds[0] = tokenId_;
+    function _batch(address to, uint256 intexId_, uint256 amount_) internal pure returns (bytes memory) {
+        uint256[] memory intexIds = new uint256[](1);
+        intexIds[0] = intexId_;
         uint256[] memory amounts = new uint256[](1);
         amounts[0] = amount_;
         return IntexNFT1155RouterCodec.encodeBatch(
             IntexNFT1155RouterCodec.BatchPayload({
-                to: bytes32(uint256(uint160(to))), intexIds: tokenIds, units: amounts
+                to: bytes32(uint256(uint160(to))), intexIds: intexIds, units: amounts
             })
         );
     }

@@ -119,7 +119,7 @@ contract IntexNFT1155RouterTest is CrossChainTest {
     }
 
     // ---------------------------------------------------------------
-    // batchSend / quoteBatchSend - single recipient, many tokenIds
+    // batchSend / quoteBatchSend - single recipient, many intexIds
     // ---------------------------------------------------------------
 
     function test_BatchSend_WithoutTheFee_DoesNotUseTheFloat() public {

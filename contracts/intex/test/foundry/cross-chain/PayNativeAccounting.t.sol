@@ -48,7 +48,7 @@ contract PayNativeAccountingTest is CrossChainTest {
 
     uint32 internal constant SERIES_ID_DAY = 20260501;
     bytes14 internal constant SERIES_ID = "20260501-USD-U";
-    uint256 internal constant TOKEN_ID = uint256(keccak256(abi.encodePacked(SERIES_ID)));
+    uint256 internal constant INTEX_ID = uint256(keccak256(abi.encodePacked(SERIES_ID)));
     address internal owner = address(0xCAFE);
 
     function setUp() public {
@@ -82,7 +82,7 @@ contract PayNativeAccountingTest is CrossChainTest {
     /// @dev A 1-token bridge-out to Outbe. The entry path (payable `send`) burns it from `owner`.
     function _sendParam() internal view returns (SendParam memory) {
         return
-            SendParam({dstChainId: OUTBE_CHAIN_ID, to: bytes32(uint256(uint160(owner))), intexId: TOKEN_ID, units: 1});
+            SendParam({dstChainId: OUTBE_CHAIN_ID, to: bytes32(uint256(uint160(owner))), intexId: INTEX_ID, units: 1});
     }
 
     function _holderArrays() internal view returns (address[] memory owners, uint256[] memory amounts) {
@@ -123,7 +123,7 @@ contract PayNativeAccountingTest is CrossChainTest {
         vm.prank(owner);
         nftRouter.send{value: fee + buffer}(params);
 
-        // Excess refunded out of `_send`, not retained for future relay sends.
+        // Excess refunded out of `_sendTo`, not retained for future relay sends.
         assertEq(address(nftRouter).balance, floatBefore, "excess must not seed the relay float");
         assertEq(owner.balance, buffer, "caller refunded the excess");
     }
@@ -161,7 +161,7 @@ contract PayNativeAccountingTest is CrossChainTest {
     }
 
     function test_Entry_RefundFailsRevertsRefundFailed() public {
-        // `_send` refunds excess to msg.sender via `.call{value: refund}("")`. A caller whose
+        // `_sendTo` refunds excess to msg.sender via `.call{value: refund}("")`. A caller whose
         // receive() reverts trips the ReturnFailed guard. Without it, a refactor that swallowed
         // the .call return would silently seed the relay float with the entry caller's excess.
         NftRefundRejector rejector = new NftRefundRejector(address(nftRouter));
@@ -270,7 +270,7 @@ contract StubAuction {
 }
 
 /// @dev Holds a bridgeable token (accepts the ERC-1155 mint), but its `receive()` reverts.
-///      Tests use it to pin `_send`'s ReturnFailed guard on the entry path via the NFT bridge.
+///      Tests use it to pin `_sendTo`'s ReturnFailed guard on the entry path via the NFT bridge.
 contract NftRefundRejector {
     IntexNFT1155Router private immutable bridge;
 

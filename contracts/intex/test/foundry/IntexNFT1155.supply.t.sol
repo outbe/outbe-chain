@@ -20,7 +20,7 @@ contract IntexNFT1155SupplyTest is Test {
 
     uint32 constant SERIES_ID_DAY = 20260401;
     bytes14 constant SERIES_ID = "20260401-USD-U";
-    uint256 constant TOKEN_ID = uint256(keccak256(abi.encodePacked(SERIES_ID)));
+    uint256 constant INTEX_ID = uint256(keccak256(abi.encodePacked(SERIES_ID)));
 
     uint32 constant CALL_PERIOD = uint32(1 days);
 
@@ -79,9 +79,9 @@ contract IntexNFT1155SupplyTest is Test {
         nft.issueIntex(ownerB, 60, SERIES_ID);
         vm.stopPrank();
 
-        assertEq(nft.totalSupply(TOKEN_ID), issuedUnits + 61);
-        assertEq(nft.balanceOf(ownerA, TOKEN_ID), issuedUnits + 1);
-        assertEq(nft.balanceOf(ownerB, TOKEN_ID), 60);
+        assertEq(nft.totalSupply(INTEX_ID), issuedUnits + 61);
+        assertEq(nft.balanceOf(ownerA, INTEX_ID), issuedUnits + 1);
+        assertEq(nft.balanceOf(ownerB, INTEX_ID), 60);
         assertEq(nft.getIntexSeries(SERIES_ID).issuedUnits, issuedUnits, "issuedUnits stays the original issuance");
     }
 
@@ -89,7 +89,7 @@ contract IntexNFT1155SupplyTest is Test {
         _openSeries(100);
 
         vm.startPrank(bridger);
-        nft.crosschainMint(ownerA, TOKEN_ID, type(uint32).max);
+        nft.crosschainMint(ownerA, INTEX_ID, type(uint32).max);
         vm.expectRevert(
             abi.encodeWithSelector(
                 IIntexNFT1155.SupplyCapExceeded.selector,
@@ -101,7 +101,7 @@ contract IntexNFT1155SupplyTest is Test {
         nft.issueIntex(ownerB, 1, SERIES_ID);
         vm.stopPrank();
 
-        assertEq(nft.totalSupply(TOKEN_ID), type(uint32).max);
+        assertEq(nft.totalSupply(INTEX_ID), type(uint32).max);
     }
 
     // --- burnIntex: the precompiles own the series state, so the burn checks none ---
@@ -118,8 +118,8 @@ contract IntexNFT1155SupplyTest is Test {
         _issue(6, true);
         vm.prank(burner);
         nft.burnIntex(ownerA, SERIES_ID, 4);
-        assertEq(nft.balanceOf(ownerA, TOKEN_ID), 2);
-        assertEq(nft.totalSupply(TOKEN_ID), 2);
+        assertEq(nft.balanceOf(ownerA, INTEX_ID), 2);
+        assertEq(nft.totalSupply(INTEX_ID), 2);
     }
 
     function test_BurnIntex_ZeroUnits_Reverts() public {
@@ -131,7 +131,7 @@ contract IntexNFT1155SupplyTest is Test {
 
     function test_BurnIntex_UnknownSeries_Reverts() public {
         vm.prank(burner);
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.IntexNotFound.selector, TOKEN_ID));
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.IntexNotFound.selector, INTEX_ID));
         nft.burnIntex(ownerA, SERIES_ID, 1);
     }
 
@@ -151,11 +151,11 @@ contract IntexNFT1155SupplyTest is Test {
 
         vm.startPrank(bridger);
         nft.issueIntex(ownerA, issuedUnits, SERIES_ID);
-        nft.crosschainMint(ownerB, TOKEN_ID, 5);
+        nft.crosschainMint(ownerB, INTEX_ID, 5);
         vm.stopPrank();
 
-        assertEq(nft.totalSupply(TOKEN_ID), issuedUnits + 5);
-        assertEq(nft.balanceOf(ownerB, TOKEN_ID), 5);
+        assertEq(nft.totalSupply(INTEX_ID), issuedUnits + 5);
+        assertEq(nft.balanceOf(ownerB, INTEX_ID), 5);
         assertEq(nft.getIntexSeries(SERIES_ID).issuedUnits, issuedUnits, "issuedUnits stays the original issuance");
     }
 
@@ -164,8 +164,8 @@ contract IntexNFT1155SupplyTest is Test {
 
         vm.startPrank(bridger);
         nft.issueIntex(ownerA, 1, SERIES_ID);
-        nft.crosschainMint(ownerB, TOKEN_ID, type(uint32).max - 1);
-        assertEq(nft.totalSupply(TOKEN_ID), type(uint32).max, "fills the uint32 range exactly");
+        nft.crosschainMint(ownerB, INTEX_ID, type(uint32).max - 1);
+        assertEq(nft.totalSupply(INTEX_ID), type(uint32).max, "fills the uint32 range exactly");
 
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -175,7 +175,7 @@ contract IntexNFT1155SupplyTest is Test {
                 uint256(type(uint32).max)
             )
         );
-        nft.crosschainMint(ownerB, TOKEN_ID, 1);
+        nft.crosschainMint(ownerB, INTEX_ID, 1);
         vm.stopPrank();
     }
 
@@ -185,13 +185,13 @@ contract IntexNFT1155SupplyTest is Test {
 
         vm.startPrank(bridger);
         nft.issueIntex(ownerA, issuedUnits, SERIES_ID);
-        nft.crosschainBurn(ownerA, ownerA, TOKEN_ID, 4);
-        nft.crosschainMint(ownerB, TOKEN_ID, 4);
+        nft.crosschainBurn(ownerA, ownerA, INTEX_ID, 4);
+        nft.crosschainMint(ownerB, INTEX_ID, 4);
         vm.stopPrank();
 
-        assertEq(nft.totalSupply(TOKEN_ID), issuedUnits);
-        assertEq(nft.balanceOf(ownerA, TOKEN_ID), 6);
-        assertEq(nft.balanceOf(ownerB, TOKEN_ID), 4);
+        assertEq(nft.totalSupply(INTEX_ID), issuedUnits);
+        assertEq(nft.balanceOf(ownerA, INTEX_ID), 6);
+        assertEq(nft.balanceOf(ownerB, INTEX_ID), 4);
         assertEq(nft.getIntexSeries(SERIES_ID).totalSupply, issuedUnits, "totalSupply restored after the return hop");
     }
 
@@ -209,7 +209,7 @@ contract IntexNFT1155SupplyTest is Test {
 
         vm.prank(burner);
         nft.burnIntex(ownerA, SERIES_ID, 2);
-        assertEq(nft.totalSupply(TOKEN_ID), 5, "burnIntex burns Issued (totalSupply 7 - 2)");
+        assertEq(nft.totalSupply(INTEX_ID), 5, "burnIntex burns Issued (totalSupply 7 - 2)");
         assertEq(nft.getIntexSeries(SERIES_ID).totalSupply, 5, "SeriesData mirror tracks live Issued supply");
     }
 }
