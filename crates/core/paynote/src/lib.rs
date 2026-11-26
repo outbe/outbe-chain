@@ -9,7 +9,7 @@
 //! precisely so the pool can do this. The binding also exists so a depositor
 //! cannot fund a note in a cheap token and spend it as an expensive one.
 //!
-//! A **spend** consumes the frozen `outbe.paynote@1.3.0` UltraHonkKeccak proof.
+//! A **spend** consumes the frozen `outbe.paynote@1.4.0` UltraHonkKeccak proof.
 //! The proof:
 //! - proves membership under an accepted root.
 //! - publishes a nullifier.
@@ -22,6 +22,10 @@
 //! [`api::settle`]. A spend routes the spent amount from the pool through
 //! VaultRouter into the reserve vault of the asset. Then it returns the
 //! validated claim. The caller settles the claim.
+//!
+//! A **withdrawal** is the public spend, `IPayNote.withdraw`. The proof binds a
+//! recipient through [`api::withdraw_context`]. The pool pays the spent amount
+//! to that recipient, as the ERC20 of the note or as native COEN.
 //!
 //! The hash/tree formulas mirror the frozen noir circuit's `paynote.nr`. The
 //! runtime operates over persistent EVM storage.
