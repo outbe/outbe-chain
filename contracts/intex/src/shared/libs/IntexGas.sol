@@ -89,7 +89,7 @@ library IntexGas {
     uint256 internal constant RETURN_PER_ITEM = 9_250;
     uint256 internal constant RETURN_PROCEEDS_ROUTE = 400_000;
 
-    /// @dev Cut from the failure path: 2.06M for a fully rejected batch against 664k for one that all lands.
+    /// @dev Cut from the failure path: 2.08M for a fully rejected batch against 611k for one that all lands.
     uint256 internal constant NFT_MINT_BASE = 225_000;
     uint256 internal constant NFT_MINT_PER_ITEM = 178_000;
 
