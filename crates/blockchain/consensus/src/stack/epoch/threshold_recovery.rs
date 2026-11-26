@@ -31,10 +31,33 @@ pub(super) struct ThresholdRecovery<'a, E: Clock, N: StackNodeAccess> {
     pub(super) protocol: &'a dyn crate::protocol_state::EngineProtocolState,
 }
 
+async fn register_initial_dkg_subchannel<E, S>(
+    ctx: &E,
+    dkg_mux: &mut commonware_p2p::utils::mux::MuxHandle<S>,
+) -> Result<
+    Option<(
+        commonware_p2p::utils::mux::SubSender<S>,
+        commonware_p2p::utils::mux::SubReceiver<S::PublicKey>,
+    )>,
+>
+where
+    E: Spawner,
+    S: commonware_p2p::Sender,
+{
+    super::supervisor::poll_mux_registration_until_stopped(ctx, async {
+        dkg_mux.register(0).await.map_err(|error| {
+            eyre::Report::new(
+                crate::errors::StackEpochError::register_initial_dkg_subchannel(error),
+            )
+        })
+    })
+    .await
+}
+
 pub(super) async fn recover_threshold<E, N: StackNodeAccess>(
     ctx: &E,
     input: ThresholdRecovery<'_, E, N>,
-) -> Result<RecoveredThreshold>
+) -> Result<Option<RecoveredThreshold>>
 where
     E: Clock + CryptoRng + Network + Resolver + Spawner + Storage + Metrics + Send + Sync + 'static,
 {
@@ -109,10 +132,10 @@ where
 
     // -- 6. Obtain threshold material ------------------------------------
     // For initial DKG, use subchannel 0 of the DKG mux.
-    let (dkg_init_tx, dkg_init_rx) = dkg_mux
-        .register(0)
-        .await
-        .map_err(crate::errors::StackEpochError::register_initial_dkg_subchannel)?;
+    let Some((dkg_init_tx, dkg_init_rx)) = register_initial_dkg_subchannel(ctx, dkg_mux).await?
+    else {
+        return Ok(None);
+    };
 
     let threshold_material = if let Some(output) = recovered_shareless_output {
         info!(
@@ -232,7 +255,7 @@ where
         },
     )?;
 
-    Ok(RecoveredThreshold {
+    Ok(Some(RecoveredThreshold {
         local_consensus_key,
         last_execution_height,
         last_execution_hash,
@@ -245,5 +268,102 @@ where
         genesis_dkg_boundary_artifact,
         participants,
         proposer_evm_address,
-    })
+    }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::register_initial_dkg_subchannel;
+    use crate::errors::StackEpochError;
+    use commonware_cryptography::{bls12381, Signer as _};
+    use commonware_p2p::{
+        simulated::{Config as SimConfig, Network as SimNetwork, Sender as SimSender},
+        utils::mux::{MuxHandle, Muxer},
+    };
+    use commonware_runtime::{deterministic, Quota, Runner as _, Spawner as _, Supervisor as _};
+    use commonware_utils::{NZUsize, NZU32};
+    use std::num::NonZeroUsize;
+
+    type TestMux = MuxHandle<SimSender<bls12381::PublicKey, deterministic::Context>>;
+
+    async fn setup_dkg_mux(
+        ctx: &deterministic::Context,
+    ) -> (
+        commonware_runtime::Handle<std::result::Result<(), commonware_p2p::simulated::Error>>,
+        TestMux,
+    ) {
+        let (network, oracle) = SimNetwork::new(
+            ctx.child("network"),
+            SimConfig {
+                max_size: 64 * 1024,
+                disconnect_on_block: true,
+                max_peers_per_set: NonZeroUsize::new(1).unwrap(),
+                tracked_peer_sets: NZUsize!(1),
+            },
+        );
+        network.start();
+
+        let pk = bls12381::PrivateKey::from_seed(1).public_key();
+        let control = oracle.control(pk);
+        let quota = Quota::per_second(NZU32!(1_000));
+        let (dkg_tx, dkg_rx) = control.register(0, quota).await.unwrap();
+
+        let (dkg_muxer, dkg_mux) = Muxer::new(ctx.child("dkg_mux"), dkg_tx, dkg_rx);
+        let mux_handle = dkg_muxer.start();
+        (mux_handle, dkg_mux)
+    }
+
+    #[test]
+    fn initial_dkg_subchannel_returns_none_when_stopped_after_transport_start() {
+        deterministic::Runner::default().start(|ctx| async move {
+            let (mux_handle, mut dkg_mux) = setup_dkg_mux(&ctx).await;
+            ctx.child("stop").stop(0, None).await.unwrap();
+            let _ = mux_handle.await;
+
+            let channels = register_initial_dkg_subchannel(&ctx, &mut dkg_mux)
+                .await
+                .expect("global stop must cancel initial DKG subchannel registration");
+            assert!(channels.is_none());
+        });
+    }
+
+    #[test]
+    fn initial_dkg_subchannel_propagates_closed_mux_while_live() {
+        deterministic::Runner::default().start(|ctx| async move {
+            let (mux_handle, mut dkg_mux) = setup_dkg_mux(&ctx).await;
+            mux_handle.abort();
+            let _ = mux_handle.await;
+
+            let err = match register_initial_dkg_subchannel(&ctx, &mut dkg_mux).await {
+                Ok(_) => panic!("closed DKG mux must fail while stack is live"),
+                Err(err) => err,
+            };
+            assert!(matches!(
+                err.downcast_ref::<StackEpochError>(),
+                Some(StackEpochError::RegisterInitialDkgSubchannel { .. })
+            ));
+        });
+    }
+
+    #[test]
+    fn initial_dkg_subchannel_propagates_duplicate_registration_while_live() {
+        deterministic::Runner::default().start(|ctx| async move {
+            let (_mux_handle, mut dkg_mux) = setup_dkg_mux(&ctx).await;
+            let _occupied = register_initial_dkg_subchannel(&ctx, &mut dkg_mux)
+                .await
+                .expect("first registration must succeed")
+                .expect("live registration must return subchannel");
+
+            let err = match register_initial_dkg_subchannel(&ctx, &mut dkg_mux).await {
+                Ok(_) => {
+                    panic!("duplicate subchannel 0 registration must fail while stack is live")
+                }
+                Err(err) => err,
+            };
+            assert!(matches!(
+                err.downcast_ref::<StackEpochError>(),
+                Some(StackEpochError::RegisterInitialDkgSubchannel { .. })
+            ));
+        });
+    }
 }

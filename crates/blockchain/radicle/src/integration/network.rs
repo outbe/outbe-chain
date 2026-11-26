@@ -135,6 +135,7 @@ struct EndpointNetworkState {
     chain: ChainIdentity,
     handle: EndpointHandle,
     commands: mpsc::Receiver<NetworkCommand>,
+    readiness: watch::Sender<bool>,
     evidence: EndpointEvidenceHandle,
     status: RadicleStatusHandle,
     repository_material: material::RepositoryMaterialHandle,
@@ -148,6 +149,7 @@ struct EndpointNetworkState {
 #[derive(Clone)]
 pub struct EndpointNetworkResolver {
     commands: mpsc::Sender<NetworkCommand>,
+    readiness: watch::Receiver<bool>,
 }
 
 struct EndpointRefresh<'a> {
@@ -234,6 +236,7 @@ impl EndpointNetwork {
         let protocol = EndpointProtocol::new(chain, OsRequestIds);
         let (actor, handle) = EndpointActor::new(protocol);
         let (commands, receiver) = mpsc::channel(256);
+        let (readiness_tx, readiness_rx) = watch::channel(false);
         let evidence = EndpointEvidenceHandle::default();
         let (repository_material_publisher, repository_material) = material::channel();
         (
@@ -244,6 +247,7 @@ impl EndpointNetwork {
                     chain,
                     handle,
                     commands: receiver,
+                    readiness: readiness_tx,
                     evidence: evidence.clone(),
                     status,
                     repository_material,
@@ -254,7 +258,10 @@ impl EndpointNetwork {
                     repository_inbox_material: None,
                 },
             },
-            EndpointNetworkResolver { commands },
+            EndpointNetworkResolver {
+                commands,
+                readiness: readiness_rx,
+            },
             evidence,
         )
     }
@@ -475,6 +482,20 @@ impl EndpointResolver for EndpointNetworkResolver {
         snapshot: &'a FinalizedSnapshot,
     ) -> BoxFuture<'a, Result<Vec<VerifiedEndpoint>, ManagerError>> {
         Box::pin(async move {
+            if self.commands.is_closed() {
+                return Err(ManagerError::Stopped);
+            }
+            // Check sender closure before reading the copied readiness flag.
+            // Drop the watch borrow guard before any await point.
+            let ready = match self.readiness.has_changed() {
+                Err(_) => return Err(ManagerError::Stopped),
+                Ok(_) => *self.readiness.borrow(),
+            };
+            if !ready {
+                return Err(ManagerError::from(
+                    crate::errors::EndpointLifecycleError::NotStarted,
+                ));
+            }
             let (result, response) = oneshot::channel();
             self.commands
                 .try_send(NetworkCommand::Refresh {
@@ -809,6 +830,8 @@ impl EndpointNetworkState {
         // Dropping or unwinding the network service also aborts its owned actor.
         let mut actor = JoinSet::new();
         actor.spawn(endpoint_actor.run());
+        // Publish readiness immediately after the service spawns its actor and before any await.
+        self.readiness.send_replace(true);
         let mut current = None;
         let mut queued = BTreeMap::<PeerId, (SignedEndpointResponse, u64)>::new();
         let mut shutdown_ack = None;
@@ -1311,7 +1334,11 @@ pub(crate) mod shutdown_tests {
     #[tokio::test]
     async fn shutdown_preserves_closed_acknowledgement() {
         let (commands, mut receiver) = mpsc::channel(1);
-        let resolver = EndpointNetworkResolver { commands };
+        let (_readiness_tx, readiness) = watch::channel(true);
+        let resolver = EndpointNetworkResolver {
+            commands,
+            readiness,
+        };
         let responder = tokio::spawn(async move {
             let Some(NetworkCommand::Shutdown { result }) = receiver.recv().await else {
                 panic!("expected shutdown");
@@ -1334,7 +1361,11 @@ pub(crate) mod shutdown_tests {
         assert!(commands
             .try_send(NetworkCommand::Shutdown { result })
             .is_ok());
-        let resolver = EndpointNetworkResolver { commands };
+        let (_readiness_tx, readiness) = watch::channel(true);
+        let resolver = EndpointNetworkResolver {
+            commands,
+            readiness,
+        };
         let started = tokio::time::Instant::now();
         assert_eq!(
             resolver.shutdown().await,
@@ -1347,10 +1378,210 @@ pub(crate) mod shutdown_tests {
     async fn shutdown_closed_mailbox_is_not_deadline() {
         let (commands, receiver) = mpsc::channel(1);
         drop(receiver);
-        let resolver = EndpointNetworkResolver { commands };
+        let (_readiness_tx, readiness) = watch::channel(true);
+        let resolver = EndpointNetworkResolver {
+            commands,
+            readiness,
+        };
         assert_eq!(
             resolver.shutdown().await,
             Err(ManagerError::Endpoint("shutdown mailbox closed".into()))
         );
+    }
+
+    fn local_only_snapshot(number: u64) -> FinalizedSnapshot {
+        let signer = bls12381::PrivateKey::from_seed(1);
+        FinalizedSnapshot {
+            block: crate::manager::FinalizedBlock {
+                number,
+                hash: B256::with_last_byte(number as u8),
+            },
+            validators: vec![crate::manager::FinalizedValidator {
+                address: Address::ZERO,
+                peer: PeerId::from_public_key(&signer.public_key()),
+                node_id: Some([1; 32]),
+            }],
+            registry_generation: 0,
+            repositories: vec![],
+        }
+    }
+
+    fn build_unstarted_pair() -> (EndpointNetworkService, EndpointNetworkResolver) {
+        let (_, status) = RadicleStatusChannel::enabled(Address::ZERO, [1; 32]);
+        let (service, resolver, _) = EndpointNetwork::build(
+            ChainIdentity {
+                chain_id: 1,
+                genesis_hash: B256::ZERO,
+            },
+            status,
+        );
+        (service, resolver)
+    }
+
+    struct SpawnedService {
+        task: tokio::task::JoinHandle<Result<(), ManagerError>>,
+        handle: EndpointHandle,
+        _incoming: mpsc::UnboundedSender<(bls12381::PublicKey, IoBuf)>,
+    }
+
+    fn spawn_service(service: EndpointNetworkService) -> SpawnedService {
+        let handle = service.state.handle.clone();
+        let (_, local) = LocalEndpointIdentityChannel::create(LocalEndpointIdentity {
+            validator: Address::ZERO,
+            node_id: [1; 32],
+            addresses: vec![EndpointAddress::dns("local.example", 8776).unwrap()],
+        });
+        let (incoming, receiver) = mpsc::unbounded_channel();
+        let task = tokio::spawn(service.run(
+            EndpointTransport {
+                sender: NoSend,
+                receiver: TestReceiver(receiver),
+            },
+            EndpointSigningIdentity {
+                signer: bls12381::PrivateKey::from_seed(1),
+                local,
+            },
+        ));
+        SpawnedService {
+            task,
+            handle,
+            _incoming: incoming,
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn unstarted_and_unpolled_refresh_returns_not_started_without_queuing_then_serves() {
+        let (mut service, resolver) = build_unstarted_pair();
+        let snapshot = local_only_snapshot(10);
+        let not_started = ManagerError::from(crate::errors::EndpointLifecycleError::NotStarted);
+        assert_ne!(not_started, ManagerError::Stopped);
+
+        let started = tokio::time::Instant::now();
+        for _ in 0..2 {
+            assert_eq!(resolver.refresh(&snapshot).await, Err(not_started.clone()));
+            assert_eq!(started.elapsed(), Duration::ZERO);
+            assert!(matches!(
+                service.state.commands.try_recv(),
+                Err(mpsc::error::TryRecvError::Empty)
+            ));
+        }
+
+        // Schedule the service task without polling it yet.
+        let SpawnedService {
+            task,
+            handle,
+            _incoming,
+        } = spawn_service(service);
+        for _ in 0..2 {
+            assert_eq!(resolver.refresh(&snapshot).await, Err(not_started.clone()));
+            assert_eq!(started.elapsed(), Duration::ZERO);
+        }
+
+        // Wait for the spawned endpoint actor to answer, proving first poll published readiness.
+        handle.stats().await.unwrap();
+        assert_eq!(resolver.refresh(&snapshot).await, Ok(vec![]));
+        assert_eq!(started.elapsed(), Duration::ZERO);
+
+        resolver.shutdown().await.unwrap();
+        assert_eq!(handle.stats().await, Err(HandleError::Closed));
+        task.await.unwrap().unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn dropped_or_exited_service_returns_stopped_and_new_pair_starts_unstarted() {
+        let snapshot = local_only_snapshot(11);
+        let not_started = ManagerError::from(crate::errors::EndpointLifecycleError::NotStarted);
+
+        // Dropping an unstarted service closes the pair and returns Stopped.
+        let (service, resolver) = build_unstarted_pair();
+        drop(service);
+        let started = tokio::time::Instant::now();
+        assert_eq!(
+            resolver.refresh(&snapshot).await,
+            Err(ManagerError::Stopped)
+        );
+        assert_eq!(started.elapsed(), Duration::ZERO);
+
+        // Dropping the readiness sender returns Stopped for both false and true values without queuing.
+        for retained in [false, true] {
+            let (commands, mut receiver) = mpsc::channel(4);
+            let (readiness_tx, readiness) = watch::channel(retained);
+            drop(readiness_tx);
+            let resolver = EndpointNetworkResolver {
+                commands,
+                readiness,
+            };
+            assert_eq!(
+                resolver.refresh(&snapshot).await,
+                Err(ManagerError::Stopped)
+            );
+            assert!(matches!(
+                receiver.try_recv(),
+                Err(mpsc::error::TryRecvError::Empty)
+            ));
+        }
+
+        // A normal shutdown terminates the old pair while a new pair starts Unstarted.
+        let running = network();
+        running.handle.stats().await.unwrap();
+        running.resolver.shutdown().await.unwrap();
+        running.task.await.unwrap().unwrap();
+        assert_eq!(
+            running.resolver.refresh(&snapshot).await,
+            Err(ManagerError::Stopped)
+        );
+
+        let (_new_service, new_resolver) = build_unstarted_pair();
+        assert_eq!(new_resolver.refresh(&snapshot).await, Err(not_started));
+        assert_eq!(
+            running.resolver.refresh(&snapshot).await,
+            Err(ManagerError::Stopped)
+        );
+    }
+
+    #[tokio::test]
+    async fn scheduled_unpolled_service_processes_queued_shutdown_before_ack() {
+        let (service, resolver) = build_unstarted_pair();
+        let SpawnedService {
+            task,
+            handle,
+            _incoming,
+        } = spawn_service(service);
+
+        // Enqueue Shutdown before the spawned service task receives its first poll.
+        resolver.shutdown().await.unwrap();
+        assert_eq!(handle.stats().await, Err(HandleError::Closed));
+        task.await.unwrap().unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn serving_refresh_retains_handle_deadline_timeout() {
+        let snapshot = local_only_snapshot(12);
+        let (commands, mut receiver) = mpsc::channel(4);
+        let (_readiness_tx, readiness) = watch::channel(true);
+        let resolver = EndpointNetworkResolver {
+            commands,
+            readiness,
+        };
+
+        let started = tokio::time::Instant::now();
+        let refresh = resolver.refresh(&snapshot);
+        tokio::pin!(refresh);
+        assert!(futures::poll!(&mut refresh).is_pending());
+
+        let command = receiver
+            .try_recv()
+            .expect("serving refresh must enqueue command");
+        let NetworkCommand::Refresh { result: _held, .. } = command else {
+            panic!("expected Refresh command");
+        };
+
+        assert_eq!(
+            refresh.await,
+            Err(ManagerError::from(
+                crate::errors::EndpointLifecycleError::RefreshDeadlineExceeded
+            ))
+        );
+        assert_eq!(started.elapsed(), HANDLE_DEADLINE);
     }
 }

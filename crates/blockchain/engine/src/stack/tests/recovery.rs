@@ -995,3 +995,595 @@ mod copied_store_controls {
             .is_none());
     }
 }
+
+#[test]
+fn authenticated_recovery_direct_f_cross_epoch_d1_and_negatives() {
+    use outbe_consensus::finalization::parent_cert_store::ProofKind;
+    use outbe_primitives::consensus_metadata::ParentParticipationProof;
+
+    let committee0 = AuthenticatedRecoveryCommittee::new(0, 300, 0, 1);
+    let attacker0 = AuthenticatedRecoveryCommittee::new(0, 600, 0, 1);
+    let committee1 = AuthenticatedRecoveryCommittee::new(1, 400, 2, 4);
+    let attacker = AuthenticatedRecoveryCommittee::new(1, 500, 2, 4);
+
+    let genesis = recovery_block(0);
+    let b1 = AuthenticatedRecoveryCommittee::block_with_extra_data(
+        1,
+        genesis.digest().0,
+        committee0.boundary_extra_data.clone(),
+    );
+    let b2 = AuthenticatedRecoveryCommittee::block_with_extra_data(2, b1.digest().0, Bytes::new());
+    // Pre-H CommitteePreAnnounce(1) on canonical header H = 3.
+    let b3 = AuthenticatedRecoveryCommittee::block_with_extra_data(
+        3,
+        b2.digest().0,
+        committee1.preannounce_extra_data.clone(),
+    );
+    // Block 4 carries BoundaryOutcome(1) + valid Epoch(0) Phase 1 parent witness over Block 3.
+    let b4 = committee0.block_with_parent_witness(
+        &b3,
+        3,
+        2,
+        ParentParticipationProof::CertifiedNotarization,
+        committee1.boundary_extra_data.clone(),
+    );
+    // Block 5 is in Epoch 1 and has F(5) signed by committee1.
+    let b5 = committee1.block_with_parent_witness(
+        &b4,
+        4,
+        3,
+        ParentParticipationProof::CertifiedNotarization,
+        Bytes::new(),
+    );
+    let f3 = committee0.sign_finalization(3, 2, b3.digest());
+    let f5 = committee1.sign_finalization(5, 4, b5.digest());
+
+    let mut base_headers = BTreeMap::new();
+    for blk in [&b1, &b2, &b3] {
+        base_headers.insert(
+            blk.number(),
+            AuthenticatedRecoveryCommittee::header_record(blk),
+        );
+    }
+    let mut base_snapshots = BTreeMap::new();
+    base_snapshots.insert((b3.digest().0, 0), committee0.snapshot.clone());
+    let base_history = StaticCanonicalHistory {
+        genesis_participants: committee0.participants.clone(),
+        headers: base_headers,
+        snapshots: base_snapshots,
+    };
+    let committee_cfg = RecoveryCommitteeConfig {
+        epoch_length_blocks: 3,
+        prepare_window_blocks: 1,
+        activation_grace_blocks: 10,
+    };
+
+    commonware_runtime::tokio::Runner::default().start(|context| async move {
+        // 1. Genesis H == 0 returns Ok(None), and Some(_) at genesis fails closed.
+        {
+            let (mailbox, keepalive, handle) =
+                start_recovery_marshal(context.child("m_gen"), HybridSchemeProvider::new()).await;
+            let gen_rec = recover_authenticated_application_finalization(
+                context.child("rec_gen"),
+                mailbox,
+                0,
+                genesis.digest().0,
+                0,
+                &base_history,
+                committee_cfg,
+            )
+            .await
+            .unwrap();
+            assert!(gen_rec.is_none());
+            assert_eq!(
+                reconcile_authenticated_execution_head(0, genesis.digest().0, None).unwrap(),
+                (0, genesis.digest().0, None, None)
+            );
+            drop(keepalive);
+            handle.abort();
+            let _ = handle.await;
+        }
+
+        // 2. Direct F(3) positive + R6 fail-closed negatives (missing snapshot, hash mismatch, missing boundary, invalid sig, digest mismatch).
+        {
+            let provider = HybridSchemeProvider::new();
+            assert!(provider.register(Epoch::new(0), committee0.verifier.clone()));
+            let (mut mailbox, keepalive, handle) =
+                start_recovery_marshal(context.child("m_dir"), provider).await;
+            assert!(
+                mailbox
+                    .verified(
+                        Round::new(Epoch::new(0), View::new(3)),
+                        commonware_cryptography::Digested::precomputed(b3.clone(), b3.digest()),
+                    )
+                    .await
+            );
+            let _ = mailbox.report(Activity::Finalization(f3.clone()));
+
+            let ok_rec = recover_authenticated_application_finalization(
+                context.child("rec_dir_ok"),
+                mailbox.clone(),
+                3,
+                b3.digest().0,
+                3,
+                &base_history,
+                committee_cfg,
+            )
+            .await
+            .expect("direct F(3) must succeed")
+            .expect("direct F(3) record");
+            assert_eq!(ok_rec.round, Round::new(Epoch::new(0), View::new(3)));
+            assert_eq!(
+                ok_rec.parent_proof_record.kind,
+                ProofKind::Finalization {
+                    finalized_block_number: 3
+                }
+            );
+
+            // R6 negative A: missing CommitteeSnapshot.
+            let mut missing_snap = base_history.clone();
+            missing_snap.snapshots.clear();
+            assert!(
+                recover_authenticated_application_finalization(
+                    context.child("rec_dir_no_snap"),
+                    mailbox.clone(),
+                    3,
+                    b3.digest().0,
+                    3,
+                    &missing_snap,
+                    committee_cfg,
+                )
+                .await
+                .is_err()
+            );
+
+            // R6 negative B: mismatched committee_set_hash_v2 in snapshot.
+            let mut bad_snap = base_history.clone();
+            bad_snap
+                .snapshots
+                .insert((b3.digest().0, 0), committee1.snapshot.clone());
+            assert!(
+                recover_authenticated_application_finalization(
+                    context.child("rec_dir_bad_snap"),
+                    mailbox.clone(),
+                    3,
+                    b3.digest().0,
+                    3,
+                    &bad_snap,
+                    committee_cfg,
+                )
+                .await
+                .is_err()
+            );
+
+            // R6 negative C: missing BoundaryOutcome carrier.
+            let mut no_boundary = base_history.clone();
+            if let Some(hdr1) = no_boundary.headers.get_mut(&1) {
+                hdr1.extra_data = Bytes::new();
+            }
+            assert!(
+                recover_authenticated_application_finalization(
+                    context.child("rec_dir_no_boundary"),
+                    mailbox.clone(),
+                    3,
+                    b3.digest().0,
+                    3,
+                    &no_boundary,
+                    committee_cfg,
+                )
+                .await
+                .is_err()
+            );
+
+            // R6 negative D: digest mismatch against expected_hash.
+            assert!(
+                recover_authenticated_application_finalization(
+                    context.child("rec_dir_digest_mismatch"),
+                    mailbox,
+                    3,
+                    B256::repeat_byte(0xAA),
+                    3,
+                    &base_history,
+                    committee_cfg,
+                )
+                .await
+                .is_err()
+            );
+
+            drop(keepalive);
+            handle.abort();
+            let _ = handle.await;
+        }
+
+        // 3. Cross-epoch positive: pre-H CommitteePreAnnounce(1) on canonical header 3, BoundaryOutcome(1) at 4 with Epoch(0) witness, F(5) signed by Epoch(1).
+        {
+            let provider = HybridSchemeProvider::new();
+            assert!(provider.register(Epoch::new(0), committee0.verifier.clone()));
+            assert!(provider.register(Epoch::new(1), committee1.verifier.clone()));
+            let (mut mailbox, keepalive, handle) =
+                start_recovery_marshal(context.child("m_cross"), provider).await;
+            for (r, blk) in [
+                (Round::new(Epoch::new(0), View::new(3)), b3.clone()),
+                (Round::new(Epoch::new(1), View::new(4)), b4.clone()),
+                (Round::new(Epoch::new(1), View::new(5)), b5.clone()),
+            ] {
+                assert!(
+                    mailbox
+                        .verified(
+                            r,
+                            commonware_cryptography::Digested::precomputed(
+                                blk.clone(),
+                                blk.digest(),
+                            ),
+                        )
+                        .await
+                );
+            }
+            let _ = mailbox.report(Activity::Finalization(f5.clone()));
+
+            let cross_rec = recover_authenticated_application_finalization(
+                context.child("rec_cross_ok"),
+                mailbox,
+                3,
+                b3.digest().0,
+                5,
+                &base_history,
+                committee_cfg,
+            )
+            .await
+            .expect("cross-epoch sparse recovery must succeed")
+            .expect("cross-epoch record");
+            assert_eq!(cross_rec.round, Round::new(Epoch::new(0), View::new(3)));
+            assert_eq!(
+                cross_rec.parent_proof_record.kind,
+                ProofKind::CertifiedNotarization
+            );
+
+            drop(keepalive);
+            handle.abort();
+            let _ = handle.await;
+        }
+
+        // 4. D1 anti-self-certification rejection: attacker signs BoundaryOutcome(1) at 4 with Epoch(1) instead of Epoch(0), plus attacker F(5).
+        {
+            let b3_att_pre = AuthenticatedRecoveryCommittee::block_with_extra_data(
+                3,
+                b2.digest().0,
+                attacker.preannounce_extra_data.clone(),
+            );
+            let b4_self_cert = attacker.block_with_parent_witness(
+                &b3_att_pre,
+                3,
+                2,
+                ParentParticipationProof::CertifiedNotarization,
+                attacker.boundary_extra_data.clone(),
+            );
+            let b5_att = attacker.block_with_parent_witness(
+                &b4_self_cert,
+                4,
+                3,
+                ParentParticipationProof::CertifiedNotarization,
+                Bytes::new(),
+            );
+            let f5_att = attacker.sign_finalization(5, 4, b5_att.digest());
+
+            let mut att_history = base_history.clone();
+            att_history.headers.insert(
+                3,
+                AuthenticatedRecoveryCommittee::header_record(&b3_att_pre),
+            );
+            att_history
+                .snapshots
+                .insert((b3_att_pre.digest().0, 0), committee0.snapshot.clone());
+
+            let provider = HybridSchemeProvider::new();
+            assert!(provider.register(Epoch::new(0), committee0.verifier.clone()));
+            assert!(provider.register(Epoch::new(1), attacker.verifier.clone()));
+            let (mut mailbox, keepalive, handle) =
+                start_recovery_marshal(context.child("m_d1"), provider).await;
+            for (r, blk) in [
+                (Round::new(Epoch::new(0), View::new(3)), b3_att_pre.clone()),
+                (
+                    Round::new(Epoch::new(1), View::new(4)),
+                    b4_self_cert.clone(),
+                ),
+                (Round::new(Epoch::new(1), View::new(5)), b5_att.clone()),
+            ] {
+                assert!(
+                    mailbox
+                        .verified(
+                            r,
+                            commonware_cryptography::Digested::precomputed(
+                                blk.clone(),
+                                blk.digest(),
+                            ),
+                        )
+                        .await
+                );
+            }
+            let _ = mailbox.report(Activity::Finalization(f5_att));
+
+            assert!(
+                recover_authenticated_application_finalization(
+                    context.child("rec_d1_reject"),
+                    mailbox,
+                    3,
+                    b3_att_pre.digest().0,
+                    5,
+                    &att_history,
+                    committee_cfg,
+                )
+                .await
+                .is_err(),
+                "D1 gate must reject self-certified BoundaryOutcome(1) lacking Epoch(0) parent witness"
+            );
+
+            drop(keepalive);
+            handle.abort();
+            let _ = handle.await;
+        }
+
+        // 5. CN child witness without any descendant F(K) fails closed; broken parent link fails closed.
+        {
+            let provider = HybridSchemeProvider::new();
+            assert!(provider.register(Epoch::new(0), committee0.verifier.clone()));
+            let (mailbox, keepalive, handle) =
+                start_recovery_marshal(context.child("m_nocert"), provider).await;
+            for (r, blk) in [
+                (Round::new(Epoch::new(0), View::new(3)), b3.clone()),
+                (Round::new(Epoch::new(0), View::new(4)), b4.clone()),
+            ] {
+                assert!(
+                    mailbox
+                        .verified(
+                            r,
+                            commonware_cryptography::Digested::precomputed(
+                                blk.clone(),
+                                blk.digest(),
+                            ),
+                        )
+                        .await
+                );
+            }
+            assert!(
+                recover_authenticated_application_finalization(
+                    context.child("rec_no_fk"),
+                    mailbox,
+                    3,
+                    b3.digest().0,
+                    4,
+                    &base_history,
+                    committee_cfg,
+                )
+                .await
+                .is_err(),
+                "CN witness without descendant F(K) must fail closed"
+            );
+            drop(keepalive);
+            handle.abort();
+            let _ = handle.await;
+        }
+
+        {
+            // Broken parent hash at height 4 (points to genesis instead of b3).
+            let b4_broken = AuthenticatedRecoveryCommittee::block_with_extra_data(
+                4,
+                genesis.digest().0,
+                Bytes::new(),
+            );
+            let f4_broken = committee0.sign_finalization(4, 3, b4_broken.digest());
+            let provider = HybridSchemeProvider::new();
+            assert!(provider.register(Epoch::new(0), committee0.verifier.clone()));
+            let (mut mailbox, keepalive, handle) =
+                start_recovery_marshal(context.child("m_broken"), provider).await;
+            for (r, blk) in [
+                (Round::new(Epoch::new(0), View::new(3)), b3.clone()),
+                (Round::new(Epoch::new(0), View::new(4)), b4_broken.clone()),
+            ] {
+                assert!(
+                    mailbox
+                        .verified(
+                            r,
+                            commonware_cryptography::Digested::precomputed(
+                                blk.clone(),
+                                blk.digest(),
+                            ),
+                        )
+                        .await
+                );
+            }
+            let _ = mailbox.report(Activity::Finalization(f4_broken));
+            assert!(
+                recover_authenticated_application_finalization(
+                    context.child("rec_broken_parent"),
+                    mailbox,
+                    3,
+                    b3.digest().0,
+                    4,
+                    &base_history,
+                    committee_cfg,
+                )
+                .await
+                .is_err(),
+                "broken parent hash link must fail closed"
+            );
+            drop(keepalive);
+            handle.abort();
+            let _ = handle.await;
+        }
+
+        // 6. T2 cryptographic forgery negatives:
+        //    (a) Direct F(H) signed by non-committee key fails closed.
+        {
+            let forged_f3 = attacker0.sign_finalization(3, 2, b3.digest());
+            let provider = HybridSchemeProvider::new();
+            // Register attacker0 in Marshal so Marshal stores the forged cert, while
+            // recovery reconstructs the authentic committee0 from canonical history.
+            assert!(provider.register(Epoch::new(0), attacker0.verifier.clone()));
+            let (mut mailbox, keepalive, handle) =
+                start_recovery_marshal(context.child("m_forged_dir"), provider).await;
+            assert!(
+                mailbox
+                    .verified(
+                        Round::new(Epoch::new(0), View::new(3)),
+                        commonware_cryptography::Digested::precomputed(b3.clone(), b3.digest()),
+                    )
+                    .await
+            );
+            let _ = mailbox.report(Activity::Finalization(forged_f3));
+            assert!(
+                recover_authenticated_application_finalization(
+                    context.child("rec_forged_dir_f"),
+                    mailbox,
+                    3,
+                    b3.digest().0,
+                    3,
+                    &base_history,
+                    committee_cfg,
+                )
+                .await
+                .is_err(),
+                "direct F(H) signed by non-committee key must fail closed"
+            );
+            drop(keepalive);
+            handle.abort();
+            let _ = handle.await;
+        }
+
+        //    (b) Sparse F(K) signed by non-committee key fails closed.
+        {
+            let b3_plain =
+                AuthenticatedRecoveryCommittee::block_with_extra_data(3, b2.digest().0, Bytes::new());
+            let b4_valid_child = committee0.block_with_parent_witness(
+                &b3_plain,
+                3,
+                2,
+                ParentParticipationProof::CertifiedNotarization,
+                Bytes::new(),
+            );
+            let forged_f4 = attacker0.sign_finalization(4, 3, b4_valid_child.digest());
+            let mut plain_history = base_history.clone();
+            plain_history.headers.insert(
+                3,
+                AuthenticatedRecoveryCommittee::header_record(&b3_plain),
+            );
+            plain_history
+                .snapshots
+                .insert((b3_plain.digest().0, 0), committee0.snapshot.clone());
+
+            let provider = HybridSchemeProvider::new();
+            assert!(provider.register(Epoch::new(0), attacker0.verifier.clone()));
+            let (mut mailbox, keepalive, handle) =
+                start_recovery_marshal(context.child("m_forged_fk"), provider).await;
+            for (r, blk) in [
+                (Round::new(Epoch::new(0), View::new(3)), b3_plain.clone()),
+                (
+                    Round::new(Epoch::new(0), View::new(4)),
+                    b4_valid_child.clone(),
+                ),
+            ] {
+                assert!(
+                    mailbox
+                        .verified(
+                            r,
+                            commonware_cryptography::Digested::precomputed(
+                                blk.clone(),
+                                blk.digest(),
+                            ),
+                        )
+                        .await
+                );
+            }
+            let _ = mailbox.report(Activity::Finalization(forged_f4));
+            assert!(
+                recover_authenticated_application_finalization(
+                    context.child("rec_forged_sparse_fk"),
+                    mailbox,
+                    3,
+                    b3_plain.digest().0,
+                    4,
+                    &plain_history,
+                    RecoveryCommitteeConfig {
+                        epoch_length_blocks: 24,
+                        prepare_window_blocks: 8,
+                        activation_grace_blocks: 60,
+                    },
+                )
+                .await
+                .is_err(),
+                "sparse descendant F(K) signed by non-committee key must fail closed"
+            );
+            drop(keepalive);
+            handle.abort();
+            let _ = handle.await;
+        }
+
+        //    (c) Sparse forged child Phase-1 witness (even with valid F(K)) fails closed.
+        {
+            let b3_plain =
+                AuthenticatedRecoveryCommittee::block_with_extra_data(3, b2.digest().0, Bytes::new());
+            let b4_forged_child = attacker0.block_with_parent_witness(
+                &b3_plain,
+                3,
+                2,
+                ParentParticipationProof::CertifiedNotarization,
+                Bytes::new(),
+            );
+            let valid_f4 = committee0.sign_finalization(4, 3, b4_forged_child.digest());
+            let mut plain_history = base_history.clone();
+            plain_history.headers.insert(
+                3,
+                AuthenticatedRecoveryCommittee::header_record(&b3_plain),
+            );
+            plain_history
+                .snapshots
+                .insert((b3_plain.digest().0, 0), committee0.snapshot.clone());
+
+            let provider = HybridSchemeProvider::new();
+            assert!(provider.register(Epoch::new(0), committee0.verifier.clone()));
+            let (mut mailbox, keepalive, handle) =
+                start_recovery_marshal(context.child("m_forged_child"), provider).await;
+            for (r, blk) in [
+                (Round::new(Epoch::new(0), View::new(3)), b3_plain.clone()),
+                (
+                    Round::new(Epoch::new(0), View::new(4)),
+                    b4_forged_child.clone(),
+                ),
+            ] {
+                assert!(
+                    mailbox
+                        .verified(
+                            r,
+                            commonware_cryptography::Digested::precomputed(
+                                blk.clone(),
+                                blk.digest(),
+                            ),
+                        )
+                        .await
+                );
+            }
+            let _ = mailbox.report(Activity::Finalization(valid_f4));
+            assert!(
+                recover_authenticated_application_finalization(
+                    context.child("rec_forged_child_witness"),
+                    mailbox,
+                    3,
+                    b3_plain.digest().0,
+                    4,
+                    &plain_history,
+                    RecoveryCommitteeConfig {
+                        epoch_length_blocks: 24,
+                        prepare_window_blocks: 8,
+                        activation_grace_blocks: 60,
+                    },
+                )
+                .await
+                .is_err(),
+                "sparse child Phase-1 witness signed by non-committee key must fail closed"
+            );
+            drop(keepalive);
+            handle.abort();
+            let _ = handle.await;
+        }
+    });
+}

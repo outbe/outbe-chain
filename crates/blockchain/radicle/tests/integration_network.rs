@@ -270,6 +270,8 @@ async fn request_response_and_signed_evidence() {
             local,
         },
     ));
+    // Wait for the service command loop to reply before sending the first refresh.
+    let _ = resolver.take_repository_messages().await;
     let current = snapshot(10, &signer_a, &signer_b, true);
 
     assert!(resolver.refresh(&current).await.unwrap().is_empty());
@@ -341,6 +343,8 @@ async fn response_gate() {
             local: local_identity(),
         },
     ));
+    // Wait for the service command loop to reply before sending the first refresh.
+    let _ = resolver.take_repository_messages().await;
     let joining = snapshot(20, &signer_a, &signer_b, false);
     resolver.refresh(&joining).await.unwrap();
     let baseline = wait_for_frames(&sent, 1).await.len();
@@ -451,6 +455,8 @@ async fn live_local_endpoint_identity_replaces_addresses_and_suppresses_stale_re
             local,
         },
     ));
+    // Wait for the service command loop to reply before sending the first refresh.
+    let _ = resolver.take_repository_messages().await;
     let current = snapshot(40, &signer_a, &signer_b, true);
     resolver.refresh(&current).await.unwrap();
     let baseline = wait_for_frames(&sent, 1).await.len();
@@ -569,6 +575,8 @@ async fn future_anchor_evidence_is_published_only_after_exact_resolution() {
             local: local_identity(),
         },
     ));
+    // Wait for the service command loop to reply before sending the first refresh.
+    let _ = resolver.take_repository_messages().await;
     let at_30 = snapshot(30, &signer_a, &signer_b, true);
     let at_31 = snapshot(31, &signer_a, &signer_b, true);
     resolver.refresh(&at_30).await.unwrap();
