@@ -17,7 +17,7 @@ pub(crate) fn forfeit_through(
     budget: &mut PassBudget,
 ) -> Result<deadline_queue::Progress> {
     let queue = GemContract::new(ctx.storage.clone());
-    deadline_queue::process_day(
+    deadline_queue::run_through_day(
         &ForfeitQueue(&queue),
         ctx,
         through_day,
@@ -46,7 +46,7 @@ impl DeadlineHandler<B256> for GemForfeit<'_, '_> {
 
     fn due(&mut self, group: B256) -> Result<Due> {
         Ok(match self.gem.group_called_at.read(&group)? != 0 {
-            true => Due::Process,
+            true => Due::Handle,
             false => Due::Drop,
         })
     }
@@ -65,7 +65,7 @@ impl DeadlineHandler<B256> for GemForfeit<'_, '_> {
 
     /// Returns the load of the group's unsettled gems in one credit and hands the gems to
     /// the cleanup. Nobody realized the load, so it goes back to the Promis reserve.
-    fn process_member(&mut self, group: B256, _member: B256) -> Result<()> {
+    fn handle_member(&mut self, group: B256, _member: B256) -> Result<()> {
         let load = self.gem.group_unsettled_load_minor.read(&group)?;
         let sub_series = self.gem.group_sub_series(group)?;
         if !load.is_zero() {

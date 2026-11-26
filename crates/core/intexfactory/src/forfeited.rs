@@ -17,7 +17,7 @@ pub(crate) fn forfeit_through(
     budget: &mut PassBudget,
 ) -> Result<deadline_queue::Progress> {
     let queue = IntexContract::new(ctx.storage.clone());
-    deadline_queue::process_day(
+    deadline_queue::run_through_day(
         &ForfeitQueue(&queue),
         ctx,
         through_day,
@@ -47,7 +47,7 @@ impl DeadlineHandler<B256> for IntexForfeit<'_, '_> {
     fn due(&mut self, group: B256) -> Result<Due> {
         Ok(match self.intex.group_member_count(group)? {
             0 => Due::Drop,
-            _ => Due::Process,
+            _ => Due::Handle,
         })
     }
 
@@ -60,7 +60,7 @@ impl DeadlineHandler<B256> for IntexForfeit<'_, '_> {
     }
 
     /// Returns the group's unrealized load to the pool in one credit.
-    fn process_member(&mut self, group: B256, _member: B256) -> Result<()> {
+    fn handle_member(&mut self, group: B256, _member: B256) -> Result<()> {
         let mut returned = U256::ZERO;
         let mut closed_events = Vec::new();
         for series_id in self.intex.group_members(group)? {

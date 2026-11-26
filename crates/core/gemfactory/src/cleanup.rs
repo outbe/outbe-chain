@@ -17,7 +17,7 @@ use crate::errors::GemFactoryError;
 pub fn cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = GemContract::new(ctx.storage.clone());
     let mut cleanup = GemCleanup::new(ctx);
-    deadline_queue::process_cleanup(
+    deadline_queue::run_with_saved_budget(
         &CleanupQueue(&queue),
         ctx,
         &queue.cleanup_budget,
@@ -49,7 +49,7 @@ impl DeadlineHandler<B256> for GemCleanup<'_, '_> {
     fn due(&mut self, group: B256) -> Result<Due> {
         Ok(match self.gem.group_gem_count.read(&group)? {
             0 => Due::Drop,
-            _ => Due::Process,
+            _ => Due::Handle,
         })
     }
 
@@ -67,7 +67,7 @@ impl DeadlineHandler<B256> for GemCleanup<'_, '_> {
         error.record_pass_failure()
     }
 
-    fn process_member(&mut self, group_key: B256, gem_id: U256) -> Result<()> {
+    fn handle_member(&mut self, group_key: B256, gem_id: U256) -> Result<()> {
         if gem_id.is_zero() {
             return Err(GemFactoryError::EmptyMemberSlotDuringCleanup { group_key }.into());
         }

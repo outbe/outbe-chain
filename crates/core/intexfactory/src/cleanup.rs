@@ -11,7 +11,7 @@ use outbe_primitives::{block::BlockRuntimeContext, error::Result, storage::Stora
 pub fn cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = IntexContract::new(ctx.storage.clone());
     let mut cleanup = IntexCleanup::new(ctx);
-    deadline_queue::process_cleanup(
+    deadline_queue::run_with_saved_budget(
         &CleanupQueue(&queue),
         ctx,
         &queue.cleanup_budget,
@@ -44,7 +44,7 @@ impl DeadlineHandler<B256> for IntexCleanup<'_, '_> {
     fn due(&mut self, group: B256) -> Result<Due> {
         Ok(match self.intex.group_member_count(group)? {
             0 => Due::Drop,
-            _ => Due::Process,
+            _ => Due::Handle,
         })
     }
 
@@ -56,7 +56,7 @@ impl DeadlineHandler<B256> for IntexCleanup<'_, '_> {
         self.intex.group_member(group, index)
     }
 
-    fn process_member(&mut self, _group: B256, series_id: SeriesId) -> Result<()> {
+    fn handle_member(&mut self, _group: B256, series_id: SeriesId) -> Result<()> {
         if outbe_intex::api::release_if_spent(self.storage, series_id)? {
             self.deleted = self.deleted.saturating_add(1);
         }

@@ -22,7 +22,7 @@ pub(crate) fn forfeit_through(
     budget: &mut PassBudget,
 ) -> Result<deadline_queue::Progress> {
     let queue = NodContract::new(ctx.storage.clone());
-    deadline_queue::process_day(
+    deadline_queue::run_through_day(
         &ForfeitQueue(&queue),
         ctx,
         through_day,
@@ -64,7 +64,7 @@ impl DeadlineHandler<B256> for NodForfeit<'_, '_> {
     fn due(&mut self, group: B256) -> Result<Due> {
         let called = self.nod.group_called_at.read(&group)? != 0;
         Ok(match called && !self.nod.group_is_forfeited.read(&group)? {
-            true => Due::Process,
+            true => Due::Handle,
             false => Due::Drop,
         })
     }
@@ -89,7 +89,7 @@ impl DeadlineHandler<B256> for NodForfeit<'_, '_> {
         GROUP_LOAD_READ_COST
     }
 
-    fn process_member(&mut self, group: B256, slot: SeriesSlot) -> Result<()> {
+    fn handle_member(&mut self, group: B256, slot: SeriesSlot) -> Result<()> {
         self.nod.group_forfeiting.write(&group, true)?;
         if let Some(sub_series) = self.nod.group_series.list(&group).get(slot.position)? {
             self.close_series(group, sub_series)?;

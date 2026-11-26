@@ -16,7 +16,7 @@ pub(crate) fn forfeit_through(
     budget: &mut PassBudget,
 ) -> Result<deadline_queue::Progress> {
     let queue = CredisContract::new(ctx.storage.clone());
-    deadline_queue::process_day(
+    deadline_queue::run_through_day(
         &ForfeitQueue(&queue),
         ctx,
         through_day,
@@ -44,7 +44,7 @@ impl DeadlineHandler<B256> for CredisForfeit<'_> {
     fn due(&mut self, group: B256) -> Result<Due> {
         // A called group closes even after every Credis has already settled.
         if self.credis.group_called_at.read(&group)? != 0 {
-            return Ok(Due::Process);
+            return Ok(Due::Handle);
         }
         Ok(Due::Drop)
     }
@@ -59,7 +59,7 @@ impl DeadlineHandler<B256> for CredisForfeit<'_> {
 
     /// Forfeits the group's Credis at once. Each one's Gratis burns and returns to the
     /// Promis reserve together, in the cleanup.
-    fn process_member(&mut self, group: B256, _member: B256) -> Result<()> {
+    fn handle_member(&mut self, group: B256, _member: B256) -> Result<()> {
         let sub_series = self.credis.group_sub_series(group)?;
         let reference_currency = self.credis.group_currency.read(&group)?;
         if self.credis.group_member_count(group)? == 0 {

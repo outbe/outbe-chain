@@ -16,7 +16,7 @@ pub(crate) fn cleanup_through(
     budget: &mut PassBudget,
 ) -> Result<deadline_queue::Progress> {
     let queue = CredisContract::new(ctx.storage.clone());
-    deadline_queue::process_day(
+    deadline_queue::run_through_day(
         &CleanupQueue(&queue),
         ctx,
         through_day,
@@ -50,7 +50,7 @@ impl DeadlineHandler<B256> for CredisCleanup<'_, '_> {
     fn due(&mut self, group: B256) -> Result<Due> {
         Ok(match self.credis.group_member_count(group)? {
             0 => Due::Drop,
-            _ => Due::Process,
+            _ => Due::Handle,
         })
     }
 
@@ -70,7 +70,7 @@ impl DeadlineHandler<B256> for CredisCleanup<'_, '_> {
         PLEDGE_BURN_COST
     }
 
-    fn process_member(&mut self, _group: B256, credis_id: U256) -> Result<()> {
+    fn handle_member(&mut self, _group: B256, credis_id: U256) -> Result<()> {
         crate::runtime::delete_forfeited_credis(self.ctx.storage.clone(), credis_id)?;
         Ok(())
     }
