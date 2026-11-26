@@ -361,6 +361,15 @@ impl NetworkConfig {
     }
 
     pub fn validate(&self) -> Result<()> {
+        self.validate_network_header()?;
+        if let Some(vm) = &self.vm {
+            self.validate_vm_defaults(vm)?;
+        }
+        self.validate_founders()?;
+        self.validate_genesis()
+    }
+
+    fn validate_network_header(&self) -> Result<()> {
         ensure!(
             self.version == CONFIG_VERSION,
             "unsupported network config version {}",
@@ -397,47 +406,49 @@ impl NetworkConfig {
             self.founders.len() >= MIN_FOUNDERS,
             "at least {MIN_FOUNDERS} founding validators are required"
         );
+        Ok(())
+    }
 
-        if let Some(vm) = &self.vm {
-            ensure!(
-                self.network != Network::Mainnet,
-                "vm deployment is not supported on mainnet"
-            );
-            ensure!(
-                !vm.vmm_home.trim().is_empty(),
-                "vm.vmm_home must not be empty"
-            );
-            ensure!(
-                safe_name(&vm.bridge),
-                "vm.bridge must use letters, digits, `-`, or `_`"
-            );
-            ensure!(
-                vm.prefix.is_some_and(|p| (1..=30).contains(&p)),
-                "vm.prefix is required and must be an IPv4 prefix length in 1..=30"
-            );
-            ensure!(
-                vm.gateway.is_some(),
-                "vm.gateway is required for VM static addressing"
-            );
-            ensure!(
-                !vm.dns.is_empty(),
-                "vm.dns is required and must list at least one IPv4 DNS server"
-            );
-            ensure!(vm.vcpu > 0, "vm.vcpu must be positive");
-            ensure!(vm.memory_gib > 0, "vm.memory_gib must be positive");
-            ensure!(vm.disk_gib > 0, "vm.disk_gib must be positive");
-            if let Some(ssh) = &vm.vmm_host {
-                validate_ssh(ssh, "vm.vmm_host")?;
-            }
+    fn validate_vm_defaults(&self, vm: &VmNetworkConfig) -> Result<()> {
+        ensure!(
+            self.network != Network::Mainnet,
+            "vm deployment is not supported on mainnet"
+        );
+        ensure!(
+            !vm.vmm_home.trim().is_empty(),
+            "vm.vmm_home must not be empty"
+        );
+        ensure!(
+            safe_name(&vm.bridge),
+            "vm.bridge must use letters, digits, `-`, or `_`"
+        );
+        ensure!(
+            vm.prefix.is_some_and(|p| (1..=30).contains(&p)),
+            "vm.prefix is required and must be an IPv4 prefix length in 1..=30"
+        );
+        ensure!(
+            vm.gateway.is_some(),
+            "vm.gateway is required for VM static addressing"
+        );
+        ensure!(
+            !vm.dns.is_empty(),
+            "vm.dns is required and must list at least one IPv4 DNS server"
+        );
+        ensure!(vm.vcpu > 0, "vm.vcpu must be positive");
+        ensure!(vm.memory_gib > 0, "vm.memory_gib must be positive");
+        ensure!(vm.disk_gib > 0, "vm.disk_gib must be positive");
+        if let Some(ssh) = &vm.vmm_host {
+            validate_ssh(ssh, "vm.vmm_host")?;
         }
+        Ok(())
+    }
 
+    fn validate_founders(&self) -> Result<()> {
         let mut names = BTreeSet::new();
         let mut ssh_targets = BTreeSet::new();
         let mut advertise_ips = BTreeSet::new();
         let mut vm_resolved: Vec<(&Founder, ResolvedFounderVm)> = Vec::new();
         let mut vm_ips_per_host: BTreeSet<(String, Ipv4Addr)> = BTreeSet::new();
-        let mut distinct_vmm_hosts: BTreeSet<String> = BTreeSet::new();
-        let mut hosts_with_explicit_offset: BTreeSet<String> = BTreeSet::new();
 
         for founder in &self.founders {
             ensure!(
@@ -451,121 +462,10 @@ impl NetworkConfig {
                 founder.name
             );
             if self.vm.is_some() {
-                ensure!(
-                    founder.ssh.is_none(),
-                    "founder {} may not set ssh when top-level vm deployment is enabled",
-                    founder.name
-                );
-                let resolved = self.resolve_founder_vm(founder)?;
-                let vm_name = format!("{}-{}", self.name, founder.name);
-                ensure!(
-                    !vm_name.is_empty() && vm_name.len() <= 63,
-                    "computed VM name `{vm_name}` exceeds 63 characters (shorten network name or founder name)"
-                );
-                ensure!(
-                    vm_name
-                        .chars()
-                        .next()
-                        .is_some_and(|ch| ch.is_ascii_alphanumeric()),
-                    "computed VM name `{vm_name}` must start with an ASCII letter or digit"
-                );
-                validate_ssh(&resolved.vmm_host, &founder.name)?;
-                ensure!(
-                    resolved.vcpu > 0,
-                    "vm.vcpu must be positive for {}",
-                    founder.name
-                );
-                ensure!(
-                    resolved.memory_gib > 0,
-                    "vm.memory_gib must be positive for {}",
-                    founder.name
-                );
-                ensure!(
-                    resolved.disk_gib > 0,
-                    "vm.disk_gib must be positive for {}",
-                    founder.name
-                );
-                ensure!(
-                    resolved.vm_ip.is_private(),
-                    "vm.vm_ip for {} must be a private IPv4 address",
-                    founder.name
-                );
-                let rpc_bind_ip = self.founder_rpc_bind_ip(founder)?;
-                ensure!(
-                    rpc_bind_ip == resolved.vm_ip,
-                    "founder {} sets rpc_bind_ip={rpc_bind_ip} != vm.vm_ip={}; \
-                     outbe-net-up requires rpc_bind_ip to match vm_ip for RPC-based readiness checks \
-                     (omit rpc_bind_ip or set it to {})",
-                    founder.name,
-                    resolved.vm_ip,
-                    resolved.vm_ip
-                );
-                outbe_operator_node_role::vm_network::StaticVmNetworkConfig {
-                    address: resolved.vm_ip,
-                    prefix_len: resolved.prefix,
-                    gateway: resolved.gateway,
-                    dns: resolved.dns.clone(),
-                }
-                .validate()
-                .wrap_err_with(|| format!("invalid static VM addressing for {}", founder.name))?;
-                ensure!(
-                    vm_ips_per_host.insert((resolved.vmm_host.host.clone(), resolved.vm_ip)),
-                    "duplicate vm.vm_ip {} on host {}",
-                    resolved.vm_ip,
-                    resolved.vmm_host.host
-                );
-                if resolved.flavor == VmFlavor::Prod {
-                    ensure!(
-                        resolved.authorized_keys.is_none(),
-                        "prod VM flavor does not allow authorized_keys for {}",
-                        founder.name
-                    );
-                }
-                // Validate port_offset arithmetic and per-founder RPC port up front.
-                let published = FounderPublishedPorts::from_offset(resolved.port_offset)
-                    .wrap_err_with(|| format!("invalid vm.port_offset for {}", founder.name))?;
-                outbe_operator_node_role::vm_network::VmPortsConfig {
-                    rpc_port: founder.rpc_port(),
-                    consensus_port: published.consensus_p2p_tcp,
-                    reth_port: published.reth_p2p_tcp,
-                    discv5_port: published.reth_discv5_udp,
-                    radicle_port: published.radicle_tcp,
-                }
-                .validate()
-                .wrap_err_with(|| format!("invalid rpc_port for {}", founder.name))?;
-                distinct_vmm_hosts.insert(resolved.vmm_host.host.clone());
-                if resolved.port_offset_explicit {
-                    hosts_with_explicit_offset.insert(resolved.vmm_host.host.clone());
-                }
+                let resolved = self.validate_vm_founder(founder, &mut vm_ips_per_host)?;
                 vm_resolved.push((founder, resolved));
             } else {
-                ensure!(
-                    founder.vm.is_none(),
-                    "founder {} sets vm without a top-level vm section",
-                    founder.name
-                );
-                let ssh = founder
-                    .ssh
-                    .as_ref()
-                    .ok_or_else(|| eyre::eyre!("missing ssh configuration for {}", founder.name))?;
-                validate_ssh(ssh, &founder.name)?;
-                outbe_operator_node_role::vm_network::VmPortsConfig {
-                    rpc_port: founder.rpc_port(),
-                    ..outbe_operator_node_role::vm_network::VmPortsConfig::default()
-                }
-                .validate()
-                .wrap_err_with(|| format!("invalid rpc_port for {}", founder.name))?;
-                ensure!(
-                    ssh_targets.insert((&ssh.host, ssh.port)),
-                    "duplicate SSH target: {}:{}",
-                    ssh.host,
-                    ssh.port
-                );
-                ensure!(
-                    advertise_ips.insert(founder.advertise_ip),
-                    "duplicate advertise_ip: {}",
-                    founder.advertise_ip
-                );
+                validate_host_founder(founder, &mut ssh_targets, &mut advertise_ips)?;
             }
             let rpc_bind_ip = self.founder_rpc_bind_ip(founder)?;
             ensure!(
@@ -577,52 +477,102 @@ impl NetworkConfig {
                 .wrap_err_with(|| format!("invalid Hyperlane config for {}", founder.name))?;
         }
 
-        // Validate VM per-host & per-advertise_ip computed port uniqueness:
-        // - Always enforced on multi-host VM deployments (where cross-host publishing is required)
-        //   AND on any single host where at least one founder sets `vm.port_offset`.
-        // - Also enforce that no two VM founders share the exact same `(advertise_ip, proto, port)`
-        //   endpoint (catches duplicate advertise_ip without distinct port_offset, as well as
-        //   cross-service collisions like port_offset 97 where 30303 + 97 == 30400).
         if !vm_resolved.is_empty() {
-            let is_multi_host = distinct_vmm_hosts.len() > 1;
-            let mut host_ports: BTreeMap<(String, &'static str, u16), (String, &'static str)> =
-                BTreeMap::new();
-            let mut adv_ports: BTreeMap<(Ipv4Addr, &'static str, u16), (String, &'static str)> =
-                BTreeMap::new();
-
-            for (founder, resolved) in &vm_resolved {
-                let ports = FounderPublishedPorts::from_offset(resolved.port_offset)?;
-                let enforce_host_ports =
-                    is_multi_host || hosts_with_explicit_offset.contains(&resolved.vmm_host.host);
-                for (service, proto, port) in ports.bindings() {
-                    if enforce_host_ports {
-                        if let Some((prev_founder, prev_service)) = host_ports.insert(
-                            (resolved.vmm_host.host.clone(), proto, port),
-                            (founder.name.clone(), service),
-                        ) {
-                            eyre::bail!(
-                                "computed host port collision on `{}`: {} ({service}/{proto}:{port}) collides with {} ({prev_service}/{proto}:{port}); assign distinct `vm.port_offset` values per host",
-                                resolved.vmm_host.host,
-                                founder.name,
-                                prev_founder
-                            );
-                        }
-                    }
-                    if let Some((prev_founder, prev_service)) = adv_ports.insert(
-                        (founder.advertise_ip, proto, port),
-                        (founder.name.clone(), service),
-                    ) {
-                        eyre::bail!(
-                            "computed advertised endpoint collision on `{}`: {} ({service}/{proto}:{port}) collides with {} ({prev_service}/{proto}:{port}); assign distinct `advertise_ip` or `vm.port_offset` values",
-                            founder.advertise_ip,
-                            founder.name,
-                            prev_founder
-                        );
-                    }
-                }
-            }
+            validate_vm_port_uniqueness(&vm_resolved)?;
         }
+        Ok(())
+    }
 
+    fn validate_vm_founder(
+        &self,
+        founder: &Founder,
+        vm_ips_per_host: &mut BTreeSet<(String, Ipv4Addr)>,
+    ) -> Result<ResolvedFounderVm> {
+        ensure!(
+            founder.ssh.is_none(),
+            "founder {} may not set ssh when top-level vm deployment is enabled",
+            founder.name
+        );
+        let resolved = self.resolve_founder_vm(founder)?;
+        let vm_name = format!("{}-{}", self.name, founder.name);
+        ensure!(
+            !vm_name.is_empty() && vm_name.len() <= 63,
+            "computed VM name `{vm_name}` exceeds 63 characters (shorten network name or founder name)"
+        );
+        ensure!(
+            vm_name
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_ascii_alphanumeric()),
+            "computed VM name `{vm_name}` must start with an ASCII letter or digit"
+        );
+        validate_ssh(&resolved.vmm_host, &founder.name)?;
+        ensure!(
+            resolved.vcpu > 0,
+            "vm.vcpu must be positive for {}",
+            founder.name
+        );
+        ensure!(
+            resolved.memory_gib > 0,
+            "vm.memory_gib must be positive for {}",
+            founder.name
+        );
+        ensure!(
+            resolved.disk_gib > 0,
+            "vm.disk_gib must be positive for {}",
+            founder.name
+        );
+        ensure!(
+            resolved.vm_ip.is_private(),
+            "vm.vm_ip for {} must be a private IPv4 address",
+            founder.name
+        );
+        let rpc_bind_ip = self.founder_rpc_bind_ip(founder)?;
+        ensure!(
+            rpc_bind_ip == resolved.vm_ip,
+            "founder {} sets rpc_bind_ip={rpc_bind_ip} != vm.vm_ip={}; \
+             outbe-net-up requires rpc_bind_ip to match vm_ip for RPC-based readiness checks \
+             (omit rpc_bind_ip or set it to {})",
+            founder.name,
+            resolved.vm_ip,
+            resolved.vm_ip
+        );
+        outbe_operator_node_role::vm_network::StaticVmNetworkConfig {
+            address: resolved.vm_ip,
+            prefix_len: resolved.prefix,
+            gateway: resolved.gateway,
+            dns: resolved.dns.clone(),
+        }
+        .validate()
+        .wrap_err_with(|| format!("invalid static VM addressing for {}", founder.name))?;
+        ensure!(
+            vm_ips_per_host.insert((resolved.vmm_host.host.clone(), resolved.vm_ip)),
+            "duplicate vm.vm_ip {} on host {}",
+            resolved.vm_ip,
+            resolved.vmm_host.host
+        );
+        if resolved.flavor == VmFlavor::Prod {
+            ensure!(
+                resolved.authorized_keys.is_none(),
+                "prod VM flavor does not allow authorized_keys for {}",
+                founder.name
+            );
+        }
+        let published = FounderPublishedPorts::from_offset(resolved.port_offset)
+            .wrap_err_with(|| format!("invalid vm.port_offset for {}", founder.name))?;
+        outbe_operator_node_role::vm_network::VmPortsConfig {
+            rpc_port: founder.rpc_port(),
+            consensus_port: published.consensus_p2p_tcp,
+            reth_port: published.reth_p2p_tcp,
+            discv5_port: published.reth_discv5_udp,
+            radicle_port: published.radicle_tcp,
+        }
+        .validate()
+        .wrap_err_with(|| format!("invalid rpc_port for {}", founder.name))?;
+        Ok(resolved)
+    }
+
+    fn validate_genesis(&self) -> Result<()> {
         for (address, amount) in &self.genesis.prefunded_accounts {
             Address::from_str(address)
                 .wrap_err_with(|| format!("invalid prefunded account address: {address}"))?;
@@ -686,7 +636,6 @@ impl NetworkConfig {
         {
             eyre::bail!("genesis.overrides may not replace managed key `{key}`");
         }
-
         Ok(())
     }
 
@@ -866,6 +815,115 @@ pub fn init(path: &Path) -> Result<()> {
         "wrote network configuration to {}",
         path.display()
     ));
+    Ok(())
+}
+
+fn validate_host_founder<'a>(
+    founder: &'a Founder,
+    ssh_targets: &mut BTreeSet<(&'a str, u16)>,
+    advertise_ips: &mut BTreeSet<Ipv4Addr>,
+) -> Result<()> {
+    ensure!(
+        founder.vm.is_none(),
+        "founder {} sets vm without a top-level vm section",
+        founder.name
+    );
+    let ssh = founder
+        .ssh
+        .as_ref()
+        .ok_or_else(|| eyre::eyre!("missing ssh configuration for {}", founder.name))?;
+    validate_ssh(ssh, &founder.name)?;
+    outbe_operator_node_role::vm_network::VmPortsConfig {
+        rpc_port: founder.rpc_port(),
+        ..outbe_operator_node_role::vm_network::VmPortsConfig::default()
+    }
+    .validate()
+    .wrap_err_with(|| format!("invalid rpc_port for {}", founder.name))?;
+    ensure!(
+        ssh_targets.insert((ssh.host.as_str(), ssh.port)),
+        "duplicate SSH target: {}:{}",
+        ssh.host,
+        ssh.port
+    );
+    ensure!(
+        advertise_ips.insert(founder.advertise_ip),
+        "duplicate advertise_ip: {}",
+        founder.advertise_ip
+    );
+    Ok(())
+}
+
+fn validate_vm_port_uniqueness(vm_resolved: &[(&Founder, ResolvedFounderVm)]) -> Result<()> {
+    let distinct_vmm_hosts: BTreeSet<&str> = vm_resolved
+        .iter()
+        .map(|(_, resolved)| resolved.vmm_host.host.as_str())
+        .collect();
+    let hosts_with_explicit_offset: BTreeSet<&str> = vm_resolved
+        .iter()
+        .filter(|(_, resolved)| resolved.port_offset_explicit)
+        .map(|(_, resolved)| resolved.vmm_host.host.as_str())
+        .collect();
+    let is_multi_host = distinct_vmm_hosts.len() > 1;
+    let mut host_ports: BTreeMap<(String, &'static str, u16), (String, &'static str)> =
+        BTreeMap::new();
+    let mut adv_ports: BTreeMap<(Ipv4Addr, &'static str, u16), (String, &'static str)> =
+        BTreeMap::new();
+
+    for (founder, resolved) in vm_resolved {
+        let ports = FounderPublishedPorts::from_offset(resolved.port_offset)?;
+        let enforce_host_ports =
+            is_multi_host || hosts_with_explicit_offset.contains(resolved.vmm_host.host.as_str());
+        for (service, proto, port) in ports.bindings() {
+            if enforce_host_ports {
+                record_host_port_binding(
+                    &mut host_ports,
+                    &resolved.vmm_host.host,
+                    &founder.name,
+                    (service, proto, port),
+                )?;
+            }
+            record_advertised_port_binding(
+                &mut adv_ports,
+                founder.advertise_ip,
+                &founder.name,
+                (service, proto, port),
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn record_host_port_binding(
+    host_ports: &mut BTreeMap<(String, &'static str, u16), (String, &'static str)>,
+    host: &str,
+    founder_name: &str,
+    (service, proto, port): (&'static str, &'static str, u16),
+) -> Result<()> {
+    if let Some((prev_founder, prev_service)) = host_ports.insert(
+        (host.to_owned(), proto, port),
+        (founder_name.to_owned(), service),
+    ) {
+        eyre::bail!(
+            "computed host port collision on `{host}`: {founder_name} ({service}/{proto}:{port}) collides with {prev_founder} ({prev_service}/{proto}:{port}); assign distinct `vm.port_offset` values per host"
+        );
+    }
+    Ok(())
+}
+
+fn record_advertised_port_binding(
+    adv_ports: &mut BTreeMap<(Ipv4Addr, &'static str, u16), (String, &'static str)>,
+    advertise_ip: Ipv4Addr,
+    founder_name: &str,
+    (service, proto, port): (&'static str, &'static str, u16),
+) -> Result<()> {
+    if let Some((prev_founder, prev_service)) = adv_ports.insert(
+        (advertise_ip, proto, port),
+        (founder_name.to_owned(), service),
+    ) {
+        eyre::bail!(
+            "computed advertised endpoint collision on `{advertise_ip}`: {founder_name} ({service}/{proto}:{port}) collides with {prev_founder} ({prev_service}/{proto}:{port}); assign distinct `advertise_ip` or `vm.port_offset` values"
+        );
+    }
     Ok(())
 }
 

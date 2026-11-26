@@ -12,6 +12,12 @@ use std::{
 use eyre::{bail, ensure, Context, Result};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
+mod command;
+
+use command::{
+    capture_raw_with, capture_stdin_with, ensure_quiet_success, run_quiet_with, run_scp, run_with,
+};
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Ssh {
@@ -85,16 +91,7 @@ impl SshOptions {
 
     /// Capture stdout from SSH without trimming trailing whitespace or newlines.
     pub fn capture_ssh_raw(&self, ssh: &Ssh, label: &str, command: &str) -> Result<String> {
-        let mut process = Command::new("ssh");
-        self.ssh_endpoint_args(&mut process, ssh);
-        let output = process.arg(command).output().wrap_err("run ssh")?;
-        if !output.status.success() {
-            bail!(
-                "SSH command failed on {label}: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            );
-        }
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+        capture_raw_with(self.ssh_command(ssh, None), label, command)
     }
 
     pub fn capture_ssh_stdin(
@@ -104,41 +101,15 @@ impl SshOptions {
         command: &str,
         stdin_bytes: &[u8],
     ) -> Result<String> {
-        let mut process = Command::new("ssh");
-        self.ssh_endpoint_args(&mut process, ssh);
-        let child = process
-            .arg(command)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .wrap_err("spawn ssh")?;
-        run_child_with_stdin(child, label, stdin_bytes)
+        capture_stdin_with(self.ssh_command(ssh, None), label, command, stdin_bytes)
     }
 
     pub fn run_ssh(&self, ssh: &Ssh, label: &str, command: &str) -> Result<()> {
-        let mut process = Command::new("ssh");
-        self.ssh_endpoint_args(&mut process, ssh);
-        let status = process.arg(command).status().wrap_err("run ssh")?;
-        ensure!(status.success(), "SSH command failed on {label}");
-        Ok(())
+        run_with(self.ssh_command(ssh, None), label, command)
     }
 
     pub fn run_quiet_ssh(&self, ssh: &Ssh, label: &str, command: &str) -> Result<()> {
-        let mut process = Command::new("ssh");
-        self.ssh_endpoint_args(&mut process, ssh);
-        let output = process.arg(command).output().wrap_err("run ssh")?;
-        if !output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let details = [stdout.trim(), stderr.trim()]
-                .into_iter()
-                .filter(|value| !value.is_empty())
-                .collect::<Vec<_>>()
-                .join("\n");
-            bail!("SSH command failed on {label}:\n{details}");
-        }
-        Ok(())
+        run_quiet_with(self.ssh_command(ssh, None), label, command)
     }
 
     /// Spawn an SSH command and stream arbitrary bytes into its stdin via `writer`.
@@ -152,11 +123,8 @@ impl SshOptions {
     where
         F: FnOnce(&mut dyn std::io::Write) -> Result<()>,
     {
-        use std::process::Stdio;
-
-        let mut process = Command::new("ssh");
-        self.ssh_endpoint_args(&mut process, ssh);
-        let mut child = process
+        let mut child = self
+            .ssh_command(ssh, None)
             .arg(command)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -179,16 +147,7 @@ impl SshOptions {
                 stderr.trim()
             );
         }
-        if !output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let details = [stdout.trim(), stderr.trim()]
-                .into_iter()
-                .filter(|value| !value.is_empty())
-                .collect::<Vec<_>>()
-                .join("\n");
-            bail!("SSH command failed on {label}:\n{details}");
-        }
+        ensure_quiet_success(&output, label)?;
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
 
@@ -200,8 +159,28 @@ impl SshOptions {
         destination: &str,
         recursive: bool,
     ) -> Result<()> {
+        let process = self.scp_copy_command(ssh, None, sources, destination, recursive);
+        run_scp(process, label)
+    }
+
+    /// Build an `ssh` command for `ssh`, optionally multiplexed over a ControlMaster socket.
+    fn ssh_command(&self, ssh: &Ssh, control_path: Option<&Path>) -> Command {
+        let mut process = Command::new("ssh");
+        self.ssh_endpoint_args_with_control(&mut process, ssh, control_path);
+        process
+    }
+
+    /// Build an `scp` command that copies `sources` to `destination` on `ssh`.
+    fn scp_copy_command(
+        &self,
+        ssh: &Ssh,
+        control_path: Option<&Path>,
+        sources: &[&Path],
+        destination: &str,
+        recursive: bool,
+    ) -> Command {
         let mut process = Command::new("scp");
-        self.scp_endpoint_args(&mut process, ssh);
+        self.scp_endpoint_args_with_control(&mut process, ssh, control_path);
         if recursive {
             process.arg("-r");
         }
@@ -211,17 +190,7 @@ impl SshOptions {
             ssh.user,
             scp_host(&ssh.host)
         ));
-        let status = process.status().wrap_err("run scp")?;
-        ensure!(status.success(), "SCP failed for {label}");
-        Ok(())
-    }
-
-    fn ssh_endpoint_args(&self, process: &mut Command, ssh: &Ssh) {
-        self.ssh_endpoint_args_with_control(process, ssh, None);
-    }
-
-    fn scp_endpoint_args(&self, process: &mut Command, ssh: &Ssh) {
-        self.scp_endpoint_args_with_control(process, ssh, None);
+        process
     }
 
     fn ssh_endpoint_args_with_control(
@@ -230,24 +199,9 @@ impl SshOptions {
         ssh: &Ssh,
         control_path: Option<&Path>,
     ) {
-        if let Some(ssh_config) = &self.ssh_config {
-            process.arg("-F").arg(ssh_config);
-        }
+        self.config_args(process);
         process.args(["-p", &ssh.port.to_string()]);
-        process.args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]);
-        self.known_hosts_args(process, ssh);
-        if let Some(ctrl) = control_path {
-            process.args(["-o", "ControlMaster=auto", "-o", "ControlPersist=60s"]);
-            process
-                .arg("-o")
-                .arg(format!("ControlPath={}", ctrl.display()));
-        }
-        if let Some(ssh_key) = &self.ssh_key {
-            if self.known_hosts.is_some() {
-                process.args(["-o", "IdentitiesOnly=yes"]);
-            }
-            process.arg("-i").arg(ssh_key);
-        }
+        self.connection_args(process, ssh, control_path);
         process.arg(format!("{}@{}", ssh.user, ssh.host));
     }
 
@@ -258,10 +212,20 @@ impl SshOptions {
         control_path: Option<&Path>,
     ) {
         process.arg("-q");
+        self.config_args(process);
+        process.args(["-P", &ssh.port.to_string()]);
+        self.connection_args(process, ssh, control_path);
+    }
+
+    /// Pass the operator SSH config file with `-F` when one is configured.
+    fn config_args(&self, process: &mut Command) {
         if let Some(ssh_config) = &self.ssh_config {
             process.arg("-F").arg(ssh_config);
         }
-        process.args(["-P", &ssh.port.to_string()]);
+    }
+
+    /// Add the batch, host key, ControlMaster, and identity options that `ssh` and `scp` share.
+    fn connection_args(&self, process: &mut Command, ssh: &Ssh, control_path: Option<&Path>) {
         process.args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]);
         self.known_hosts_args(process, ssh);
         if let Some(ctrl) = control_path {
@@ -368,9 +332,7 @@ impl SshControlSession {
                 continue;
             }
             let mut cmd = Command::new("ssh");
-            if let Some(ssh_config) = &self.options.ssh_config {
-                cmd.arg("-F").arg(ssh_config);
-            }
+            self.options.config_args(&mut cmd);
             cmd.args(["-p", &ssh.port.to_string()]);
             cmd.args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=5"]);
             cmd.arg("-S").arg(&sock);
@@ -383,88 +345,11 @@ impl SshControlSession {
         }
     }
 
-    fn capture_raw_inner(&self, ssh: &Ssh, label: &str, command: &str) -> Result<String> {
+    /// Build an `ssh` command multiplexed over the ControlMaster socket for `ssh`.
+    fn ssh_command(&self, ssh: &Ssh) -> Command {
         let sock = self.socket_for(ssh);
-        let mut process = Command::new("ssh");
-        self.options
-            .ssh_endpoint_args_with_control(&mut process, ssh, Some(&sock));
-        let output = process.arg(command).output().wrap_err("run ssh")?;
-        if !output.status.success() {
-            bail!(
-                "SSH command failed on {label}: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            );
-        }
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+        self.options.ssh_command(ssh, Some(&sock))
     }
-
-    fn capture_stdin_inner(
-        &self,
-        ssh: &Ssh,
-        label: &str,
-        command: &str,
-        stdin_bytes: &[u8],
-    ) -> Result<String> {
-        let sock = self.socket_for(ssh);
-        let mut process = Command::new("ssh");
-        self.options
-            .ssh_endpoint_args_with_control(&mut process, ssh, Some(&sock));
-        let child = process
-            .arg(command)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .wrap_err("spawn ssh")?;
-        run_child_with_stdin(child, label, stdin_bytes)
-    }
-}
-
-/// Stream `stdin_bytes` to `child` on a scoped writer thread while draining stdout/stderr via
-/// `wait_with_output`. Tolerates `BrokenPipe` if the remote exits before consuming stdin so the
-/// child is always reaped and remote stderr is surfaced as the primary error.
-fn run_child_with_stdin(
-    mut child: std::process::Child,
-    label: &str,
-    stdin_bytes: &[u8],
-) -> Result<String> {
-    use std::io::{ErrorKind, Write};
-
-    let stdin = child.stdin.take();
-    let (write_res, output) = std::thread::scope(|scope| {
-        let writer = scope.spawn(move || -> std::io::Result<()> {
-            if let Some(mut pipe) = stdin {
-                if let Err(err) = pipe.write_all(stdin_bytes) {
-                    if err.kind() != ErrorKind::BrokenPipe {
-                        return Err(err);
-                    }
-                }
-            }
-            Ok(())
-        });
-        let output = child.wait_with_output().wrap_err("wait for ssh");
-        let write_res = match writer.join() {
-            Ok(res) => res,
-            Err(_) => Err(std::io::Error::other("ssh stdin writer thread panicked")),
-        };
-        (write_res, output)
-    });
-
-    let output = output?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let detail = stderr.trim();
-        if detail.is_empty() {
-            if let Err(write_err) = write_res {
-                bail!("SSH command failed on {label} (stdin write error: {write_err})");
-            }
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            bail!("SSH command failed on {label}: {}", stdout.trim());
-        }
-        bail!("SSH command failed on {label}: {detail}");
-    }
-    write_res.wrap_err("write ssh stdin")?;
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 impl Drop for SshControlSession {
@@ -475,14 +360,11 @@ impl Drop for SshControlSession {
 
 impl HostExec for SshControlSession {
     fn capture(&self, ssh: &Ssh, label: &str, command: &str) -> Result<String> {
-        Ok(self
-            .capture_raw_inner(ssh, label, command)?
-            .trim()
-            .to_owned())
+        Ok(self.capture_raw(ssh, label, command)?.trim().to_owned())
     }
 
     fn capture_raw(&self, ssh: &Ssh, label: &str, command: &str) -> Result<String> {
-        self.capture_raw_inner(ssh, label, command)
+        capture_raw_with(self.ssh_command(ssh), label, command)
     }
 
     fn capture_stdin(
@@ -492,36 +374,15 @@ impl HostExec for SshControlSession {
         command: &str,
         stdin_bytes: &[u8],
     ) -> Result<String> {
-        self.capture_stdin_inner(ssh, label, command, stdin_bytes)
+        capture_stdin_with(self.ssh_command(ssh), label, command, stdin_bytes)
     }
 
     fn run(&self, ssh: &Ssh, label: &str, command: &str) -> Result<()> {
-        let sock = self.socket_for(ssh);
-        let mut process = Command::new("ssh");
-        self.options
-            .ssh_endpoint_args_with_control(&mut process, ssh, Some(&sock));
-        let status = process.arg(command).status().wrap_err("run ssh")?;
-        ensure!(status.success(), "SSH command failed on {label}");
-        Ok(())
+        run_with(self.ssh_command(ssh), label, command)
     }
 
     fn run_quiet(&self, ssh: &Ssh, label: &str, command: &str) -> Result<()> {
-        let sock = self.socket_for(ssh);
-        let mut process = Command::new("ssh");
-        self.options
-            .ssh_endpoint_args_with_control(&mut process, ssh, Some(&sock));
-        let output = process.arg(command).output().wrap_err("run ssh")?;
-        if !output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let details = [stdout.trim(), stderr.trim()]
-                .into_iter()
-                .filter(|value| !value.is_empty())
-                .collect::<Vec<_>>()
-                .join("\n");
-            bail!("SSH command failed on {label}:\n{details}");
-        }
-        Ok(())
+        run_quiet_with(self.ssh_command(ssh), label, command)
     }
 
     fn copy_to(
@@ -533,21 +394,10 @@ impl HostExec for SshControlSession {
         recursive: bool,
     ) -> Result<()> {
         let sock = self.socket_for(ssh);
-        let mut process = Command::new("scp");
-        self.options
-            .scp_endpoint_args_with_control(&mut process, ssh, Some(&sock));
-        if recursive {
-            process.arg("-r");
-        }
-        process.args(sources);
-        process.arg(format!(
-            "{}@{}:{destination}",
-            ssh.user,
-            scp_host(&ssh.host)
-        ));
-        let status = process.status().wrap_err("run scp")?;
-        ensure!(status.success(), "SCP failed for {label}");
-        Ok(())
+        let process =
+            self.options
+                .scp_copy_command(ssh, Some(&sock), sources, destination, recursive);
+        run_scp(process, label)
     }
 }
 
@@ -828,249 +678,4 @@ const fn default_ssh_port() -> u16 {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn ssh_options_passes_dash_f_only_when_configured() {
-        let endpoint = Ssh {
-            host: "192.0.2.50".into(),
-            user: "ubuntu".into(),
-            port: 2222,
-        };
-
-        // Default leaves `-F` unset.
-        let default_opts = SshOptions::new(None, None).unwrap();
-        let mut ssh_cmd = Command::new("ssh");
-        default_opts.ssh_endpoint_args(&mut ssh_cmd, &endpoint);
-        let ssh_args: Vec<_> = ssh_cmd.get_args().collect();
-        assert!(!ssh_args.contains(&std::ffi::OsStr::new("-F")));
-
-        let mut scp_cmd = Command::new("scp");
-        default_opts.scp_endpoint_args(&mut scp_cmd, &endpoint);
-        let scp_args: Vec<_> = scp_cmd.get_args().collect();
-        assert!(!scp_args.contains(&std::ffi::OsStr::new("-F")));
-
-        // Explicit `--ssh-config /dev/null` is accepted and passes `-F /dev/null`.
-        let null_opts = SshOptions::new(None, Some(Path::new("/dev/null"))).unwrap();
-        let mut ssh_cmd = Command::new("ssh");
-        null_opts.ssh_endpoint_args(&mut ssh_cmd, &endpoint);
-        let ssh_args: Vec<_> = ssh_cmd.get_args().collect();
-        assert!(ssh_args.windows(2).any(|w| {
-            w[0] == std::ffi::OsStr::new("-F") && w[1] == std::ffi::OsStr::new("/dev/null")
-        }));
-
-        let mut scp_cmd = Command::new("scp");
-        null_opts.scp_endpoint_args(&mut scp_cmd, &endpoint);
-        let scp_args: Vec<_> = scp_cmd.get_args().collect();
-        assert!(scp_args.windows(2).any(|w| {
-            w[0] == std::ffi::OsStr::new("-F") && w[1] == std::ffi::OsStr::new("/dev/null")
-        }));
-
-        // Missing config path fails closed.
-        assert!(SshOptions::new(None, Some(Path::new("/nonexistent/outbe-ssh-config"))).is_err());
-    }
-
-    #[test]
-    fn host_exec_trait_supports_object_safe_fake_and_json_helper() {
-        struct FakeExec;
-        impl HostExec for FakeExec {
-            fn capture(&self, _ssh: &Ssh, _label: &str, command: &str) -> Result<String> {
-                Ok(command.trim().to_owned())
-            }
-            fn capture_raw(&self, _ssh: &Ssh, _label: &str, _command: &str) -> Result<String> {
-                Ok(r#"{"name":"outbe-up","version":"0.1.0"}"#.to_owned())
-            }
-            fn capture_stdin(
-                &self,
-                _ssh: &Ssh,
-                _label: &str,
-                _command: &str,
-                stdin_bytes: &[u8],
-            ) -> Result<String> {
-                Ok(String::from_utf8_lossy(stdin_bytes).into_owned())
-            }
-            fn run(&self, _ssh: &Ssh, _label: &str, _command: &str) -> Result<()> {
-                Ok(())
-            }
-            fn run_quiet(&self, _ssh: &Ssh, _label: &str, _command: &str) -> Result<()> {
-                Ok(())
-            }
-            fn copy_to(
-                &self,
-                _ssh: &Ssh,
-                _label: &str,
-                _sources: &[&Path],
-                _destination: &str,
-                _recursive: bool,
-            ) -> Result<()> {
-                Ok(())
-            }
-        }
-
-        #[derive(Debug, Deserialize, Eq, PartialEq)]
-        struct Resp {
-            name: String,
-            version: String,
-        }
-
-        let exec: Arc<dyn HostExec> = Arc::new(FakeExec);
-        let ssh = Ssh {
-            host: "192.0.2.50".into(),
-            user: "ubuntu".into(),
-            port: 22,
-        };
-        let parsed: Resp =
-            run_host_json(exec.as_ref(), &ssh, "amd", "outbe-up version --json").unwrap();
-        assert_eq!(
-            parsed,
-            Resp {
-                name: "outbe-up".into(),
-                version: "0.1.0".into(),
-            }
-        );
-        assert_eq!(
-            exec.capture_stdin(&ssh, "amd", "cat", b"hello").unwrap(),
-            "hello"
-        );
-    }
-
-    #[test]
-    fn ssh_control_session_uses_0700_dir_short_socket_and_control_master_args() {
-        let session = SshControlSession::new(None, Some(Path::new("/dev/null"))).unwrap();
-        assert_eq!(
-            fs::metadata(session.control_dir())
-                .unwrap()
-                .permissions()
-                .mode()
-                & 0o777,
-            0o700
-        );
-        let endpoint = Ssh {
-            host: "192.0.2.50".into(),
-            user: "ubuntu".into(),
-            port: 2222,
-        };
-        let sock = session.socket_for(&endpoint);
-        assert!(sock.starts_with(session.control_dir()));
-        assert!(
-            sock.to_string_lossy().len() < 100,
-            "socket path too long: {}",
-            sock.display()
-        );
-        assert_eq!(sock, session.socket_for(&endpoint));
-
-        let mut ssh_cmd = Command::new("ssh");
-        session
-            .options
-            .ssh_endpoint_args_with_control(&mut ssh_cmd, &endpoint, Some(&sock));
-        let ssh_args: Vec<String> = ssh_cmd
-            .get_args()
-            .map(|a| a.to_string_lossy().into_owned())
-            .collect();
-        assert!(ssh_args.contains(&"ControlMaster=auto".to_owned()));
-        assert!(ssh_args.contains(&"ControlPersist=60s".to_owned()));
-        assert!(ssh_args.contains(&format!("ControlPath={}", sock.display())));
-
-        let mut scp_cmd = Command::new("scp");
-        session
-            .options
-            .scp_endpoint_args_with_control(&mut scp_cmd, &endpoint, Some(&sock));
-        let scp_args: Vec<String> = scp_cmd
-            .get_args()
-            .map(|a| a.to_string_lossy().into_owned())
-            .collect();
-        assert!(scp_args.contains(&"ControlMaster=auto".to_owned()));
-        assert!(scp_args.contains(&format!("ControlPath={}", sock.display())));
-
-        session.close_all();
-    }
-
-    #[test]
-    fn run_child_with_stdin_surfaces_remote_stderr_on_early_exit_broken_pipe() {
-        let child = Command::new("sh")
-            .args(["-c", "echo 'outbe-up: staging lock busy' >&2; exit 1"])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-        // Large payload exceeds OS pipe buffer so writer hits BrokenPipe when child exits early.
-        let large_stdin = vec![b'x'; 512 * 1024];
-        let err = run_child_with_stdin(child, "host-a", &large_stdin).unwrap_err();
-        let msg = format!("{err:#}");
-        assert!(
-            msg.contains("outbe-up: staging lock busy"),
-            "expected remote stderr to be surfaced, got: {msg}"
-        );
-    }
-
-    #[test]
-    fn network_known_hosts_pins_accept_new_alias_and_permissions() {
-        let tmp = tempfile::tempdir().unwrap();
-        let state_dir = tmp.path().join("outbe-net-up");
-        let pin = prepare_known_hosts_in(
-            &state_dir,
-            "0123456789abcdef999999999999999999999999999999999999999999999999",
-        )
-        .unwrap();
-        assert_eq!(pin.identity, "0123456789abcdef");
-        assert_eq!(pin.path, state_dir.join("known-hosts-0123456789abcdef"));
-        assert_eq!(
-            fs::metadata(&state_dir).unwrap().permissions().mode() & 0o777,
-            0o700
-        );
-        assert_eq!(
-            fs::metadata(&pin.path).unwrap().permissions().mode() & 0o777,
-            0o600
-        );
-
-        let key_file = tmp.path().join("id_ed25519");
-        fs::write(&key_file, b"fake-key").unwrap();
-
-        let endpoint = Ssh {
-            host: "198.51.100.10".into(),
-            user: "ubuntu".into(),
-            port: 2222,
-        };
-        let opts = SshOptions::new(Some(&key_file), None)
-            .unwrap()
-            .with_known_hosts_file(pin.path.clone(), &pin.identity)
-            .unwrap();
-
-        let mut ssh_cmd = Command::new("ssh");
-        opts.ssh_endpoint_args(&mut ssh_cmd, &endpoint);
-        let ssh_args: Vec<String> = ssh_cmd
-            .get_args()
-            .map(|a| a.to_string_lossy().into_owned())
-            .collect();
-        assert!(ssh_args.contains(&"StrictHostKeyChecking=accept-new".to_owned()));
-        assert!(ssh_args.contains(&format!("UserKnownHostsFile={}", pin.path.display())));
-        assert!(
-            ssh_args.contains(&"HostKeyAlias=outbe-0123456789abcdef-198.51.100.10-2222".to_owned())
-        );
-        assert!(ssh_args.contains(&"IdentitiesOnly=yes".to_owned()));
-
-        let mut scp_cmd = Command::new("scp");
-        opts.scp_endpoint_args(&mut scp_cmd, &endpoint);
-        let scp_args: Vec<String> = scp_cmd
-            .get_args()
-            .map(|a| a.to_string_lossy().into_owned())
-            .collect();
-        assert!(scp_args.contains(&"StrictHostKeyChecking=accept-new".to_owned()));
-        assert!(scp_args.contains(&format!("UserKnownHostsFile={}", pin.path.display())));
-        assert!(
-            scp_args.contains(&"HostKeyAlias=outbe-0123456789abcdef-198.51.100.10-2222".to_owned())
-        );
-        assert!(scp_args.contains(&"IdentitiesOnly=yes".to_owned()));
-
-        // Without --ssh-key, IdentitiesOnly is not forced so agent/default identities still work.
-        let agent_opts = SshOptions::new(None, None)
-            .unwrap()
-            .with_known_hosts_file(pin.path, &pin.identity)
-            .unwrap();
-        let mut agent_cmd = Command::new("ssh");
-        agent_opts.ssh_endpoint_args(&mut agent_cmd, &endpoint);
-        assert!(!agent_cmd.get_args().any(|arg| arg == "IdentitiesOnly=yes"));
-    }
-}
+mod tests;

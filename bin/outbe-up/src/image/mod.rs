@@ -16,7 +16,7 @@ use eyre::{bail, ensure, Context, Result};
 use outbe_operator_vm::{
     image::{
         list_local_images, publish_local_image_verified_cancellable, remove_local_image,
-        ManagedImageInfo,
+        LocalImageSource, ManagedImageInfo,
     },
     local::default_vmm_home,
     vmm::{LocalUnixVmmTransport, VmmClient},
@@ -25,7 +25,7 @@ use outbe_operator_vm_image::{
     archive::{
         normalize_sha256, verify_archive_and_extract, verify_archive_and_extract_cancellable,
         verify_archive_file_and_extract_cancellable, verify_image_dir,
-        verify_image_dir_against_archive_manifest, MAX_EXTRACTED_BYTES,
+        verify_image_dir_against_archive_manifest, ArchiveExpectation, MAX_EXTRACTED_BYTES,
     },
     build as build_vm_image, parse_flavors, Flavor, VmImageOptions,
 };
@@ -194,9 +194,11 @@ pub fn build(args: BuildArgs) -> Result<()> {
             )?;
             let res = publish_local_image_verified_cancellable(
                 &vmm_home,
-                &extract_dir,
-                None,
-                flavor_name,
+                LocalImageSource {
+                    image_dir: &extract_dir,
+                    image_name: None,
+                    flavor_label: flavor_name,
+                },
                 &never_cancel,
                 |existing_dir| {
                     verify_image_dir_against_archive_manifest(
@@ -322,8 +324,10 @@ pub async fn fetch(args: FetchArgs) -> Result<()> {
             let manifest = verify_archive_file_and_extract_cancellable(
                 &mut archive_file,
                 &archive_label,
-                &expected_sha_clone,
-                expected_os_clone.as_deref(),
+                ArchiveExpectation {
+                    archive_sha256: &expected_sha_clone,
+                    os_image_hash: expected_os_clone.as_deref(),
+                },
                 &extract_clone,
                 &cancel_worker,
             )?;
@@ -331,9 +335,11 @@ pub async fn fetch(args: FetchArgs) -> Result<()> {
             let cancel_for_verify = Arc::clone(&cancel_worker);
             let published = publish_local_image_verified_cancellable(
                 &vmm_home_clone,
-                &extract_clone,
-                None,
-                manifest.flavor.as_str(),
+                LocalImageSource {
+                    image_dir: &extract_clone,
+                    image_name: None,
+                    flavor_label: manifest.flavor.as_str(),
+                },
                 &cancel_worker,
                 move |existing_dir| {
                     verify_image_dir_against_archive_manifest(
@@ -437,9 +443,11 @@ pub async fn import(args: ImportArgs) -> Result<()> {
         let cancel_for_verify = Arc::clone(&cancel_worker);
         let published = publish_local_image_verified_cancellable(
             &vmm_home_clone,
-            &extract_clone,
-            None,
-            manifest.flavor.as_str(),
+            LocalImageSource {
+                image_dir: &extract_clone,
+                image_name: None,
+                flavor_label: manifest.flavor.as_str(),
+            },
             &cancel_worker,
             move |existing_dir| {
                 verify_image_dir_against_archive_manifest(

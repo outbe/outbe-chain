@@ -611,6 +611,19 @@ enum StaticAddrState {
     Ready,
 }
 
+impl StaticAddrState {
+    /// Classify one matching `addr_info` entry by its DAD flags.
+    fn of_addr(addr: &Value) -> Self {
+        if addr_flag(addr, "dadfailed") {
+            Self::DadFailed
+        } else if addr_flag(addr, "tentative") {
+            Self::Tentative
+        } else {
+            Self::Ready
+        }
+    }
+}
+
 fn inspect_static_addr_state(
     raw_json: &str,
     iface: &str,
@@ -624,34 +637,30 @@ fn inspect_static_addr_state(
         .ok_or_else(|| eyre::eyre!("`ip -j -4 addr show` JSON root is not an array"))?;
 
     let target_str = address.to_string();
-    for entry in ifaces {
-        if entry.get("ifname").and_then(Value::as_str) != Some(iface) {
-            continue;
-        }
-        let Some(addrs) = entry.get("addr_info").and_then(Value::as_array) else {
-            continue;
-        };
-        for addr in addrs {
-            if addr.get("family").and_then(Value::as_str) != Some("inet") {
-                continue;
-            }
-            let local = addr.get("local").and_then(Value::as_str).unwrap_or("");
-            let plen = addr
-                .get("prefixlen")
-                .and_then(Value::as_u64)
-                .and_then(|v| u8::try_from(v).ok());
-            if local == target_str && plen == Some(prefix_len) {
-                if addr.get("dadfailed").and_then(Value::as_bool) == Some(true) {
-                    return Ok(StaticAddrState::DadFailed);
-                }
-                if addr.get("tentative").and_then(Value::as_bool) == Some(true) {
-                    return Ok(StaticAddrState::Tentative);
-                }
-                return Ok(StaticAddrState::Ready);
-            }
-        }
+    let state = ifaces
+        .iter()
+        .filter(|entry| entry.get("ifname").and_then(Value::as_str) == Some(iface))
+        .filter_map(|entry| entry.get("addr_info").and_then(Value::as_array))
+        .flatten()
+        .find(|addr| is_matching_inet_addr(addr, &target_str, prefix_len))
+        .map_or(StaticAddrState::Absent, StaticAddrState::of_addr);
+    Ok(state)
+}
+
+/// Returns true for an IPv4 `addr_info` entry with the given local address and prefix length.
+fn is_matching_inet_addr(addr: &Value, local: &str, prefix_len: u8) -> bool {
+    if addr.get("family").and_then(Value::as_str) != Some("inet") {
+        return false;
     }
-    Ok(StaticAddrState::Absent)
+    let plen = addr
+        .get("prefixlen")
+        .and_then(Value::as_u64)
+        .and_then(|v| u8::try_from(v).ok());
+    addr.get("local").and_then(Value::as_str).unwrap_or("") == local && plen == Some(prefix_len)
+}
+
+fn addr_flag(addr: &Value, name: &str) -> bool {
+    addr.get(name).and_then(Value::as_bool) == Some(true)
 }
 
 fn has_default_gateway_route(raw_json: &str, gateway: Ipv4Addr) -> Result<bool> {

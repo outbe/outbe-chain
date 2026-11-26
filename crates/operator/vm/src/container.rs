@@ -6,6 +6,8 @@
 //! is checked with `e2fsck -f -p`, resized with `resize2fs`, and mounted at
 //! `/dstack/persistent` without reformatting.
 
+pub(crate) mod subprocess;
+
 use std::{
     env,
     ffi::OsStr,
@@ -18,8 +20,6 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::atomic::{AtomicBool, Ordering},
-    thread,
-    time::{Duration, Instant},
 };
 
 use eyre::{bail, ensure, Context, Result};
@@ -30,7 +30,6 @@ use rustix::{
         SeekFrom as RustixSeekFrom, CWD,
     },
     io::Errno,
-    process::{kill_process_group, test_kill_process_group, Pid, Signal},
 };
 
 /// Standard 512-byte sector size for GPT LBA calculations.
@@ -72,6 +71,13 @@ pub(crate) enum FsEntry {
         target: String,
         mode: u32,
     },
+}
+
+/// Filesystem entries plus the deterministic identifiers derived from their content.
+#[derive(Clone, Debug)]
+pub(crate) struct DiskContents {
+    pub(crate) ids: DiskIds,
+    pub(crate) entries: Vec<FsEntry>,
 }
 
 /// Resolved external tools needed to build the container image.
@@ -122,6 +128,53 @@ pub(crate) fn ensure_output_path_absent(output: &Path) -> Result<()> {
     }
 }
 
+/// Exclusive flock on a private `.outbe-vm-disk-*` staging directory.
+///
+/// Field order ensures `dir` drops before `_lock`.
+struct LockedWorkDir {
+    dir: tempfile::TempDir,
+    _lock: OwnedFd,
+}
+
+impl LockedWorkDir {
+    /// Create the staging directory in `parent` and hold an exclusive directory flock on it for
+    /// its whole life. A brief shared flock on `parent` serializes creation against
+    /// `--cleanup-stale`, so concurrent cleanup never deletes a live disk-build staging directory.
+    fn create(parent: &Path) -> Result<Self> {
+        let parent_fd = open_dir(parent, OFlags::empty())
+            .wrap_err_with(|| format!("open staging parent {}", parent.display()))?;
+        flock(&parent_fd, FlockOperation::LockShared)
+            .map_err(io::Error::from)
+            .wrap_err_with(|| format!("lock staging parent {}", parent.display()))?;
+        let dir = tempfile::Builder::new()
+            .prefix(".outbe-vm-disk-")
+            .tempdir_in(parent)?;
+        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o700))?;
+        let lock = open_dir(dir.path(), OFlags::NOFOLLOW)
+            .wrap_err_with(|| format!("open staging dir {} for flock", dir.path().display()))?;
+        flock(&lock, FlockOperation::LockExclusive)
+            .map_err(io::Error::from)
+            .wrap_err_with(|| format!("flock staging dir {}", dir.path().display()))?;
+        drop(parent_fd);
+        Ok(Self { dir, _lock: lock })
+    }
+
+    fn path(&self) -> &Path {
+        self.dir.path()
+    }
+}
+
+/// Open a directory read-only with `O_CLOEXEC` plus `extra_flags`.
+fn open_dir(path: &Path, extra_flags: OFlags) -> io::Result<OwnedFd> {
+    openat(
+        CWD,
+        path,
+        OFlags::RDONLY | OFlags::DIRECTORY | extra_flags | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(io::Error::from)
+}
+
 /// Write a deterministic sparse raw GPT + ext4 disk image to `output` with mode `0600` from
 /// creation, atomic no-clobber publication (`RENAME_NOREPLACE`), and cooperative signal
 /// cancellation.
@@ -129,8 +182,7 @@ pub(crate) fn write_disk_image(
     tools: &Tools,
     output: &Path,
     disk_bytes: u64,
-    ids: &DiskIds,
-    entries: &[FsEntry],
+    contents: &DiskContents,
     cancel: &AtomicBool,
 ) -> Result<()> {
     ensure_not_canceled(cancel, "disk build")?;
@@ -141,72 +193,26 @@ pub(crate) fn write_disk_image(
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent)?;
-    // Hold an exclusive directory flock for the life of `.outbe-vm-disk-*` (serialized against
-    // `--cleanup-stale` via a brief shared flock on `parent`) so concurrent cleanup never deletes
-    // a live disk-build staging directory. Field order ensures `work` drops before `_work_lock`.
-    struct LockedWorkDir {
-        dir: tempfile::TempDir,
-        _lock: OwnedFd,
-    }
-    let work = {
-        let parent_fd = openat(
-            CWD,
-            parent,
-            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
-            Mode::empty(),
-        )
-        .map_err(io::Error::from)
-        .wrap_err_with(|| format!("open staging parent {}", parent.display()))?;
-        flock(&parent_fd, FlockOperation::LockShared)
-            .map_err(io::Error::from)
-            .wrap_err_with(|| format!("lock staging parent {}", parent.display()))?;
-        let dir = tempfile::Builder::new()
-            .prefix(".outbe-vm-disk-")
-            .tempdir_in(parent)?;
-        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o700))?;
-        let lock = openat(
-            CWD,
-            dir.path(),
-            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-            Mode::empty(),
-        )
-        .map_err(io::Error::from)
-        .wrap_err_with(|| format!("open staging dir {} for flock", dir.path().display()))?;
-        flock(&lock, FlockOperation::LockExclusive)
-            .map_err(io::Error::from)
-            .wrap_err_with(|| format!("flock staging dir {}", dir.path().display()))?;
-        drop(parent_fd);
-        LockedWorkDir { dir, _lock: lock }
-    };
-    let work_path = work.dir.path();
+    let work = LockedWorkDir::create(parent)?;
+    let work_path = work.path();
 
     // 1. Build a deterministic sparse ext4 filesystem in a 0600 standalone partition file.
     ensure_not_canceled(cancel, "disk build")?;
     let part_path = work_path.join("part.ext4");
     create_sparse_file(&part_path, part_bytes)?;
-    format_ext4(tools, &part_path, ids, cancel)?;
-    populate_ext4(tools, &part_path, work_path, entries, cancel)?;
+    format_ext4(tools, &part_path, &contents.ids, cancel)?;
+    populate_ext4(tools, &part_path, work_path, &contents.entries, cancel)?;
 
     // 2. Create the 0600 sparse raw disk image and write its deterministic GPT table.
     ensure_not_canceled(cancel, "disk build")?;
     let disk_path = work_path.join("disk.img");
     create_sparse_file(&disk_path, disk_bytes)?;
-    write_gpt(tools, &disk_path, part_sectors, ids, cancel)?;
+    write_gpt(tools, &disk_path, part_sectors, &contents.ids, cancel)?;
 
     // 3. Sparse-copy the populated ext4 partition into the disk image at 1 MiB.
     ensure_not_canceled(cancel, "disk build")?;
     copy_sparse_into(&part_path, &disk_path, PARTITION_OFFSET_BYTES, cancel)?;
-
-    // Re-assert 0600 and fsync before atomic no-clobber publication.
-    let disk_file = File::open(&disk_path)
-        .wrap_err_with(|| format!("open {} for sync", disk_path.display()))?;
-    fchmod(&disk_file, Mode::from_raw_mode(0o600))
-        .map_err(io::Error::from)
-        .wrap_err_with(|| format!("fchmod 0600 on {}", disk_path.display()))?;
-    disk_file
-        .sync_all()
-        .wrap_err_with(|| format!("fsync {}", disk_path.display()))?;
-    drop(disk_file);
+    seal_disk_file(&disk_path)?;
 
     // 4. Atomically publish the finished image without replacing any existing file or symlink.
     ensure_not_canceled(cancel, "disk publish")?;
@@ -217,31 +223,44 @@ pub(crate) fn write_disk_image(
     Ok(())
 }
 
+/// Re-assert mode 0600 and fsync before atomic no-clobber publication.
+fn seal_disk_file(disk_path: &Path) -> Result<()> {
+    let disk_file =
+        File::open(disk_path).wrap_err_with(|| format!("open {} for sync", disk_path.display()))?;
+    fchmod(&disk_file, Mode::from_raw_mode(0o600))
+        .map_err(io::Error::from)
+        .wrap_err_with(|| format!("fchmod 0600 on {}", disk_path.display()))?;
+    disk_file
+        .sync_all()
+        .wrap_err_with(|| format!("fsync {}", disk_path.display()))
+}
+
+fn already_exists_error(dst: &Path) -> eyre::Report {
+    eyre::eyre!("output disk image already exists: {}", dst.display())
+}
+
 fn publish_no_replace(src: &Path, dst: &Path) -> Result<()> {
     match renameat_with(CWD, src, CWD, dst, RenameFlags::NOREPLACE) {
         Ok(()) => Ok(()),
-        Err(Errno::EXIST) => Err(eyre::eyre!(
-            "output disk image already exists: {}",
-            dst.display()
-        )),
-        Err(Errno::INVAL | Errno::NOSYS | Errno::OPNOTSUPP) => {
-            // Fallback for filesystems without RENAME_NOREPLACE: hard_link is POSIX-atomic
-            // EEXIST even when `dst` is a dangling symlink.
-            match fs::hard_link(src, dst) {
-                Ok(()) => {
-                    let _ = fs::remove_file(src);
-                    Ok(())
-                }
-                Err(err) if err.kind() == io::ErrorKind::AlreadyExists => Err(eyre::eyre!(
-                    "output disk image already exists: {}",
-                    dst.display()
-                )),
-                Err(err) => Err(err)
-                    .wrap_err_with(|| format!("failed to publish disk image to {}", dst.display())),
-            }
-        }
+        Err(Errno::EXIST) => Err(already_exists_error(dst)),
+        Err(Errno::INVAL | Errno::NOSYS | Errno::OPNOTSUPP) => publish_by_hard_link(src, dst),
         Err(err) => Err(io::Error::from(err))
             .wrap_err_with(|| format!("failed to publish disk image to {}", dst.display())),
+    }
+}
+
+/// Fallback for filesystems without `RENAME_NOREPLACE`: `hard_link` is POSIX-atomic `EEXIST`
+/// even when `dst` is a dangling symlink.
+fn publish_by_hard_link(src: &Path, dst: &Path) -> Result<()> {
+    match fs::hard_link(src, dst) {
+        Ok(()) => {
+            let _ = fs::remove_file(src);
+            Ok(())
+        }
+        Err(err) if err.kind() == io::ErrorKind::AlreadyExists => Err(already_exists_error(dst)),
+        Err(err) => {
+            Err(err).wrap_err_with(|| format!("failed to publish disk image to {}", dst.display()))
+        }
     }
 }
 
@@ -255,15 +274,16 @@ fn ensure_not_canceled(cancel: &AtomicBool, stage: &str) -> Result<()> {
 
 fn find_in_path(tool: &str, package_hint: &str) -> Result<PathBuf> {
     let path_var = env::var_os("PATH").unwrap_or_default();
-    for dir in env::split_paths(&path_var) {
-        let candidate = dir.join(tool);
-        if let Ok(meta) = fs::metadata(&candidate) {
-            if meta.is_file() && meta.permissions().mode() & 0o111 != 0 {
-                return Ok(candidate);
-            }
-        }
-    }
-    bail!("required tool '{tool}' not found in PATH (install {package_hint})");
+    env::split_paths(&path_var)
+        .map(|dir| dir.join(tool))
+        .find(|candidate| is_executable_file(candidate))
+        .ok_or_else(|| {
+            eyre::eyre!("required tool '{tool}' not found in PATH (install {package_hint})")
+        })
+}
+
+fn is_executable_file(path: &Path) -> bool {
+    fs::metadata(path).is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
 }
 
 fn create_sparse_file(path: &Path, size: u64) -> Result<()> {
@@ -281,6 +301,13 @@ fn create_sparse_file(path: &Path, size: u64) -> Result<()> {
     Ok(())
 }
 
+/// Build an e2fsprogs command with the fixed `E2FSPROGS_FAKE_TIME` for deterministic output.
+fn e2fsprogs_command(program: &Path, args: &[&OsStr]) -> Command {
+    let mut cmd = Command::new(program);
+    cmd.args(args).env("E2FSPROGS_FAKE_TIME", FIXED_TIMESTAMP);
+    cmd
+}
+
 fn format_ext4(tools: &Tools, part_path: &Path, ids: &DiskIds, cancel: &AtomicBool) -> Result<()> {
     // Disable orphan_file for compatibility with older guest e2fsck builds.
     let extended = format!(
@@ -288,7 +315,7 @@ fn format_ext4(tools: &Tools, part_path: &Path, ids: &DiskIds, cancel: &AtomicBo
         ids.hash_seed
     );
     let block_size = EXT4_BLOCK_SIZE.to_string();
-    let stderr = run_tool_cancellable(
+    let cmd = e2fsprogs_command(
         &tools.mke2fs,
         &[
             OsStr::new("-q"),
@@ -304,13 +331,45 @@ fn format_ext4(tools: &Tools, part_path: &Path, ids: &DiskIds, cancel: &AtomicBo
             OsStr::new(&extended),
             part_path.as_os_str(),
         ],
-        Some(("E2FSPROGS_FAKE_TIME", FIXED_TIMESTAMP)),
-        None,
-        "mke2fs",
-        cancel,
-    )?;
-    let _ = stderr;
+    );
+    run_tool_cancellable(cmd, None, "mke2fs", cancel)?;
     Ok(())
+}
+
+impl FsEntry {
+    /// Render the debugfs commands that create this entry as `uid=0, gid=0` with its mode.
+    fn debugfs_commands(&self) -> Result<String> {
+        match self {
+            Self::Dir { target, mode } => {
+                ensure_safe_debugfs_arg(target)?;
+                let mode_octal = 0o040000 | (mode & 0o7777);
+                Ok(format!(
+                    "mkdir \"{target}\"\n\
+                     set_inode_field \"{target}\" uid 0\n\
+                     set_inode_field \"{target}\" gid 0\n\
+                     set_inode_field \"{target}\" mode 0{mode_octal:o}\n"
+                ))
+            }
+            Self::File {
+                source,
+                target,
+                mode,
+            } => {
+                let source_str = source
+                    .to_str()
+                    .ok_or_else(|| eyre::eyre!("non-UTF-8 source path: {}", source.display()))?;
+                ensure_safe_debugfs_arg(source_str)?;
+                ensure_safe_debugfs_arg(target)?;
+                let mode_octal = 0o100000 | (mode & 0o7777);
+                Ok(format!(
+                    "write \"{source_str}\" \"{target}\"\n\
+                     set_inode_field \"{target}\" uid 0\n\
+                     set_inode_field \"{target}\" gid 0\n\
+                     set_inode_field \"{target}\" mode 0{mode_octal:o}\n"
+                ))
+            }
+        }
+    }
 }
 
 fn populate_ext4(
@@ -322,36 +381,7 @@ fn populate_ext4(
 ) -> Result<()> {
     let mut script = String::new();
     for entry in entries {
-        match entry {
-            FsEntry::Dir { target, mode } => {
-                ensure_safe_debugfs_arg(target)?;
-                let mode_octal = 0o040000 | (mode & 0o7777);
-                script.push_str(&format!(
-                    "mkdir \"{target}\"\n\
-                     set_inode_field \"{target}\" uid 0\n\
-                     set_inode_field \"{target}\" gid 0\n\
-                     set_inode_field \"{target}\" mode 0{mode_octal:o}\n"
-                ));
-            }
-            FsEntry::File {
-                source,
-                target,
-                mode,
-            } => {
-                let source_str = source
-                    .to_str()
-                    .ok_or_else(|| eyre::eyre!("non-UTF-8 source path: {}", source.display()))?;
-                ensure_safe_debugfs_arg(source_str)?;
-                ensure_safe_debugfs_arg(target)?;
-                let mode_octal = 0o100000 | (mode & 0o7777);
-                script.push_str(&format!(
-                    "write \"{source_str}\" \"{target}\"\n\
-                     set_inode_field \"{target}\" uid 0\n\
-                     set_inode_field \"{target}\" gid 0\n\
-                     set_inode_field \"{target}\" mode 0{mode_octal:o}\n"
-                ));
-            }
-        }
+        script.push_str(&entry.debugfs_commands()?);
     }
 
     let script_path = work_dir.join("populate.debugfs");
@@ -365,7 +395,7 @@ fn populate_ext4(
     script_file.sync_all()?;
     drop(script_file);
 
-    let stderr = run_tool_cancellable(
+    let cmd = e2fsprogs_command(
         &tools.debugfs,
         &[
             OsStr::new("-w"),
@@ -373,17 +403,19 @@ fn populate_ext4(
             script_path.as_os_str(),
             part_path.as_os_str(),
         ],
-        Some(("E2FSPROGS_FAKE_TIME", FIXED_TIMESTAMP)),
-        None,
-        "debugfs",
-        cancel,
-    )?;
-    // debugfs prints banner on stderr ("debugfs 1.47.0 ...") even on success; fail on real errors.
-    for line in stderr.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with("debugfs ") {
-            continue;
-        }
+    );
+    let stderr = run_tool_cancellable(cmd, None, "debugfs", cancel)?;
+    ensure_debugfs_succeeded(&stderr)
+}
+
+/// debugfs prints a banner on stderr ("debugfs 1.47.0 ...") even on success, so fail only on
+/// other non-empty lines.
+fn ensure_debugfs_succeeded(stderr: &str) -> Result<()> {
+    let error_line = stderr
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty() && !line.starts_with("debugfs "));
+    if let Some(trimmed) = error_line {
         bail!("debugfs reported an error: {trimmed}");
     }
     Ok(())
@@ -411,97 +443,37 @@ fn write_gpt(
          start={PARTITION_START_SECTOR}, size={part_sectors}, type={LINUX_FS_TYPE_GUID}, uuid={}, name=\"{PARTITION_LABEL}\"\n",
         ids.disk_guid, ids.part_guid
     );
-    let _ = run_tool_cancellable(
-        &tools.sfdisk,
-        &[OsStr::new("--quiet"), disk_path.as_os_str()],
-        None,
-        Some(script.as_bytes()),
-        "sfdisk",
-        cancel,
-    )?;
+    let mut cmd = Command::new(&tools.sfdisk);
+    cmd.args([OsStr::new("--quiet"), disk_path.as_os_str()]);
+    run_tool_cancellable(cmd, Some(script.as_bytes()), "sfdisk", cancel)?;
     Ok(())
 }
 
+/// Run `cmd` in its own process group with stdout discarded, optional stdin bytes, and captured
+/// stderr. Terminate the process group if `cancel` is set. Return stderr text on success.
 fn run_tool_cancellable(
-    program: &Path,
-    args: &[&OsStr],
-    extra_env: Option<(&str, &str)>,
+    mut cmd: Command,
     stdin_payload: Option<&[u8]>,
     label: &str,
     cancel: &AtomicBool,
 ) -> Result<String> {
     ensure_not_canceled(cancel, label)?;
-    let mut cmd = Command::new(program);
-    cmd.args(args)
-        .stdin(if stdin_payload.is_some() {
-            Stdio::piped()
-        } else {
-            Stdio::null()
-        })
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .process_group(0);
-    if let Some((k, v)) = extra_env {
-        cmd.env(k, v);
-    }
+    cmd.stdin(if stdin_payload.is_some() {
+        Stdio::piped()
+    } else {
+        Stdio::null()
+    })
+    .stdout(Stdio::null())
+    .stderr(Stdio::piped())
+    .process_group(0);
     let mut child = cmd
         .spawn()
         .wrap_err_with(|| format!("failed to execute {label}"))?;
-    let child_pid = child.id();
 
-    if let Some(bytes) = stdin_payload {
-        if let Some(mut stdin) = child.stdin.take() {
-            stdin.write_all(bytes)?;
-        }
+    if let (Some(bytes), Some(mut stdin)) = (stdin_payload, child.stdin.take()) {
+        stdin.write_all(bytes)?;
     }
-
-    let stderr_pipe = child.stderr.take();
-    let stderr_handle = thread::spawn(move || {
-        let mut buf = Vec::new();
-        if let Some(mut pipe) = stderr_pipe {
-            let _ = pipe.read_to_end(&mut buf);
-        }
-        buf
-    });
-
-    let status = loop {
-        if let Some(status) = child
-            .try_wait()
-            .wrap_err_with(|| format!("poll {label} subprocess"))?
-        {
-            break status;
-        }
-        if cancel.load(Ordering::Relaxed) {
-            terminate_process_group(child_pid);
-            let _ = child.wait();
-            let _ = stderr_handle.join();
-            bail!("{label} interrupted by signal; terminated child process group {child_pid}");
-        }
-        thread::sleep(Duration::from_millis(25));
-    };
-
-    let stderr_bytes = stderr_handle.join().unwrap_or_default();
-    let stderr = String::from_utf8_lossy(&stderr_bytes).into_owned();
-    ensure!(status.success(), "{label} failed: {}", stderr.trim());
-    Ok(stderr)
-}
-
-fn terminate_process_group(pgid_raw: u32) {
-    let Ok(pgid_i32) = i32::try_from(pgid_raw) else {
-        return;
-    };
-    let Some(pgid) = Pid::from_raw(pgid_i32) else {
-        return;
-    };
-    let _ = kill_process_group(pgid, Signal::TERM);
-    let escalate_at = Instant::now() + Duration::from_millis(500);
-    while Instant::now() < escalate_at {
-        if test_kill_process_group(pgid).is_err() {
-            return;
-        }
-        thread::sleep(Duration::from_millis(25));
-    }
-    let _ = kill_process_group(pgid, Signal::KILL);
+    subprocess::wait_cancellable(child, label, cancel)
 }
 
 fn copy_sparse_into(
@@ -535,20 +507,37 @@ fn copy_sparse_into(
         };
         src.seek(SeekFrom::Start(data_start))?;
         dst.seek(SeekFrom::Start(dest_offset + data_start))?;
-        let mut remaining = hole_start - data_start;
-        while remaining > 0 {
-            ensure_not_canceled(cancel, "sparse disk copy")?;
-            let chunk = remaining.min(buffer.len() as u64) as usize;
-            src.read_exact(&mut buffer[..chunk])?;
-            dst.write_all(&buffer[..chunk])?;
-            remaining -= chunk as u64;
-        }
+        copy_exact(
+            &mut src,
+            &mut dst,
+            hole_start - data_start,
+            &mut buffer,
+            cancel,
+        )?;
         offset = hole_start;
     }
     dst.flush()?;
     Ok(())
 }
 
+/// Copy exactly `count` bytes from the current position of `src` to the current position of `dst`.
+fn copy_exact(
+    src: &mut File,
+    dst: &mut File,
+    count: u64,
+    buffer: &mut [u8],
+    cancel: &AtomicBool,
+) -> Result<()> {
+    let mut remaining = count;
+    while remaining > 0 {
+        ensure_not_canceled(cancel, "sparse disk copy")?;
+        let chunk = remaining.min(buffer.len() as u64) as usize;
+        src.read_exact(&mut buffer[..chunk])?;
+        dst.write_all(&buffer[..chunk])?;
+        remaining -= chunk as u64;
+    }
+    Ok(())
+}
 fn copy_skipping_zeroes(
     src: &mut File,
     dst: &mut File,

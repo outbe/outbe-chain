@@ -20,9 +20,9 @@ use outbe_operator_vm::{
         logs_local_vm_with_expected_id, remove_local_vm, resolve_vmm_paths,
         start_local_vm_with_expected_id, status_all_local_vms, status_local_vm_with_expected_id,
         stop_local_vm_with_expected_id, update_local_vm_cancellable, CreateLocalVmOptions,
-        LocalVmStatusOutput, LocalVmStore, RemoveLocalVmOptions, UpdateLocalVmOptions,
-        DEFAULT_CREATE_RECOVERY_GRACE, DEFAULT_LOCAL_DISK_GIB, DEFAULT_LOCAL_FLAVOR,
-        DEFAULT_LOCAL_MEMORY_GIB, DEFAULT_LOCAL_VCPU, DEFAULT_POLL_INTERVAL,
+        LocalVmStatusOutput, LocalVmStore, RemoveLocalVmOptions, StopLocalVmOptions,
+        UpdateLocalVmOptions, DEFAULT_CREATE_RECOVERY_GRACE, DEFAULT_LOCAL_DISK_GIB,
+        DEFAULT_LOCAL_FLAVOR, DEFAULT_LOCAL_MEMORY_GIB, DEFAULT_LOCAL_VCPU, DEFAULT_POLL_INTERVAL,
     },
     vmm::{LocalUnixVmmTransport, VmmClient},
 };
@@ -59,6 +59,27 @@ pub struct LocalCreateArgs {
     pub conn: LocalConnectionArgs,
 }
 
+#[derive(Clone, Debug)]
+pub struct LocalUpdateArgs {
+    pub name: String,
+    pub expect_vm_id: Option<String>,
+    pub image: PathBuf,
+    pub image_name: Option<String>,
+    pub flavor: Option<String>,
+    pub stop_timeout: u64,
+    pub conn: LocalConnectionArgs,
+}
+
+#[derive(Clone, Debug)]
+pub struct LocalRemoveArgs {
+    pub name: String,
+    pub expect_vm_id: Option<String>,
+    pub force: bool,
+    pub forget_intent: bool,
+    pub timeout: Duration,
+    pub conn: LocalConnectionArgs,
+}
+
 fn open_local_context(
     conn: &LocalConnectionArgs,
     cancel: Option<Arc<AtomicBool>>,
@@ -83,9 +104,7 @@ fn open_local_context(
     Ok((store, client, vmm_socket, vmm_home))
 }
 
-pub async fn create(args: LocalCreateArgs) -> Result<()> {
-    // Install SIGINT/SIGTERM cancellation covering lock wait, pre-RPC checks, HTTP calls, and
-    // `qemu-img` process-group termination.
+fn spawn_cancel_watcher() -> Result<(Arc<AtomicBool>, tokio::task::JoinHandle<()>)> {
     let cancel = Arc::new(AtomicBool::new(false));
     let cancel_signal = Arc::clone(&cancel);
     let mut sigint = signal(SignalKind::interrupt()).wrap_err("register SIGINT handler")?;
@@ -96,33 +115,46 @@ pub async fn create(args: LocalCreateArgs) -> Result<()> {
             _ = sigterm.recv() => { cancel_signal.store(true, Ordering::SeqCst); }
         }
     });
+    Ok((cancel, watcher))
+}
 
-    let (store, vmm, vmm_socket, vmm_home) =
-        open_local_context(&args.conn, Some(Arc::clone(&cancel)))?;
-    let (disk_source, disk_staging_name, consume_staging) = match (args.disk, args.disk_staging) {
+fn resolve_create_disk(
+    store: &LocalVmStore,
+    disk: Option<PathBuf>,
+    disk_staging: Option<String>,
+    consume_staging: bool,
+) -> Result<(PathBuf, Option<String>, bool)> {
+    match (disk, disk_staging) {
         (Some(disk), None) => {
             eyre::ensure!(
-                !args.consume_staging,
+                !consume_staging,
                 "--consume-staging requires --disk-staging"
             );
-            (expand_tilde(&disk)?, None, false)
+            Ok((expand_tilde(&disk)?, None, false))
         }
         (None, Some(staging_name)) => {
             let expected_path = store.staged_disk_path(&staging_name)?;
-            (expected_path, Some(staging_name), args.consume_staging)
+            Ok((expected_path, Some(staging_name), consume_staging))
         }
-        (Some(_), Some(_)) => return Err(eyre::eyre!("cannot combine --disk with --disk-staging")),
-        (None, None) => {
-            return Err(eyre::eyre!(
-                "either --disk or --disk-staging must be specified"
-            ))
-        }
-    };
+        (Some(_), Some(_)) => Err(eyre::eyre!("cannot combine --disk with --disk-staging")),
+        (None, None) => Err(eyre::eyre!(
+            "either --disk or --disk-staging must be specified"
+        )),
+    }
+}
+
+pub async fn create(args: LocalCreateArgs) -> Result<()> {
+    // Install SIGINT/SIGTERM cancellation covering lock wait, pre-RPC checks, HTTP calls, and
+    // `qemu-img` process-group termination.
+    let (cancel, watcher) = spawn_cancel_watcher()?;
+    let (store, vmm, vmm_socket, vmm_home) =
+        open_local_context(&args.conn, Some(Arc::clone(&cancel)))?;
+    let (disk_source, disk_staging_name, consume_staging) =
+        resolve_create_disk(&store, args.disk, args.disk_staging, args.consume_staging)?;
     let timeout = args.timeout.map(Duration::from_secs);
-    let recovery_grace = match timeout {
-        Some(t) => DEFAULT_CREATE_RECOVERY_GRACE.min(t),
-        None => DEFAULT_CREATE_RECOVERY_GRACE,
-    };
+    let recovery_grace = timeout.map_or(DEFAULT_CREATE_RECOVERY_GRACE, |t| {
+        DEFAULT_CREATE_RECOVERY_GRACE.min(t)
+    });
     let opts = CreateLocalVmOptions {
         name: args.name,
         owner_tag: args.owner_tag,
@@ -163,23 +195,20 @@ pub async fn create(args: LocalCreateArgs) -> Result<()> {
     }
     if args.conn.json {
         println!("{}", serde_json::to_string_pretty(&out)?);
-    } else {
-        println!("Created stopped VM `{}` ({})", out.name, out.vm_id);
-        println!(
-            "  image:   {} ({})",
-            out.image_name,
-            if out.image_reused {
-                "reused"
-            } else {
-                "published"
-            }
-        );
-        println!("  bridge:  {} (mac {})", out.bridge, out.mac);
-        if let Some(ip) = out.intended_ip {
-            println!("  ip:      {ip} (service IP; configured in-guest by vm-boot)");
-        }
-        println!("  state:   {}", out.state_file.display());
+        return Ok(());
     }
+    let image_state = if out.image_reused {
+        "reused"
+    } else {
+        "published"
+    };
+    println!("Created stopped VM `{}` ({})", out.name, out.vm_id);
+    println!("  image:   {} ({image_state})", out.image_name);
+    println!("  bridge:  {} (mac {})", out.bridge, out.mac);
+    if let Some(ip) = out.intended_ip {
+        println!("  ip:      {ip} (service IP; configured in-guest by vm-boot)");
+    }
+    println!("  state:   {}", out.state_file.display());
     Ok(())
 }
 
@@ -188,14 +217,21 @@ pub fn start(name: &str, expect_vm_id: Option<&str>, conn: LocalConnectionArgs) 
     let out = start_local_vm_with_expected_id(&store, &vmm, name, expect_vm_id)?;
     if conn.json {
         println!("{}", serde_json::to_string_pretty(&out)?);
-    } else if out.already_running {
+        return Ok(());
+    }
+    let verb = if out.already_running {
+        "is already running"
+    } else {
+        "Started"
+    };
+    if out.already_running {
         println!(
-            "VM `{}` ({}) is already running (status: {})",
+            "VM `{}` ({}) {verb} (status: {})",
             out.name, out.vm_id, out.vmm_status
         );
     } else {
         println!(
-            "Started VM `{}` ({}) (status: {})",
+            "{verb} VM `{}` ({}) (status: {})",
             out.name, out.vm_id, out.vmm_status
         );
     }
@@ -215,62 +251,43 @@ pub fn stop(
         &vmm,
         name,
         expect_vm_id,
-        force,
-        timeout,
-        DEFAULT_POLL_INTERVAL,
+        StopLocalVmOptions {
+            force,
+            timeout,
+            poll_interval: DEFAULT_POLL_INTERVAL,
+        },
     )?;
     if let Some(warning) = &out.warning {
         eprintln!("{warning}");
     }
     if conn.json {
         println!("{}", serde_json::to_string_pretty(&out)?);
-    } else if out.already_stopped {
-        println!(
+        return Ok(());
+    }
+    let summary = match (out.already_stopped, out.cleared_started_flag, out.forced) {
+        (true, _, _) => format!(
             "VM `{}` ({}) is already stopped (status: {})",
             out.name, out.vm_id, out.vmm_status
-        );
-    } else if out.cleared_started_flag {
-        println!(
+        ),
+        (false, true, _) => format!(
             "Sent StopVm to exited VM `{}` ({}) to clear dstack started/auto-restart flag (status: {})",
             out.name, out.vm_id, out.vmm_status
-        );
-    } else if out.forced {
-        println!(
+        ),
+        (false, false, true) => format!(
             "Force-stopped VM `{}` ({}) (status: {})",
             out.name, out.vm_id, out.vmm_status
-        );
-    } else {
-        println!(
+        ),
+        (false, false, false) => format!(
             "Gracefully stopped VM `{}` ({}) (status: {})",
             out.name, out.vm_id, out.vmm_status
-        );
-    }
+        ),
+    };
+    println!("{summary}");
     Ok(())
 }
 
-#[derive(Clone, Debug)]
-pub struct LocalUpdateArgs {
-    pub name: String,
-    pub expect_vm_id: Option<String>,
-    pub image: PathBuf,
-    pub image_name: Option<String>,
-    pub flavor: Option<String>,
-    pub stop_timeout: u64,
-    pub conn: LocalConnectionArgs,
-}
-
 pub async fn update(args: LocalUpdateArgs) -> Result<()> {
-    let cancel = Arc::new(AtomicBool::new(false));
-    let cancel_signal = Arc::clone(&cancel);
-    let mut sigint = signal(SignalKind::interrupt()).wrap_err("register SIGINT handler")?;
-    let mut sigterm = signal(SignalKind::terminate()).wrap_err("register SIGTERM handler")?;
-    let watcher = tokio::spawn(async move {
-        tokio::select! {
-            _ = sigint.recv() => { cancel_signal.store(true, Ordering::SeqCst); }
-            _ = sigterm.recv() => { cancel_signal.store(true, Ordering::SeqCst); }
-        }
-    });
-
+    let (cancel, watcher) = spawn_cancel_watcher()?;
     let (store, vmm, _, vmm_home) = open_local_context(&args.conn, Some(Arc::clone(&cancel)))?;
     let opts = UpdateLocalVmOptions {
         name: args.name,
@@ -296,7 +313,9 @@ pub async fn update(args: LocalUpdateArgs) -> Result<()> {
 
     if args.conn.json {
         println!("{}", serde_json::to_string_pretty(&out)?);
-    } else if out.already_updated {
+        return Ok(());
+    }
+    if out.already_updated {
         println!(
             "VM `{}` ({}) is already running on image `{}` ({})",
             out.name, out.vm_id, out.image_name, out.os_image_hash
@@ -321,31 +340,22 @@ pub fn status(
         Some(path) => expand_tilde(path)?,
         None => PathBuf::from(DEFAULT_DHCP_LEASES_FILE),
     };
-    match name {
-        Some(vm_name) => {
-            let out = status_local_vm_with_expected_id(
-                &store,
-                &vmm,
-                vm_name,
-                expect_vm_id,
-                &leases_path,
-            )?;
-            if conn.json {
-                println!("{}", serde_json::to_string_pretty(&out)?);
-            } else {
-                print_status_table(&[out]);
-            }
+    let Some(vm_name) = name else {
+        let out = status_all_local_vms(&store, &vmm, &leases_path)?;
+        if conn.json {
+            println!("{}", serde_json::to_string_pretty(&out)?);
+        } else if out.is_empty() {
+            println!("No local VMs recorded in {}", store.vms_dir().display());
+        } else {
+            print_status_table(&out);
         }
-        None => {
-            let out = status_all_local_vms(&store, &vmm, &leases_path)?;
-            if conn.json {
-                println!("{}", serde_json::to_string_pretty(&out)?);
-            } else if out.is_empty() {
-                println!("No local VMs recorded in {}", store.vms_dir().display());
-            } else {
-                print_status_table(&out);
-            }
-        }
+        return Ok(());
+    };
+    let out = status_local_vm_with_expected_id(&store, &vmm, vm_name, expect_vm_id, &leases_path)?;
+    if conn.json {
+        println!("{}", serde_json::to_string_pretty(&out)?);
+    } else {
+        print_status_table(&[out]);
     }
     Ok(())
 }
@@ -360,43 +370,38 @@ pub fn logs(
     let out = logs_local_vm_with_expected_id(&store, &vmm, name, expect_vm_id, lines)?;
     if conn.json {
         println!("{}", serde_json::to_string_pretty(&out)?);
-    } else {
-        print!("{}", out.log);
-        if !out.log.is_empty() && !out.log.ends_with('\n') {
-            println!();
-        }
+        return Ok(());
+    }
+    print!("{}", out.log);
+    if !out.log.is_empty() && !out.log.ends_with('\n') {
+        println!();
     }
     Ok(())
 }
 
-pub fn remove(
-    name: &str,
-    expect_vm_id: Option<String>,
-    force: bool,
-    forget_intent: bool,
-    timeout: Duration,
-    conn: LocalConnectionArgs,
-) -> Result<()> {
-    let (store, vmm, _, _) = open_local_context(&conn, None)?;
+pub fn remove(args: LocalRemoveArgs) -> Result<()> {
+    let (store, vmm, _, _) = open_local_context(&args.conn, None)?;
     let out = remove_local_vm(
         &store,
         &vmm,
-        name,
+        &args.name,
         RemoveLocalVmOptions {
-            force,
-            forget_intent,
-            expect_vm_id,
-            timeout,
-            recovery_grace: DEFAULT_CREATE_RECOVERY_GRACE.min(timeout),
+            force: args.force,
+            forget_intent: args.forget_intent,
+            expect_vm_id: args.expect_vm_id,
+            timeout: args.timeout,
+            recovery_grace: DEFAULT_CREATE_RECOVERY_GRACE.min(args.timeout),
             poll_interval: DEFAULT_POLL_INTERVAL,
         },
     )?;
     if let Some(warning) = &out.warning {
         eprintln!("{warning}");
     }
-    if conn.json {
+    if args.conn.json {
         println!("{}", serde_json::to_string_pretty(&out)?);
-    } else if out.forgot_intent {
+        return Ok(());
+    }
+    if out.forgot_intent {
         println!(
             "Discarded unresolved Creating intent for `{}` and deleted {}",
             out.name,
@@ -413,18 +418,22 @@ pub fn remove(
     Ok(())
 }
 
+fn non_empty_or_dash(value: &str) -> &str {
+    if value.is_empty() {
+        "-"
+    } else {
+        value
+    }
+}
+
 fn print_status_table(rows: &[LocalVmStatusOutput]) {
     println!(
         "{:<20} {:<10} {:<12} {:<18} {:<16} {:<16} IMAGE",
         "NAME", "STATUS", "UPTIME", "MAC", "SERVICE_IP", "DHCP_IP"
     );
     for row in rows {
-        let uptime = if row.uptime.is_empty() {
-            "-"
-        } else {
-            &row.uptime
-        };
-        let mac = if row.mac.is_empty() { "-" } else { &row.mac };
+        let uptime = non_empty_or_dash(&row.uptime);
+        let mac = non_empty_or_dash(&row.mac);
         let service_ip = row
             .service_ip
             .or(row.intended_ip)

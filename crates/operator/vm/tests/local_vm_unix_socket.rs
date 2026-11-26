@@ -22,7 +22,7 @@ use outbe_operator_vm::{
     local::{
         create_local_vm_with_disk_stager, logs_local_vm, remove_local_vm, start_local_vm,
         status_all_local_vms, status_local_vm, stop_local_vm, CreateLocalVmOptions, LocalVmPhase,
-        LocalVmStore, RemoveLocalVmOptions, CREATE_TOKEN_ANNOTATION,
+        LocalVmStore, RemoveLocalVmOptions, StopLocalVmOptions, CREATE_TOKEN_ANNOTATION,
     },
     vmm::{LocalUnixVmmTransport, VmInfo, VmmClient},
 };
@@ -520,9 +520,11 @@ fn full_local_vm_lifecycle_over_fake_unix_socket() {
         &store,
         &vmm,
         "dev",
-        false,
-        Duration::from_millis(300),
-        Duration::from_millis(10),
+        StopLocalVmOptions {
+            force: false,
+            timeout: Duration::from_millis(300),
+            poll_interval: Duration::from_millis(10),
+        },
     )
     .unwrap_err();
     assert!(
@@ -566,9 +568,11 @@ fn full_local_vm_lifecycle_over_fake_unix_socket() {
         &store,
         &vmm,
         "dev",
-        false,
-        Duration::from_secs(2),
-        Duration::from_millis(10),
+        StopLocalVmOptions {
+            force: false,
+            timeout: Duration::from_secs(2),
+            poll_interval: Duration::from_millis(10),
+        },
     )
     .unwrap();
     assert!(!stopped.forced);

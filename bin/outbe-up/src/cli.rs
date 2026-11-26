@@ -1158,20 +1158,20 @@ impl Cli {
                     fix_permissions,
                     json,
                     timeout,
-                } => vm::local::remove(
-                    &name,
+                } => vm::local::remove(vm::local::LocalRemoveArgs {
+                    name,
                     expect_vm_id,
                     force,
                     forget_intent,
-                    Duration::from_secs(timeout),
-                    vm::local::LocalConnectionArgs {
+                    timeout: Duration::from_secs(timeout),
+                    conn: vm::local::LocalConnectionArgs {
                         vmm_socket,
                         vmm_home,
                         state_dir,
                         fix_permissions,
                         json,
                     },
-                ),
+                }),
                 VmCommand::Status {
                     name,
                     expect_vm_id,

@@ -147,18 +147,24 @@ pub(super) fn healthy(status: &FounderStatus, chain_id: u64, peers: usize) -> bo
         && status.hyperlane_healthy == Some(true)
 }
 
+pub(crate) struct RpcReadinessSample<'a> {
+    pub chain_id: Option<u64>,
+    pub finalized: Option<u64>,
+    pub execution_peers: Option<u64>,
+    pub consensus: Option<&'a ConsensusStatus>,
+}
+
 pub(crate) fn rpc_ready_for_hyperlane(
-    chain_id: Option<u64>,
-    finalized: Option<u64>,
-    execution_peers: Option<u64>,
-    consensus: Option<&ConsensusStatus>,
+    sample: &RpcReadinessSample<'_>,
     expected_chain_id: u64,
     peers: usize,
 ) -> bool {
-    let chain_matches = chain_id == Some(expected_chain_id);
-    let finality_ready = finalized.is_some_and(|height| height > 0);
-    let execution_ready = execution_peers.is_some_and(|count| count >= peers as u64);
-    let consensus_ready = consensus.is_some_and(|value| {
+    let chain_matches = sample.chain_id == Some(expected_chain_id);
+    let finality_ready = sample.finalized.is_some_and(|height| height > 0);
+    let execution_ready = sample
+        .execution_peers
+        .is_some_and(|count| count >= peers as u64);
+    let consensus_ready = sample.consensus.is_some_and(|value| {
         value.mode == "signer"
             && value.resident_ready()
             && value.has_threshold_shares
@@ -174,17 +180,16 @@ pub(super) fn ready_for_hyperlane_setup(
 ) -> bool {
     let services_ready = status.services().into_iter().all(|state| state == "active");
     let feeder_ready = status.feeder_healthy == Some(true);
+    let sample = RpcReadinessSample {
+        chain_id: status.chain_id,
+        finalized: status.finalized,
+        execution_peers: status.execution_peers,
+        consensus: status.consensus.as_ref(),
+    };
     status.error.is_none()
         && services_ready
         && feeder_ready
-        && rpc_ready_for_hyperlane(
-            status.chain_id,
-            status.finalized,
-            status.execution_peers,
-            status.consensus.as_ref(),
-            chain_id,
-            peers,
-        )
+        && rpc_ready_for_hyperlane(&sample, chain_id, peers)
 }
 
 pub(super) fn render(build: &NetworkArtifacts, statuses: &[FounderStatus]) -> String {

@@ -1,20 +1,23 @@
 //! Guest OS image validation, digest-qualified naming, and atomic host publication helpers.
 
+mod lock;
+mod stage;
+
 use std::{
-    fs,
-    io::{self, Read, Write},
-    os::unix::fs::MetadataExt,
+    fs, io,
     path::{Path, PathBuf},
-    sync::atomic::{AtomicBool, Ordering},
-    thread,
-    time::{Duration, Instant},
+    sync::atomic::AtomicBool,
+    time::Instant,
 };
 
 use eyre::{bail, ensure, Context, Result};
-use rustix::fs::{flock, openat, FlockOperation, Mode, OFlags, CWD};
 use serde::{Deserialize, Serialize};
-use walkdir::WalkDir;
 
+pub use self::lock::ImageLockGuard;
+use self::{
+    lock::{acquire_image_lock, check_image_canceled},
+    stage::copy_image_tree_cancellable,
+};
 use crate::{
     dnsmasq::{MISSING_SENTINEL, PRESENT_SENTINEL},
     shell_quote,
@@ -23,7 +26,6 @@ use crate::{
 
 const STATUS_PAGE_SIZE: u32 = 100;
 const MAX_STATUS_PAGES: u32 = 100;
-const LOCK_POLL_INTERVAL: Duration = Duration::from_millis(25);
 const ARCHIVE_MANIFEST_NAME: &str = "image-archive-manifest.json";
 const ARCHIVE_MANIFEST_VERSION: u32 = 1;
 const MAX_ARCHIVE_MANIFEST_BYTES: u64 = 4 * 1024 * 1024;
@@ -52,12 +54,14 @@ pub struct PublishedImage {
     pub reused: bool,
 }
 
-/// Exclusive `flock` guard for `<vmm_home>/image/.<name>.lock`.
+/// Local guest OS image directory to publish, plus the inputs that name it.
 ///
-/// Released automatically when dropped.
-#[derive(Debug)]
-pub struct ImageLockGuard {
-    _file: fs::File,
+/// `image_name` overrides the digest-qualified default name `outbe-vm-<flavor_label>-<hash16>`.
+#[derive(Clone, Copy, Debug)]
+pub struct LocalImageSource<'a> {
+    pub image_dir: &'a Path,
+    pub image_name: Option<&'a str>,
+    pub flavor_label: &'a str,
 }
 
 /// Result of publishing (or reusing) a local guest OS image while keeping its exclusive per-image
@@ -167,14 +171,13 @@ pub fn publish_local_image(
     image_name: Option<&str>,
     flavor_label: &str,
 ) -> Result<PublishedImage> {
-    let res = publish_local_image_with_options::<fn(&Path) -> Result<()>>(
-        vmm_home,
+    let source = LocalImageSource {
         image_dir,
         image_name,
         flavor_label,
-        None,
-        None,
-        None,
+    };
+    let res = publish_local_image_with_options::<fn(&Path) -> Result<()>>(
+        vmm_home, source, None, None, None,
     )?;
     Ok(res.published)
 }
@@ -184,9 +187,7 @@ pub fn publish_local_image(
 /// the exclusive image lock before reusing an already-installed target directory.
 pub fn publish_local_image_verified_cancellable<F>(
     vmm_home: &Path,
-    image_dir: &Path,
-    image_name: Option<&str>,
-    flavor_label: &str,
+    source: LocalImageSource<'_>,
     cancel: &AtomicBool,
     verify_existing: F,
 ) -> Result<PublishedImage>
@@ -195,9 +196,7 @@ where
 {
     let res = publish_local_image_with_options(
         vmm_home,
-        image_dir,
-        image_name,
-        flavor_label,
+        source,
         None,
         Some(cancel),
         Some(verify_existing),
@@ -209,99 +208,18 @@ where
 /// held [`ImageLockGuard`] so callers can register a VM on VMM before releasing the image lock.
 pub fn publish_local_image_locked_cancellable(
     vmm_home: &Path,
-    image_dir: &Path,
-    image_name: Option<&str>,
-    flavor_label: &str,
+    source: LocalImageSource<'_>,
     deadline: Option<Instant>,
     cancel: Option<&AtomicBool>,
 ) -> Result<PublishedImageWithLock> {
     publish_local_image_with_options::<fn(&Path) -> Result<()>>(
-        vmm_home,
-        image_dir,
-        image_name,
-        flavor_label,
-        deadline,
-        cancel,
-        None,
+        vmm_home, source, deadline, cancel, None,
     )
-}
-
-fn check_image_canceled(cancel: Option<&AtomicBool>, stage: &str) -> Result<()> {
-    if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
-        bail!("image operation canceled by signal while {stage}");
-    }
-    Ok(())
-}
-
-fn acquire_image_lock(
-    image_root: &Path,
-    name: &str,
-    deadline: Option<Instant>,
-    cancel: Option<&AtomicBool>,
-) -> Result<ImageLockGuard> {
-    check_image_canceled(cancel, "acquiring image lock")?;
-    let lock_path = image_root.join(format!(".{name}.lock"));
-    let current_uid = rustix::process::getuid().as_raw();
-    if let Ok(meta) = fs::symlink_metadata(&lock_path) {
-        ensure!(
-            meta.file_type().is_file() && meta.uid() == current_uid,
-            "image lock must be a regular file owned by current uid: {}",
-            lock_path.display()
-        );
-    }
-    let lock_fd = openat(
-        CWD,
-        &lock_path,
-        OFlags::CREATE | OFlags::RDWR | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-        Mode::from_raw_mode(0o600),
-    )
-    .wrap_err_with(|| format!("open image lock {}", lock_path.display()))?;
-    let lock_file = fs::File::from(lock_fd);
-    let lock_meta = lock_file
-        .metadata()
-        .wrap_err_with(|| format!("stat image lock {}", lock_path.display()))?;
-    ensure!(
-        lock_meta.file_type().is_file() && lock_meta.uid() == current_uid,
-        "image lock must be a regular file owned by current uid: {}",
-        lock_path.display()
-    );
-
-    if deadline.is_none() && cancel.is_none() {
-        flock(&lock_file, FlockOperation::LockExclusive)
-            .wrap_err_with(|| format!("lock {}", lock_path.display()))?;
-        return Ok(ImageLockGuard { _file: lock_file });
-    }
-
-    loop {
-        check_image_canceled(cancel, "waiting for image lock")?;
-        match flock(&lock_file, FlockOperation::NonBlockingLockExclusive) {
-            Ok(()) => return Ok(ImageLockGuard { _file: lock_file }),
-            Err(err) if err == rustix::io::Errno::WOULDBLOCK || err == rustix::io::Errno::AGAIN => {
-                if let Some(dl) = deadline {
-                    let now = Instant::now();
-                    if now >= dl {
-                        bail!(
-                            "timed out waiting for exclusive image lock {}",
-                            lock_path.display()
-                        );
-                    }
-                    thread::sleep(LOCK_POLL_INTERVAL.min(dl.saturating_duration_since(now)));
-                } else {
-                    thread::sleep(LOCK_POLL_INTERVAL);
-                }
-            }
-            Err(err) => {
-                return Err(err).wrap_err_with(|| format!("lock {}", lock_path.display()));
-            }
-        }
-    }
 }
 
 fn publish_local_image_with_options<F>(
     vmm_home: &Path,
-    image_dir: &Path,
-    image_name: Option<&str>,
-    flavor_label: &str,
+    source: LocalImageSource<'_>,
     deadline: Option<Instant>,
     cancel: Option<&AtomicBool>,
     verify_existing: Option<F>,
@@ -310,70 +228,103 @@ where
     F: FnOnce(&Path) -> Result<()>,
 {
     check_image_canceled(cancel, "validating image directory")?;
-    let (name, digest) = validate_image_dir(image_dir, image_name, flavor_label)?;
+    let (name, digest) =
+        validate_image_dir(source.image_dir, source.image_name, source.flavor_label)?;
     let image_root = vmm_home.join("image");
-    if let Ok(meta) = fs::symlink_metadata(&image_root) {
-        ensure!(
-            meta.file_type().is_dir(),
-            "VMM image directory is not a real directory: {}",
-            image_root.display()
-        );
-    } else {
-        fs::create_dir_all(&image_root)
-            .wrap_err_with(|| format!("create VMM image directory {}", image_root.display()))?;
-    }
+    ensure_image_root(&image_root)?;
 
     let lock = acquire_image_lock(&image_root, &name, deadline, cancel)?;
     check_image_canceled(cancel, "checking existing image")?;
 
     let target_dir = image_root.join(&name);
-    if let Ok(meta) = fs::symlink_metadata(&target_dir) {
+    let reused = if let Ok(meta) = fs::symlink_metadata(&target_dir) {
         ensure!(
             meta.file_type().is_dir(),
             "existing image path is not a directory: {}",
             target_dir.display()
         );
-        let existing_digest_path = target_dir.join("digest.txt");
-        ensure!(
-            existing_digest_path.is_file(),
-            "existing image is missing digest.txt: {}",
-            existing_digest_path.display()
-        );
-        let existing_digest = fs::read_to_string(&existing_digest_path)
-            .wrap_err_with(|| format!("read {}", existing_digest_path.display()))?;
-        let action = decide_remote_image_action(Some(&existing_digest), &digest, &name)?;
-        debug_assert_eq!(action, RemoteImageAction::Reuse);
-        if let Some(verifier) = verify_existing {
-            verifier(&target_dir).wrap_err_with(|| {
-                format!(
-                    "refusing to reuse corrupted or unverified installed image `{name}` at {}",
-                    target_dir.display()
-                )
-            })?;
-        }
+        verify_reusable_image(&target_dir, &name, &digest, verify_existing)?;
         check_image_canceled(cancel, "verifying existing image")?;
-        return Ok(PublishedImageWithLock {
-            published: PublishedImage {
-                name,
-                digest,
-                target_dir,
-                reused: true,
-            },
-            lock,
-        });
-    }
+        true
+    } else {
+        stage_and_publish_image(source.image_dir, &image_root, &name, &digest, cancel)?;
+        false
+    };
 
-    // Stage into a unique temporary sibling directory so publication is one atomic rename.
+    Ok(PublishedImageWithLock {
+        published: PublishedImage {
+            name,
+            digest,
+            target_dir,
+            reused,
+        },
+        lock,
+    })
+}
+
+/// Use `<vmm_home>/image` when it is a real directory, or create it when it is absent.
+fn ensure_image_root(image_root: &Path) -> Result<()> {
+    if let Ok(meta) = fs::symlink_metadata(image_root) {
+        ensure!(
+            meta.file_type().is_dir(),
+            "VMM image directory is not a real directory: {}",
+            image_root.display()
+        );
+        return Ok(());
+    }
+    fs::create_dir_all(image_root)
+        .wrap_err_with(|| format!("create VMM image directory {}", image_root.display()))
+}
+
+/// Check that an installed image has the expected digest and passes `verify_existing`.
+fn verify_reusable_image<F>(
+    target_dir: &Path,
+    name: &str,
+    digest: &str,
+    verify_existing: Option<F>,
+) -> Result<()>
+where
+    F: FnOnce(&Path) -> Result<()>,
+{
+    let existing_digest_path = target_dir.join("digest.txt");
+    ensure!(
+        existing_digest_path.is_file(),
+        "existing image is missing digest.txt: {}",
+        existing_digest_path.display()
+    );
+    let existing_digest = fs::read_to_string(&existing_digest_path)
+        .wrap_err_with(|| format!("read {}", existing_digest_path.display()))?;
+    let action = decide_remote_image_action(Some(&existing_digest), digest, name)?;
+    debug_assert_eq!(action, RemoteImageAction::Reuse);
+    let Some(verifier) = verify_existing else {
+        return Ok(());
+    };
+    verifier(target_dir).wrap_err_with(|| {
+        format!(
+            "refusing to reuse corrupted or unverified installed image `{name}` at {}",
+            target_dir.display()
+        )
+    })
+}
+
+/// Copy the image into a unique temporary sibling directory, then publish it with one atomic
+/// rename.
+fn stage_and_publish_image(
+    image_dir: &Path,
+    image_root: &Path,
+    name: &str,
+    digest: &str,
+    cancel: Option<&AtomicBool>,
+) -> Result<()> {
+    let target_dir = image_root.join(name);
     let stage = tempfile::Builder::new()
         .prefix(&format!(".{name}.tmp."))
-        .tempdir_in(&image_root)
+        .tempdir_in(image_root)
         .wrap_err_with(|| format!("create staging directory in {}", image_root.display()))?;
     copy_image_tree_cancellable(image_dir, stage.path(), cancel)?;
 
-    let staged_digest = fs::read_to_string(stage.path().join("digest.txt"))
-        .wrap_err("verify staged image digest.txt")?
-        .trim()
-        .to_ascii_lowercase();
+    let staged_digest =
+        read_digest(&stage.path().join("digest.txt")).wrap_err("verify staged image digest.txt")?;
     ensure!(
         staged_digest == digest,
         "staged image digest mismatch: {staged_digest} != {digest}"
@@ -394,28 +345,22 @@ where
             )
         });
     }
-    if let Ok(parent_dir) = fs::File::open(&image_root) {
+    if let Ok(parent_dir) = fs::File::open(image_root) {
         let _ = parent_dir.sync_all();
     }
 
-    let published_digest = fs::read_to_string(target_dir.join("digest.txt"))
-        .wrap_err("read published image digest.txt")?
-        .trim()
-        .to_ascii_lowercase();
+    let published_digest =
+        read_digest(&target_dir.join("digest.txt")).wrap_err("read published image digest.txt")?;
     ensure!(
         published_digest == digest,
         "published image digest mismatch: {published_digest} != {digest}"
     );
+    Ok(())
+}
 
-    Ok(PublishedImageWithLock {
-        published: PublishedImage {
-            name,
-            digest,
-            target_dir,
-            reused: false,
-        },
-        lock,
-    })
+/// Read a `digest.txt` file as trimmed lowercase text.
+fn read_digest(path: &Path) -> io::Result<String> {
+    Ok(fs::read_to_string(path)?.trim().to_ascii_lowercase())
 }
 
 /// List all Outbe-managed guest OS images stored under `<vmm_home>/image/`.
@@ -692,62 +637,6 @@ fn list_all_vmm_vms<T: VmmTransport>(client: &VmmClient<T>) -> Result<Vec<crate:
         "VMM Status pagination exceeded {} pages while checking image references",
         MAX_STATUS_PAGES
     );
-}
-
-fn copy_image_tree_cancellable(
-    src_root: &Path,
-    dst_root: &Path,
-    cancel: Option<&AtomicBool>,
-) -> Result<()> {
-    let mut buf = [0_u8; 64 * 1024];
-    for entry in WalkDir::new(src_root).follow_links(false) {
-        check_image_canceled(cancel, "staging image tree")?;
-        let entry = entry?;
-        let path = entry.path();
-        if path == src_root {
-            continue;
-        }
-        let rel = path.strip_prefix(src_root)?;
-        let dst = dst_root.join(rel);
-        let meta = fs::symlink_metadata(path)
-            .wrap_err_with(|| format!("stat guest image entry {}", path.display()))?;
-        let ft = meta.file_type();
-        ensure!(
-            !ft.is_symlink(),
-            "refusing symlink in guest image directory: {}",
-            path.display()
-        );
-        if ft.is_dir() {
-            fs::create_dir_all(&dst)
-                .wrap_err_with(|| format!("create directory {}", dst.display()))?;
-            fs::set_permissions(&dst, meta.permissions())?;
-        } else if ft.is_file() {
-            let mut reader = fs::File::open(path)
-                .wrap_err_with(|| format!("open {} for staging copy", path.display()))?;
-            let mut writer = fs::File::create(&dst)
-                .wrap_err_with(|| format!("create {} for staging copy", dst.display()))?;
-            loop {
-                check_image_canceled(cancel, "copying staged image file")?;
-                let n = reader
-                    .read(&mut buf)
-                    .wrap_err_with(|| format!("read {}", path.display()))?;
-                if n == 0 {
-                    break;
-                }
-                writer
-                    .write_all(&buf[..n])
-                    .wrap_err_with(|| format!("write {}", dst.display()))?;
-            }
-            writer.flush()?;
-            fs::set_permissions(&dst, meta.permissions())?;
-        } else {
-            bail!(
-                "refusing non-regular entry in guest image directory: {}",
-                path.display()
-            );
-        }
-    }
-    Ok(())
 }
 
 /// Build the host shell command that reads `<vmm_home>/image/<image_name>/digest.txt` with sentinels.
@@ -1111,15 +1000,14 @@ mod tests {
 
         // Pre-canceled flag must abort without publishing.
         let canceled = AtomicBool::new(true);
-        let err = publish_local_image_verified_cancellable(
-            &vmm_home,
-            &src,
-            None,
-            "dev",
-            &canceled,
-            |_| Ok(()),
-        )
-        .unwrap_err();
+        let source = LocalImageSource {
+            image_dir: &src,
+            image_name: None,
+            flavor_label: "dev",
+        };
+        let err =
+            publish_local_image_verified_cancellable(&vmm_home, source, &canceled, |_| Ok(()))
+                .unwrap_err();
         assert!(err.to_string().contains("canceled"), "{err}");
         assert!(!vmm_home
             .join("image/outbe-vm-dev-abcdef0123456789")
@@ -1128,17 +1016,14 @@ mod tests {
         // Publish normally, then verify_existing failure refuses reuse.
         let active = AtomicBool::new(false);
         let published =
-            publish_local_image_verified_cancellable(&vmm_home, &src, None, "dev", &active, |_| {
-                Ok(())
-            })
-            .unwrap();
+            publish_local_image_verified_cancellable(&vmm_home, source, &active, |_| Ok(()))
+                .unwrap();
         assert!(!published.reused);
 
-        let err =
-            publish_local_image_verified_cancellable(&vmm_home, &src, None, "dev", &active, |_| {
-                Err(eyre::eyre!("corrupt rootfs.squashfs"))
-            })
-            .unwrap_err();
+        let err = publish_local_image_verified_cancellable(&vmm_home, source, &active, |_| {
+            Err(eyre::eyre!("corrupt rootfs.squashfs"))
+        })
+        .unwrap_err();
         assert!(
             format!("{err:#}").contains("corrupt rootfs.squashfs"),
             "{err:#}"

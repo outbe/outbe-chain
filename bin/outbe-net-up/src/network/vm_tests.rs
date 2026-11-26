@@ -1952,10 +1952,12 @@ fn c2_readiness_requires_growth_common_vrf_and_respects_no_tee() {
     assert!(!evaluate_network_readiness(
         &s_low,
         &a_low,
-        424_242,
-        3,
-        Some(100),
-        10
+        ReadinessRequirements {
+            chain_id: 424_242,
+            required_peers: 3,
+            baseline_b: Some(100),
+            min_finalized_blocks: 10,
+        },
     ));
 
     // Growth >= B + 10 with matching VRF and TEE ready -> true.
@@ -1966,10 +1968,12 @@ fn c2_readiness_requires_growth_common_vrf_and_respects_no_tee() {
     assert!(evaluate_network_readiness(
         &s_ok,
         &a_ok,
-        424_242,
-        3,
-        Some(100),
-        10
+        ReadinessRequirements {
+            chain_id: 424_242,
+            required_peers: 3,
+            baseline_b: Some(100),
+            min_finalized_blocks: 10,
+        },
     ));
 
     // Divergent VRF version -> false.
@@ -1979,10 +1983,12 @@ fn c2_readiness_requires_growth_common_vrf_and_respects_no_tee() {
     assert!(!evaluate_network_readiness(
         &s_vrf,
         &a_vrf,
-        424_242,
-        3,
-        Some(100),
-        10
+        ReadinessRequirements {
+            chain_id: 424_242,
+            required_peers: 3,
+            baseline_b: Some(100),
+            min_finalized_blocks: 10,
+        },
     ));
 
     // TEE not ready with no_tee=false -> false; with no_tee=true -> true!
@@ -1993,10 +1999,12 @@ fn c2_readiness_requires_growth_common_vrf_and_respects_no_tee() {
     assert!(!evaluate_network_readiness(
         &s_notee_fail,
         &a_nf,
-        424_242,
-        3,
-        Some(100),
-        10
+        ReadinessRequirements {
+            chain_id: 424_242,
+            required_peers: 3,
+            baseline_b: Some(100),
+            min_finalized_blocks: 10,
+        },
     ));
 
     let s_notee_ok: Vec<_> = (0..4)
@@ -2006,10 +2014,12 @@ fn c2_readiness_requires_growth_common_vrf_and_respects_no_tee() {
     assert!(evaluate_network_readiness(
         &s_notee_ok,
         &a_no,
-        424_242,
-        3,
-        Some(100),
-        10
+        ReadinessRequirements {
+            chain_id: 424_242,
+            required_peers: 3,
+            baseline_b: Some(100),
+            min_finalized_blocks: 10,
+        },
     ));
 
     // F1 regression: baseline B MUST be max(finalized) of the first full sample so a lagging node
@@ -2030,10 +2040,12 @@ fn c2_readiness_requires_growth_common_vrf_and_respects_no_tee() {
     assert!(!evaluate_network_readiness(
         &stalled_catchup,
         &a_stalled,
-        424_242,
-        3,
-        baseline,
-        10
+        ReadinessRequirements {
+            chain_id: 424_242,
+            required_peers: 3,
+            baseline_b: baseline,
+            min_finalized_blocks: 10,
+        },
     ));
 
     let grown_after_catchup: Vec<_> = (0..4)
@@ -2043,10 +2055,12 @@ fn c2_readiness_requires_growth_common_vrf_and_respects_no_tee() {
     assert!(evaluate_network_readiness(
         &grown_after_catchup,
         &a_grown,
-        424_242,
-        3,
-        baseline,
-        10
+        ReadinessRequirements {
+            chain_id: 424_242,
+            required_peers: 3,
+            baseline_b: baseline,
+            min_finalized_blocks: 10,
+        },
     ));
 }
 
@@ -4920,7 +4934,17 @@ fn vm_rpc_queries_use_configured_non_default_rpc_port() {
     assert_eq!(batch.chain_id, Some(0x67932));
     assert_eq!(batch.finalized, Some(0x10));
 
-    let hash = query_vm_block_hash(&exec, &ssh, "validator-0", ip, 18_545, 16).unwrap();
+    let hash = query_vm_block_hash(
+        &exec,
+        VmRpcTarget {
+            ssh: &ssh,
+            label: "validator-0",
+            service_ip: ip,
+            rpc_port: 18_545,
+        },
+        16,
+    )
+    .unwrap();
     assert_eq!(hash, "0xdeadbeef");
 
     let recorded = exec.commands.lock().unwrap();

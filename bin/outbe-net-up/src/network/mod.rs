@@ -1,6 +1,9 @@
 //! Founding-network build and multi-host lifecycle orchestration.
 
 pub mod build;
+mod build_genesis;
+mod build_joining;
+mod build_vm;
 pub mod config;
 pub mod prepare;
 pub(crate) mod remote;

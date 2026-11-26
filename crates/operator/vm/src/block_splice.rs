@@ -307,16 +307,14 @@ where
     validate_existing_body(existing_body)?;
     let existing_slice = &content[span.block_start..span.block_end];
 
-    let cut_start = if span.block_end == content.len()
-        && !existing_slice.ends_with('\n')
-        && span.block_start > 0
-        && content.as_bytes()[span.block_start - 1] == b'\n'
-        && !(span.block_start >= 2 && content.as_bytes()[span.block_start - 2] == b'\r')
-    {
-        span.block_start - 1
-    } else {
-        span.block_start
-    };
+    let unterminated_final_block =
+        span.block_end == content.len() && !existing_slice.ends_with('\n');
+    let cut_start =
+        if unterminated_final_block && ends_with_bare_lf(&content.as_bytes()[..span.block_start]) {
+            span.block_start - 1
+        } else {
+            span.block_start
+        };
 
     let mut out = String::with_capacity(content.len() - (span.block_end - cut_start));
     out.push_str(&content[..cut_start]);
@@ -327,6 +325,14 @@ where
         changed: true,
         existing_block: Some(existing_slice.to_owned()),
     })
+}
+
+/// True when `prefix` ends with an LF that is not part of a CRLF pair.
+///
+/// Removal of a final block without its own newline also takes this LF, so the file does not
+/// keep a dangling newline. A CRLF stays intact.
+fn ends_with_bare_lf(prefix: &[u8]) -> bool {
+    prefix.ends_with(b"\n") && !prefix.ends_with(b"\r\n")
 }
 
 #[cfg(test)]

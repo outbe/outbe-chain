@@ -17,6 +17,7 @@ walkdir.workspace = true
 
 [dev-dependencies]
 outbe-software-bundle.workspace = true
+rustix = { workspace = true, features = ["net"] }
 
 [lints]
 workspace = true

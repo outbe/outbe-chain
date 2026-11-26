@@ -1,14 +1,23 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
-    os::unix::fs::{symlink, MetadataExt, PermissionsExt},
+    os::unix::{
+        fs::{symlink, MetadataExt, PermissionsExt},
+        process::CommandExt,
+    },
     path::Path,
+    process::{Child, Command, ExitStatus, Stdio},
+    sync::atomic::{AtomicBool, Ordering},
+    thread,
+    time::Duration,
 };
 
-use eyre::{ensure, Context, Result};
+use eyre::{bail, ensure, Context, Result};
 use walkdir::WalkDir;
 
-use crate::{assets, config::NodeRole, path_text, process};
+use crate::{
+    assets, config::NodeRole, disk_tree::child::terminate_process_group, path_text, process,
+};
 
 pub(crate) const REQUIRED_SECRETS: &[&str] = &[
     "signing-key.hex",
@@ -160,43 +169,51 @@ fn read_environment_with_keys(
     let mut values = BTreeMap::new();
     let allowed = allowed_keys.iter().copied().collect::<BTreeSet<_>>();
     for line in fs::read_to_string(path)?.lines() {
-        let (name, quoted) = line
-            .split_once('=')
-            .ok_or_else(|| eyre::eyre!("invalid validator.env line: {line}"))?;
-        ensure!(allowed.contains(name), "unknown validator.env key: {name}");
-        ensure!(
-            quoted.len() >= 2 && quoted.starts_with('"') && quoted.ends_with('"'),
-            "invalid validator.env line: {line}"
-        );
-        let value = &quoted[1..quoted.len() - 1];
-        ensure!(
-            !value.contains(['"', '\n', '\r']),
-            "invalid validator.env value: {name}"
-        );
+        let (name, value) = parse_env_line(line, &allowed)?;
         ensure!(
             values.insert(name.to_owned(), value.to_owned()).is_none(),
             "duplicate validator.env key: {name}"
         );
     }
-    for name in allowed_keys.iter().copied().filter(|name| {
-        if *name == "OUTBE_CONSENSUS_EXTRA_ARGS" {
-            return false;
-        }
-        if !require_vm_static_net
-            && (*name == "OUTBE_NODE_ROLE"
-                || *name == "OUTBE_RPC_PORT"
-                || VM_STATIC_NET_KEYS.contains(name))
-        {
-            return false;
-        }
-        true
-    }) {
+    for name in allowed_keys
+        .iter()
+        .copied()
+        .filter(|name| env_key_required(name, require_vm_static_net))
+    {
         ensure!(
             values.get(name).is_some_and(|value| !value.is_empty()),
             "missing {name} in validator.env"
         );
     }
     Ok(values)
+}
+
+/// Split one `NAME="value"` line of validator.env into an allowed key and its unquoted value.
+fn parse_env_line<'a>(line: &'a str, allowed: &BTreeSet<&str>) -> Result<(&'a str, &'a str)> {
+    let (name, quoted) = line
+        .split_once('=')
+        .ok_or_else(|| eyre::eyre!("invalid validator.env line: {line}"))?;
+    ensure!(allowed.contains(name), "unknown validator.env key: {name}");
+    ensure!(
+        quoted.len() >= 2 && quoted.starts_with('"') && quoted.ends_with('"'),
+        "invalid validator.env line: {line}"
+    );
+    let value = &quoted[1..quoted.len() - 1];
+    ensure!(
+        !value.contains(['"', '\n', '\r']),
+        "invalid validator.env value: {name}"
+    );
+    Ok((name, value))
+}
+
+/// Returns true when validator.env must set `name` to a non-empty value. The VM-only keys are
+/// optional for a bare-host validator.env.
+fn env_key_required(name: &str, require_vm_static_net: bool) -> bool {
+    name != "OUTBE_CONSENSUS_EXTRA_ARGS" && (require_vm_static_net || !is_vm_only_env_key(name))
+}
+
+fn is_vm_only_env_key(name: &str) -> bool {
+    name == "OUTBE_NODE_ROLE" || name == "OUTBE_RPC_PORT" || VM_STATIC_NET_KEYS.contains(&name)
 }
 
 pub(crate) fn validate_environment(values: &BTreeMap<String, String>) -> Result<()> {
@@ -421,23 +438,15 @@ fn install_state(root: &Path, uid: u32, gid: u32) -> Result<()> {
 }
 
 pub(crate) fn verify_signing_key(bin_dir: &Path, keys_dir: &Path) -> Result<()> {
-    let never = std::sync::atomic::AtomicBool::new(false);
+    let never = AtomicBool::new(false);
     verify_signing_key_cancellable(bin_dir, keys_dir, &never)
 }
 
 pub(crate) fn verify_signing_key_cancellable(
     bin_dir: &Path,
     keys_dir: &Path,
-    cancel: &std::sync::atomic::AtomicBool,
+    cancel: &AtomicBool,
 ) -> Result<()> {
-    use std::{
-        os::unix::process::CommandExt,
-        process::{Command, Stdio},
-        sync::atomic::Ordering,
-        thread,
-        time::{Duration, Instant},
-    };
-
     ensure!(
         !cancel.load(Ordering::Relaxed),
         "outbe-keygen verify canceled by signal"
@@ -462,39 +471,30 @@ pub(crate) fn verify_signing_key_cancellable(
     let mut child = cmd
         .spawn()
         .wrap_err_with(|| format!("failed to execute {}", keygen.display()))?;
-    let status = loop {
-        if cancel.load(Ordering::Relaxed) {
-            if let Ok(pgid_i32) = i32::try_from(child.id()) {
-                if let Some(pgid) = rustix::process::Pid::from_raw(pgid_i32) {
-                    let _ =
-                        rustix::process::kill_process_group(pgid, rustix::process::Signal::TERM);
-                    let deadline = Instant::now() + Duration::from_millis(500);
-                    while Instant::now() < deadline {
-                        if rustix::process::test_kill_process_group(pgid).is_err() {
-                            break;
-                        }
-                        thread::sleep(Duration::from_millis(10));
-                    }
-                    let _ =
-                        rustix::process::kill_process_group(pgid, rustix::process::Signal::KILL);
-                }
-            }
-            let _ = child.wait();
-            return Err(eyre::eyre!("outbe-keygen verify canceled by signal"));
-        }
-        if let Some(status) = child
-            .try_wait()
-            .wrap_err_with(|| format!("wait for {} verify", keygen.display()))?
-        {
-            break status;
-        }
-        thread::sleep(Duration::from_millis(25));
-    };
+    let status = wait_keygen_verify(&mut child, &keygen, cancel)?;
     ensure!(
         status.success(),
         "signing-key.hex failed outbe-keygen verify (exit status: {status})"
     );
     Ok(())
+}
+
+/// Poll `outbe-keygen verify` until it exits. On cancel, stop its process group and reap it.
+fn wait_keygen_verify(child: &mut Child, keygen: &Path, cancel: &AtomicBool) -> Result<ExitStatus> {
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            terminate_process_group(child.id());
+            let _ = child.wait();
+            bail!("outbe-keygen verify canceled by signal");
+        }
+        if let Some(status) = child
+            .try_wait()
+            .wrap_err_with(|| format!("wait for {} verify", keygen.display()))?
+        {
+            return Ok(status);
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
 }
 
 fn install_units(root: &Path) -> Result<()> {

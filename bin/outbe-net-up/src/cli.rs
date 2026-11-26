@@ -103,18 +103,11 @@ enum NetworkCommand {
     },
     /// Stop all founding validator VMs for this network.
     Stop {
-        #[arg(long)]
-        artifacts: PathBuf,
-        #[arg(long)]
-        ssh_key: Option<PathBuf>,
-        /// Path to an SSH config file passed via `-F` (e.g. `--ssh-config /dev/null`).
-        #[arg(long)]
-        ssh_config: Option<PathBuf>,
+        #[command(flatten)]
+        lifecycle: VmLifecycleArgs,
         /// Force-stop VMs that do not shut down gracefully.
         #[arg(long)]
         force: bool,
-        #[arg(long, default_value_t = 120)]
-        timeout: u64,
     },
     /// Inspect founding validator health and consensus status (works on full or partial deploys).
     Status {
@@ -136,18 +129,11 @@ enum NetworkCommand {
     },
     /// Remove founding validator VMs and staged disks gracefully (never modifies host DHCP/firewall config).
     Remove {
-        #[arg(long)]
-        artifacts: PathBuf,
-        #[arg(long)]
-        ssh_key: Option<PathBuf>,
-        /// Path to an SSH config file passed via `-F` (e.g. `--ssh-config /dev/null`).
-        #[arg(long)]
-        ssh_config: Option<PathBuf>,
+        #[command(flatten)]
+        lifecycle: VmLifecycleArgs,
         /// Force-stop running VMs before removal (bypasses graceful guest shutdown).
         #[arg(long)]
         force: bool,
-        #[arg(long, default_value_t = 120)]
-        timeout: u64,
     },
     /// Add a joining validator VM to a running VM network and drive it through DKG activation.
     #[command(group(
@@ -341,342 +327,315 @@ enum NetworkCommand {
     },
 }
 
+#[derive(Debug, Args)]
+struct VmLifecycleArgs {
+    #[arg(long)]
+    artifacts: PathBuf,
+    #[arg(long)]
+    ssh_key: Option<PathBuf>,
+    /// Path to an SSH config file passed via `-F` (e.g. `--ssh-config /dev/null`).
+    #[arg(long)]
+    ssh_config: Option<PathBuf>,
+    #[arg(long, default_value_t = 120)]
+    timeout: u64,
+}
+
 impl Cli {
     pub async fn run(self) -> Result<()> {
-        match self.command {
-            Command::Network(args) => match args.command {
-                NetworkCommand::ConfigExample { output } => network::config::init(&output),
-                NetworkCommand::Build {
-                    software_bundle,
-                    config,
-                    output,
-                    keys_dir,
-                } => network::build::run(&software_bundle, &config, &output, keys_dir.as_deref()),
-                NetworkCommand::Deploy {
-                    artifacts,
-                    image_archive,
-                    image_url,
-                    image_sha256,
-                    ssh_key,
-                    ssh_config,
+        let Command::Network(args) = self.command;
+        match args.command {
+            NetworkCommand::ConfigExample { output } => network::config::init(&output),
+            NetworkCommand::Build {
+                software_bundle,
+                config,
+                output,
+                keys_dir,
+            } => network::build::run(&software_bundle, &config, &output, keys_dir.as_deref()),
+            NetworkCommand::Deploy {
+                artifacts,
+                image_archive,
+                image_url,
+                image_sha256,
+                ssh_key,
+                ssh_config,
+                no_tee,
+            } => {
+                run_deploy(
+                    &artifacts,
+                    parse_optional_image_source(image_archive, image_url, image_sha256),
+                    ssh_key.as_deref(),
+                    ssh_config.as_deref(),
                     no_tee,
-                } => {
-                    let loaded = network::remote::NetworkArtifacts::load(&artifacts)?;
-                    match loaded.manifest.deployment {
-                        network::build::DeploymentKind::Host => {
-                            network::prepare::run(
-                                &artifacts,
-                                ssh_key.as_deref(),
-                                ssh_config.as_deref(),
-                            )
-                            .await
-                        }
-                        network::build::DeploymentKind::Vm => {
-                            let image_source = match (image_archive, image_url) {
-                                (Some(path), None) => network::vm::ImageSource::Archive {
-                                    path,
-                                    sha256: image_sha256,
-                                },
-                                (None, Some(url)) => network::vm::ImageSource::Url {
-                                    url,
-                                    sha256: image_sha256.expect(
-                                        "clap requires --image-sha256 when --image-url is set",
-                                    ),
-                                },
-                                (None, None) => {
-                                    bail!(
-                                        "VM deployment requires either `--image-archive <path>` or `--image-url <https-url> --image-sha256 <hex>`"
-                                    );
-                                }
-                                (Some(_), Some(_)) => {
-                                    unreachable!("clap enforces mutual exclusion on image_source");
-                                }
-                            };
-                            network::vm::deploy(network::vm::DeployOptions {
-                                artifacts: &artifacts,
-                                image_source,
-                                ssh_key: ssh_key.as_deref(),
-                                ssh_config: ssh_config.as_deref(),
-                                no_tee,
-                            })
-                            .await
-                        }
-                    }
-                }
-                NetworkCommand::Prepare {
-                    artifacts,
-                    ssh_key,
-                    ssh_config,
-                } => {
-                    network::prepare::run(&artifacts, ssh_key.as_deref(), ssh_config.as_deref())
-                        .await
-                }
-                NetworkCommand::Start {
-                    artifacts,
-                    ssh_key,
-                    ssh_config,
-                    timeout,
+                )
+                .await
+            }
+            NetworkCommand::Prepare {
+                artifacts,
+                ssh_key,
+                ssh_config,
+            } => network::prepare::run(&artifacts, ssh_key.as_deref(), ssh_config.as_deref()).await,
+            NetworkCommand::Start {
+                artifacts,
+                ssh_key,
+                ssh_config,
+                timeout,
+                max_lag,
+                min_finalized_blocks,
+            } => {
+                run_start(network::vm::StartOptions {
+                    artifacts: &artifacts,
+                    ssh_key: ssh_key.as_deref(),
+                    ssh_config: ssh_config.as_deref(),
+                    timeout: Duration::from_secs(timeout),
                     max_lag,
                     min_finalized_blocks,
-                } => {
-                    let loaded = network::remote::NetworkArtifacts::load(&artifacts)?;
-                    match loaded.manifest.deployment {
-                        network::build::DeploymentKind::Host => {
-                            network::start::run(
-                                &artifacts,
-                                ssh_key.as_deref(),
-                                ssh_config.as_deref(),
-                                Duration::from_secs(timeout),
-                            )
-                            .await
-                        }
-                        network::build::DeploymentKind::Vm => {
-                            network::vm::start(network::vm::StartOptions {
-                                artifacts: &artifacts,
-                                ssh_key: ssh_key.as_deref(),
-                                ssh_config: ssh_config.as_deref(),
-                                timeout: Duration::from_secs(timeout),
-                                max_lag,
-                                min_finalized_blocks,
-                            })
-                            .await
-                        }
-                    }
-                }
-                NetworkCommand::Stop {
-                    artifacts,
-                    ssh_key,
-                    ssh_config,
+                })
+                .await
+            }
+            NetworkCommand::Stop { lifecycle, force } => {
+                ensure_vm_deployment(&lifecycle.artifacts, "stop")?;
+                network::vm::stop(network::vm::StopOptions {
+                    artifacts: &lifecycle.artifacts,
+                    ssh_key: lifecycle.ssh_key.as_deref(),
+                    ssh_config: lifecycle.ssh_config.as_deref(),
                     force,
-                    timeout,
-                } => {
-                    let loaded = network::remote::NetworkArtifacts::load(&artifacts)?;
-                    match loaded.manifest.deployment {
-                        network::build::DeploymentKind::Vm => {
-                            network::vm::stop(network::vm::StopOptions {
-                                artifacts: &artifacts,
-                                ssh_key: ssh_key.as_deref(),
-                                ssh_config: ssh_config.as_deref(),
-                                force,
-                                timeout: Duration::from_secs(timeout),
-                            })
-                            .await
-                        }
-                        network::build::DeploymentKind::Host => {
-                            bail!(
-                                "`outbe-net-up network stop` currently supports VM deployments only"
-                            );
-                        }
-                    }
-                }
-                NetworkCommand::Status {
-                    artifacts,
-                    ssh_key,
-                    ssh_config,
+                    timeout: Duration::from_secs(lifecycle.timeout),
+                })
+                .await
+            }
+            NetworkCommand::Status {
+                artifacts,
+                ssh_key,
+                ssh_config,
+                watch,
+                max_lag,
+                json,
+            } => {
+                run_status(network::vm::StatusOptions {
+                    artifacts: &artifacts,
+                    ssh_key: ssh_key.as_deref(),
+                    ssh_config: ssh_config.as_deref(),
                     watch,
                     max_lag,
                     json,
-                } => {
-                    let loaded = network::remote::NetworkArtifacts::load(&artifacts)?;
-                    match loaded.manifest.deployment {
-                        network::build::DeploymentKind::Host => {
-                            network::status::show(
-                                &artifacts,
-                                ssh_key.as_deref(),
-                                ssh_config.as_deref(),
-                                watch,
-                                json,
-                            )
-                            .await
-                        }
-                        network::build::DeploymentKind::Vm => {
-                            network::vm::status(network::vm::StatusOptions {
-                                artifacts: &artifacts,
-                                ssh_key: ssh_key.as_deref(),
-                                ssh_config: ssh_config.as_deref(),
-                                watch,
-                                max_lag,
-                                json,
-                            })
-                            .await
-                        }
-                    }
-                }
-                NetworkCommand::Remove {
-                    artifacts,
-                    ssh_key,
-                    ssh_config,
+                })
+                .await
+            }
+            NetworkCommand::Remove { lifecycle, force } => {
+                ensure_vm_deployment(&lifecycle.artifacts, "remove")?;
+                network::vm::remove(network::vm::RemoveOptions {
+                    artifacts: &lifecycle.artifacts,
+                    ssh_key: lifecycle.ssh_key.as_deref(),
+                    ssh_config: lifecycle.ssh_config.as_deref(),
                     force,
-                    timeout,
-                } => {
-                    let loaded = network::remote::NetworkArtifacts::load(&artifacts)?;
-                    match loaded.manifest.deployment {
-                        network::build::DeploymentKind::Vm => {
-                            network::vm::remove(network::vm::RemoveOptions {
-                                artifacts: &artifacts,
-                                ssh_key: ssh_key.as_deref(),
-                                ssh_config: ssh_config.as_deref(),
-                                force,
-                                timeout: Duration::from_secs(timeout),
-                            })
-                            .await
-                        }
-                        network::build::DeploymentKind::Host => {
-                            bail!(
-                                "`outbe-net-up network remove` currently supports VM deployments only"
-                            );
-                        }
-                    }
-                }
-                NetworkCommand::AddValidator {
-                    artifacts,
-                    name,
-                    host,
-                    user,
+                    timeout: Duration::from_secs(lifecycle.timeout),
+                })
+                .await
+            }
+            NetworkCommand::AddValidator {
+                artifacts,
+                name,
+                host,
+                user,
+                port,
+                vmm_home,
+                bridge,
+                vm_ip,
+                rpc_bind_ip,
+                advertise_ip,
+                rpc_port,
+                port_offset,
+                image_archive,
+                image_url,
+                image_sha256,
+                vcpu,
+                memory_gib,
+                disk_gib,
+                no_tee,
+                ssh_key,
+                ssh_config,
+                timeout,
+                max_lag,
+                min_finalized_blocks,
+            } => {
+                let image_source =
+                    parse_optional_image_source(image_archive, image_url, image_sha256);
+                network::vm::add_validator(network::vm::AddValidatorOptions {
+                    artifacts: &artifacts,
+                    name: &name,
+                    host: &host,
+                    user: user.as_deref(),
                     port,
-                    vmm_home,
-                    bridge,
+                    vmm_home: vmm_home.as_deref(),
+                    bridge: bridge.as_deref(),
                     vm_ip,
                     rpc_bind_ip,
                     advertise_ip,
                     rpc_port,
                     port_offset,
-                    image_archive,
-                    image_url,
-                    image_sha256,
+                    image_source,
                     vcpu,
                     memory_gib,
                     disk_gib,
                     no_tee,
-                    ssh_key,
-                    ssh_config,
-                    timeout,
+                    ssh_key: ssh_key.as_deref(),
+                    ssh_config: ssh_config.as_deref(),
+                    timeout: Duration::from_secs(timeout),
                     max_lag,
                     min_finalized_blocks,
-                } => {
-                    let image_source =
-                        parse_optional_image_source(image_archive, image_url, image_sha256);
-                    network::vm::add_validator(network::vm::AddValidatorOptions {
-                        artifacts: &artifacts,
-                        name: &name,
-                        host: &host,
-                        user: user.as_deref(),
-                        port,
-                        vmm_home: vmm_home.as_deref(),
-                        bridge: bridge.as_deref(),
-                        vm_ip,
-                        rpc_bind_ip,
-                        advertise_ip,
-                        rpc_port,
-                        port_offset,
-                        image_source,
-                        vcpu,
-                        memory_gib,
-                        disk_gib,
-                        no_tee,
-                        ssh_key: ssh_key.as_deref(),
-                        ssh_config: ssh_config.as_deref(),
-                        timeout: Duration::from_secs(timeout),
-                        max_lag,
-                        min_finalized_blocks,
-                    })
-                    .await
-                }
-                NetworkCommand::AddFullNode {
-                    artifacts,
-                    name,
-                    host,
-                    user,
+                })
+                .await
+            }
+            NetworkCommand::AddFullNode {
+                artifacts,
+                name,
+                host,
+                user,
+                port,
+                vmm_home,
+                bridge,
+                vm_ip,
+                rpc_bind_ip,
+                advertise_ip,
+                rpc_port,
+                image_archive,
+                image_url,
+                image_sha256,
+                vcpu,
+                memory_gib,
+                disk_gib,
+                no_tee,
+                ssh_key,
+                ssh_config,
+                timeout,
+                max_lag,
+                min_finalized_blocks,
+            } => {
+                let image_source =
+                    parse_optional_image_source(image_archive, image_url, image_sha256);
+                network::vm::add_full_node(network::vm::AddFullNodeOptions {
+                    artifacts: &artifacts,
+                    name: &name,
+                    host: &host,
+                    user: user.as_deref(),
                     port,
-                    vmm_home,
-                    bridge,
+                    vmm_home: vmm_home.as_deref(),
+                    bridge: bridge.as_deref(),
                     vm_ip,
                     rpc_bind_ip,
                     advertise_ip,
                     rpc_port,
-                    image_archive,
-                    image_url,
-                    image_sha256,
+                    image_source,
                     vcpu,
                     memory_gib,
                     disk_gib,
                     no_tee,
-                    ssh_key,
-                    ssh_config,
-                    timeout,
+                    ssh_key: ssh_key.as_deref(),
+                    ssh_config: ssh_config.as_deref(),
+                    timeout: Duration::from_secs(timeout),
                     max_lag,
                     min_finalized_blocks,
-                } => {
-                    let image_source =
-                        parse_optional_image_source(image_archive, image_url, image_sha256);
-                    network::vm::add_full_node(network::vm::AddFullNodeOptions {
-                        artifacts: &artifacts,
-                        name: &name,
-                        host: &host,
-                        user: user.as_deref(),
-                        port,
-                        vmm_home: vmm_home.as_deref(),
-                        bridge: bridge.as_deref(),
-                        vm_ip,
-                        rpc_bind_ip,
-                        advertise_ip,
-                        rpc_port,
-                        image_source,
-                        vcpu,
-                        memory_gib,
-                        disk_gib,
-                        no_tee,
-                        ssh_key: ssh_key.as_deref(),
-                        ssh_config: ssh_config.as_deref(),
-                        timeout: Duration::from_secs(timeout),
-                        max_lag,
-                        min_finalized_blocks,
-                    })
-                    .await
-                }
-                NetworkCommand::Update {
-                    artifacts,
-                    image_archive,
-                    image_url,
-                    image_sha256,
-                    software_bundle,
-                    ssh_key,
-                    ssh_config,
-                    timeout,
-                    stop_timeout,
+                })
+                .await
+            }
+            NetworkCommand::Update {
+                artifacts,
+                image_archive,
+                image_url,
+                image_sha256,
+                software_bundle,
+                ssh_key,
+                ssh_config,
+                timeout,
+                stop_timeout,
+                max_lag,
+                min_finalized_blocks,
+                dkg_guard_blocks,
+            } => {
+                ensure_vm_deployment(&artifacts, "update")?;
+                let image_source =
+                    parse_optional_image_source(image_archive, image_url, image_sha256)
+                        .expect("clap requires --image-archive or --image-url");
+                network::vm::update(network::vm::UpdateOptions {
+                    artifacts: &artifacts,
+                    image_source,
+                    software_bundle: software_bundle.as_deref(),
+                    ssh_key: ssh_key.as_deref(),
+                    ssh_config: ssh_config.as_deref(),
+                    timeout: Duration::from_secs(timeout),
+                    stop_timeout: Duration::from_secs(stop_timeout),
                     max_lag,
                     min_finalized_blocks,
                     dkg_guard_blocks,
-                } => {
-                    let loaded = network::remote::NetworkArtifacts::load(&artifacts)?;
-                    match loaded.manifest.deployment {
-                        network::build::DeploymentKind::Vm => {
-                            let image_source =
-                                parse_optional_image_source(image_archive, image_url, image_sha256)
-                                    .expect("clap requires --image-archive or --image-url");
-                            network::vm::update(network::vm::UpdateOptions {
-                                artifacts: &artifacts,
-                                image_source,
-                                software_bundle: software_bundle.as_deref(),
-                                ssh_key: ssh_key.as_deref(),
-                                ssh_config: ssh_config.as_deref(),
-                                timeout: Duration::from_secs(timeout),
-                                stop_timeout: Duration::from_secs(stop_timeout),
-                                max_lag,
-                                min_finalized_blocks,
-                                dkg_guard_blocks,
-                            })
-                            .await
-                        }
-                        network::build::DeploymentKind::Host => {
-                            bail!(
-                                "`outbe-net-up network update` currently supports VM deployments only"
-                            );
-                        }
-                    }
-                }
-            },
+                })
+                .await
+            }
         }
+    }
+}
+
+fn ensure_vm_deployment(artifacts: &std::path::Path, subcommand: &str) -> Result<()> {
+    let loaded = network::remote::NetworkArtifacts::load(artifacts)?;
+    if loaded.manifest.deployment != network::build::DeploymentKind::Vm {
+        bail!("`outbe-net-up network {subcommand}` currently supports VM deployments only");
+    }
+    Ok(())
+}
+
+async fn run_deploy(
+    artifacts: &std::path::Path,
+    image_source: Option<network::vm::ImageSource>,
+    ssh_key: Option<&std::path::Path>,
+    ssh_config: Option<&std::path::Path>,
+    no_tee: bool,
+) -> Result<()> {
+    let loaded = network::remote::NetworkArtifacts::load(artifacts)?;
+    match loaded.manifest.deployment {
+        network::build::DeploymentKind::Host => {
+            network::prepare::run(artifacts, ssh_key, ssh_config).await
+        }
+        network::build::DeploymentKind::Vm => {
+            let image_source = image_source.ok_or_else(|| {
+                eyre::eyre!(
+                    "VM deployment requires either `--image-archive <path>` or `--image-url <https-url> --image-sha256 <hex>`"
+                )
+            })?;
+            network::vm::deploy(network::vm::DeployOptions {
+                artifacts,
+                image_source,
+                ssh_key,
+                ssh_config,
+                no_tee,
+            })
+            .await
+        }
+    }
+}
+
+async fn run_start(opts: network::vm::StartOptions<'_>) -> Result<()> {
+    let loaded = network::remote::NetworkArtifacts::load(opts.artifacts)?;
+    match loaded.manifest.deployment {
+        network::build::DeploymentKind::Host => {
+            network::start::run(opts.artifacts, opts.ssh_key, opts.ssh_config, opts.timeout).await
+        }
+        network::build::DeploymentKind::Vm => network::vm::start(opts).await,
+    }
+}
+
+async fn run_status(opts: network::vm::StatusOptions<'_>) -> Result<()> {
+    let loaded = network::remote::NetworkArtifacts::load(opts.artifacts)?;
+    match loaded.manifest.deployment {
+        network::build::DeploymentKind::Host => {
+            network::status::show(
+                opts.artifacts,
+                opts.ssh_key,
+                opts.ssh_config,
+                opts.watch,
+                opts.json,
+            )
+            .await
+        }
+        network::build::DeploymentKind::Vm => network::vm::status(opts).await,
     }
 }
 

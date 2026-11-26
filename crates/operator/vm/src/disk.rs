@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 use walkdir::WalkDir;
 
 use crate::{
-    container::{self, DiskIds, FsEntry, Tools},
+    container::{self, subprocess, DiskContents, DiskIds, FsEntry, Tools},
     shell_quote,
     vmm::{remote_vmm_path, validate_vm_id},
 };
@@ -45,8 +45,11 @@ fn build_disk_from_tree(
 ) -> Result<()> {
     container::ensure_output_path_absent(output)?;
     let (entries, content_digest) = collect_entries(source_tree)?;
-    let ids = derive_disk_ids(&content_digest);
-    container::write_disk_image(tools, output, disk_bytes, &ids, &entries, cancel)
+    let contents = DiskContents {
+        ids: derive_disk_ids(&content_digest),
+        entries,
+    };
+    container::write_disk_image(tools, output, disk_bytes, &contents, cancel)
 }
 
 /// Walk `source_tree` in deterministic lexicographic order, rejecting symlinks,
@@ -278,16 +281,13 @@ fn run_qemu_img_in_pgrp(
     cancel: &std::sync::atomic::AtomicBool,
 ) -> Result<()> {
     use std::{
-        io::Read,
         os::unix::process::CommandExt,
         process::{Command, Stdio},
         sync::atomic::Ordering,
-        thread,
-        time::Duration,
     };
 
     ensure!(!cancel.load(Ordering::Relaxed), "{label} canceled");
-    let mut child = Command::new("qemu-img")
+    let child = Command::new("qemu-img")
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -295,66 +295,8 @@ fn run_qemu_img_in_pgrp(
         .process_group(0)
         .spawn()
         .wrap_err_with(|| format!("run `{label}` (is qemu-img installed in PATH?)"))?;
-
-    let child_pid = child.id();
-    let stderr_pipe = child.stderr.take();
-    let stderr_handle = thread::spawn(move || {
-        let mut buf = Vec::new();
-        if let Some(mut pipe) = stderr_pipe {
-            let _ = pipe.read_to_end(&mut buf);
-        }
-        buf
-    });
-
-    let status = loop {
-        if let Some(status) = child
-            .try_wait()
-            .wrap_err_with(|| format!("poll {label} subprocess"))?
-        {
-            break status;
-        }
-        if cancel.load(Ordering::Relaxed) {
-            terminate_process_group(child_pid);
-            let _ = child.wait();
-            let _ = stderr_handle.join();
-            bail!("{label} interrupted by signal; terminated child process group {child_pid}");
-        }
-        thread::sleep(Duration::from_millis(25));
-    };
-
-    let stderr_bytes = stderr_handle.join().unwrap_or_default();
-    if !status.success() {
-        bail!(
-            "{label} failed: {}",
-            String::from_utf8_lossy(&stderr_bytes).trim()
-        );
-    }
+    subprocess::wait_cancellable(child, label, cancel)?;
     Ok(())
-}
-
-fn terminate_process_group(pgid_raw: u32) {
-    use std::{
-        thread,
-        time::{Duration, Instant},
-    };
-
-    use rustix::process::{kill_process_group, test_kill_process_group, Pid, Signal};
-
-    let Ok(pgid_i32) = i32::try_from(pgid_raw) else {
-        return;
-    };
-    let Some(pgid) = Pid::from_raw(pgid_i32) else {
-        return;
-    };
-    let _ = kill_process_group(pgid, Signal::TERM);
-    let escalate_at = Instant::now() + Duration::from_millis(500);
-    while Instant::now() < escalate_at {
-        if test_kill_process_group(pgid).is_err() {
-            return;
-        }
-        thread::sleep(Duration::from_millis(25));
-    }
-    let _ = kill_process_group(pgid, Signal::KILL);
 }
 
 /// Build the host shell command that extracts a sparse raw disk, verifies its raw SHA-256,
@@ -420,77 +362,114 @@ pub fn stream_sparse_tar_gz(
     Ok(())
 }
 
+/// Next region of a sparse file at or after a given offset.
+enum SparseRegion {
+    /// Data bytes in `start..end`, preceded by a hole from the current offset.
+    Data { start: u64, end: u64 },
+    /// Only a hole remains through EOF.
+    TrailingHole,
+    /// The filesystem does not support `SEEK_DATA`, so the rest must be read linearly.
+    Unsupported,
+}
+
+/// Locate the next data region at or after `pos` with `SEEK_DATA`/`SEEK_HOLE`.
+fn next_sparse_region(file: &fs::File, pos: u64, file_len: u64) -> Result<SparseRegion> {
+    use rustix::{fs::SeekFrom as RustixSeekFrom, io::Errno};
+
+    let start = match rustix::fs::seek(file, RustixSeekFrom::Data(pos)) {
+        Ok(offset) => offset,
+        Err(Errno::NXIO) => return Ok(SparseRegion::TrailingHole),
+        Err(Errno::INVAL | Errno::OPNOTSUPP) => return Ok(SparseRegion::Unsupported),
+        Err(err) => return Err(err).wrap_err("SEEK_DATA on sparse disk"),
+    };
+    let end = match rustix::fs::seek(file, RustixSeekFrom::Hole(start)) {
+        Ok(offset) => offset.min(file_len),
+        Err(Errno::NXIO) => file_len,
+        Err(err) => return Err(err).wrap_err("SEEK_HOLE on sparse disk"),
+    };
+    Ok(SparseRegion::Data { start, end })
+}
+
+const SPARSE_HASH_CHUNK: usize = 64 * 1024;
+
+/// SHA-256 state that hashes hole ranges as zeros without reading them.
+struct SparseHasher {
+    hasher: Sha256,
+    read_buf: Vec<u8>,
+}
+
+impl SparseHasher {
+    fn new() -> Self {
+        Self {
+            hasher: Sha256::new(),
+            read_buf: vec![0_u8; SPARSE_HASH_CHUNK],
+        }
+    }
+
+    fn feed_zeros(&mut self, mut count: u64) {
+        let zero_chunk = [0_u8; SPARSE_HASH_CHUNK];
+        while count > 0 {
+            let step = (count as usize).min(zero_chunk.len());
+            self.hasher.update(&zero_chunk[..step]);
+            count -= step as u64;
+        }
+    }
+
+    /// Hash up to `count` bytes of `file` from offset `start`, stop at EOF, and return the number
+    /// of bytes hashed.
+    fn hash_file_range(&mut self, file: &mut fs::File, start: u64, count: u64) -> Result<u64> {
+        use std::io::{Read, Seek, SeekFrom};
+
+        file.seek(SeekFrom::Start(start))?;
+        let mut remaining = count;
+        while remaining > 0 {
+            let want = (remaining as usize).min(self.read_buf.len());
+            let read = file.read(&mut self.read_buf[..want])?;
+            if read == 0 {
+                break;
+            }
+            self.hasher.update(&self.read_buf[..read]);
+            remaining -= read as u64;
+        }
+        Ok(count - remaining)
+    }
+
+    fn finish(self) -> String {
+        hex::encode(self.hasher.finalize())
+    }
+}
+
 /// Hash the logical bytes of a sparse file using `SEEK_DATA`/`SEEK_HOLE` to skip reading holes.
 pub fn sha256_sparse_file(path: &Path) -> Result<String> {
-    use std::io::{Read, Seek, SeekFrom};
-
-    use rustix::fs::SeekFrom as RustixSeekFrom;
-
     let mut file =
         fs::File::open(path).wrap_err_with(|| format!("open sparse file: {}", path.display()))?;
     let file_len = file.metadata()?.len();
-    let mut hasher = Sha256::new();
-    let zero_chunk = [0_u8; 64 * 1024];
-    let mut read_buf = vec![0_u8; 64 * 1024];
-
-    let feed_zeros = |hasher: &mut Sha256, mut count: u64| {
-        while count > 0 {
-            let step = (count as usize).min(zero_chunk.len());
-            hasher.update(&zero_chunk[..step]);
-            count -= step as u64;
-        }
-    };
+    let mut sparse = SparseHasher::new();
 
     let mut pos: u64 = 0;
     while pos < file_len {
-        let data_start = match rustix::fs::seek(&file, RustixSeekFrom::Data(pos)) {
-            Ok(offset) => offset,
-            Err(rustix::io::Errno::NXIO) => {
-                // Remaining bytes through EOF are a hole.
-                feed_zeros(&mut hasher, file_len - pos);
+        match next_sparse_region(&file, pos, file_len)? {
+            SparseRegion::Data { start, end } => {
+                sparse.feed_zeros(start.saturating_sub(pos));
+                let hashed = sparse.hash_file_range(&mut file, start, end - start)?;
+                ensure!(
+                    hashed == end - start,
+                    "unexpected EOF while hashing sparse disk"
+                );
+                pos = end;
+            }
+            SparseRegion::TrailingHole => {
+                sparse.feed_zeros(file_len - pos);
                 break;
             }
-            Err(rustix::io::Errno::INVAL | rustix::io::Errno::OPNOTSUPP) => {
-                // Filesystem does not support SEEK_DATA; fall back to linear read.
-                file.seek(SeekFrom::Start(pos))?;
-                let mut remaining = file_len - pos;
-                while remaining > 0 {
-                    let want = (remaining as usize).min(read_buf.len());
-                    let read = file.read(&mut read_buf[..want])?;
-                    if read == 0 {
-                        break;
-                    }
-                    hasher.update(&read_buf[..read]);
-                    remaining -= read as u64;
-                }
+            SparseRegion::Unsupported => {
+                sparse.hash_file_range(&mut file, pos, file_len - pos)?;
                 break;
             }
-            Err(err) => return Err(err).wrap_err("SEEK_DATA on sparse disk"),
-        };
-
-        if data_start > pos {
-            feed_zeros(&mut hasher, data_start - pos);
         }
-
-        let data_end = match rustix::fs::seek(&file, RustixSeekFrom::Hole(data_start)) {
-            Ok(offset) => offset.min(file_len),
-            Err(rustix::io::Errno::NXIO) => file_len,
-            Err(err) => return Err(err).wrap_err("SEEK_HOLE on sparse disk"),
-        };
-
-        file.seek(SeekFrom::Start(data_start))?;
-        let mut remaining = data_end - data_start;
-        while remaining > 0 {
-            let want = (remaining as usize).min(read_buf.len());
-            let read = file.read(&mut read_buf[..want])?;
-            ensure!(read > 0, "unexpected EOF while hashing sparse disk");
-            hasher.update(&read_buf[..read]);
-            remaining -= read as u64;
-        }
-        pos = data_end;
     }
 
-    Ok(hex::encode(hasher.finalize()))
+    Ok(sparse.finish())
 }
 
 #[cfg(test)]

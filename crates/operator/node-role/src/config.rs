@@ -119,6 +119,22 @@ impl FullNodeNetworkConfig {
             .or(self.vm_ip)
             .unwrap_or(Ipv4Addr::LOCALHOST)
     }
+
+    fn vm_static_network(&self) -> VmStaticNetwork<'_> {
+        VmStaticNetwork {
+            ip: self.vm_ip,
+            prefix: self.vm_prefix,
+            gateway: self.vm_gateway,
+            dns: &self.vm_dns,
+            ports: VmPortOverrides {
+                rpc: self.vm_rpc_port,
+                consensus: self.vm_consensus_port,
+                reth: self.vm_reth_port,
+                discv5: self.vm_discv5_port,
+                radicle: self.vm_radicle_port,
+            },
+        }
+    }
 }
 
 impl FullNodeConfig {
@@ -146,18 +162,7 @@ impl FullNodeConfig {
             rpc_bind_ip.is_loopback() || rpc_bind_ip.is_private(),
             "network.rpc_bind_ip must be a loopback or private IPv4 address"
         );
-        validate_optional_vm_static_network(
-            self.network.vm_ip,
-            rpc_bind_ip,
-            self.network.vm_prefix,
-            self.network.vm_gateway,
-            &self.network.vm_dns,
-            self.network.vm_rpc_port,
-            self.network.vm_consensus_port,
-            self.network.vm_reth_port,
-            self.network.vm_discv5_port,
-            self.network.vm_radicle_port,
-        )?;
+        self.network.vm_static_network().validate(rpc_bind_ip)?;
         ensure!(
             (self.network.certified_rpc.starts_with("http://")
                 || self.network.certified_rpc.starts_with("https://"))
@@ -198,18 +203,7 @@ impl FullNodeConfig {
         } else {
             ""
         };
-        let vm_net_lines = render_optional_vm_static_env(
-            self.network.vm_ip,
-            self.network.vm_prefix,
-            self.network.vm_gateway,
-            &self.network.vm_dns,
-            self.network.vm_rpc_port,
-            self.network.vm_consensus_port,
-            self.network.vm_reth_port,
-            self.network.vm_discv5_port,
-            self.network.vm_radicle_port,
-            true,
-        );
+        let vm_net_lines = self.network.vm_static_network().render_env();
         let env = format!(
             concat!(
                 "OUTBE_NODE_ROLE=\"full-node\"\n",
@@ -428,18 +422,7 @@ impl OperatorConfig {
             || self.network.vm_ip.is_some()
             || self.network.vm_prefix.is_some()
         {
-            render_optional_vm_static_env(
-                self.network.vm_ip,
-                self.network.vm_prefix,
-                self.network.vm_gateway,
-                &self.network.vm_dns,
-                Some(self.network.effective_rpc_port()),
-                self.network.vm_consensus_port,
-                self.network.vm_reth_port,
-                self.network.vm_discv5_port,
-                self.network.vm_radicle_port,
-                true,
-            )
+            self.network.vm_static_network().render_env()
         } else {
             format!(
                 concat!(
@@ -515,18 +498,7 @@ impl OperatorConfig {
         }
         .validate()
         .wrap_err("invalid network.ports")?;
-        validate_optional_vm_static_network(
-            self.network.vm_ip,
-            rpc_bind_ip,
-            self.network.vm_prefix,
-            self.network.vm_gateway,
-            &self.network.vm_dns,
-            self.network.vm_rpc_port.or(Some(self.network.ports.rpc)),
-            self.network.vm_consensus_port,
-            self.network.vm_reth_port,
-            self.network.vm_discv5_port,
-            self.network.vm_radicle_port,
-        )?;
+        self.network.vm_static_network().validate(rpc_bind_ip)?;
         ensure!(
             self.network.certified_rpc.starts_with("http://")
                 || self.network.certified_rpc.starts_with("https://"),
@@ -782,101 +754,115 @@ pub fn validate_hyperlane_public_toml(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
-fn validate_optional_vm_static_network(
-    vm_ip: Option<Ipv4Addr>,
-    rpc_bind_ip: Ipv4Addr,
-    vm_prefix: Option<u8>,
-    vm_gateway: Option<Ipv4Addr>,
-    vm_dns: &[Ipv4Addr],
-    vm_rpc_port: Option<u16>,
-    vm_consensus_port: Option<u16>,
-    vm_reth_port: Option<u16>,
-    vm_discv5_port: Option<u16>,
-    vm_radicle_port: Option<u16>,
-) -> Result<()> {
-    let any_net =
-        vm_ip.is_some() || vm_prefix.is_some() || vm_gateway.is_some() || !vm_dns.is_empty();
-    let any_port = vm_rpc_port.is_some()
-        || vm_consensus_port.is_some()
-        || vm_reth_port.is_some()
-        || vm_discv5_port.is_some()
-        || vm_radicle_port.is_some();
-    if any_net {
-        let address = vm_ip
+/// Optional per-port overrides for a VM data disk. An unset port falls back to its default.
+#[derive(Clone, Copy, Debug, Default)]
+struct VmPortOverrides {
+    rpc: Option<u16>,
+    consensus: Option<u16>,
+    reth: Option<u16>,
+    discv5: Option<u16>,
+    radicle: Option<u16>,
+}
+
+impl VmPortOverrides {
+    fn any_set(&self) -> bool {
+        [
+            self.rpc,
+            self.consensus,
+            self.reth,
+            self.discv5,
+            self.radicle,
+        ]
+        .iter()
+        .any(Option::is_some)
+    }
+
+    fn resolve(&self) -> crate::vm_network::VmPortsConfig {
+        let defaults = crate::vm_network::VmPortsConfig::default();
+        crate::vm_network::VmPortsConfig {
+            rpc_port: self.rpc.unwrap_or(defaults.rpc_port),
+            consensus_port: self.consensus.unwrap_or(defaults.consensus_port),
+            reth_port: self.reth.unwrap_or(defaults.reth_port),
+            discv5_port: self.discv5.unwrap_or(defaults.discv5_port),
+            radicle_port: self.radicle.unwrap_or(defaults.radicle_port),
+        }
+    }
+}
+
+/// Optional VM static addressing and port settings from the `network` section of a config.
+#[derive(Clone, Copy, Debug)]
+struct VmStaticNetwork<'a> {
+    ip: Option<Ipv4Addr>,
+    prefix: Option<u8>,
+    gateway: Option<Ipv4Addr>,
+    dns: &'a [Ipv4Addr],
+    ports: VmPortOverrides,
+}
+
+impl VmStaticNetwork<'_> {
+    /// Returns true when the config sets any static addressing field.
+    fn any_addressing(&self) -> bool {
+        let any_route = self.ip.is_some() || self.prefix.is_some() || self.gateway.is_some();
+        any_route || !self.dns.is_empty()
+    }
+
+    fn validate(&self, rpc_bind_ip: Ipv4Addr) -> Result<()> {
+        let any_net = self.any_addressing();
+        if any_net {
+            self.validate_addressing(rpc_bind_ip)?;
+        }
+        if any_net || self.ports.any_set() {
+            self.ports.resolve().validate()?;
+        }
+        Ok(())
+    }
+
+    fn validate_addressing(&self, rpc_bind_ip: Ipv4Addr) -> Result<()> {
+        let address = self
+            .ip
             .ok_or_else(|| eyre::eyre!("network.vm_ip is required for VM static addressing"))?;
-        let prefix_len = vm_prefix
+        let prefix_len = self
+            .prefix
             .ok_or_else(|| eyre::eyre!("network.vm_prefix is required for VM static addressing"))?;
-        let gateway = vm_gateway.ok_or_else(|| {
+        let gateway = self.gateway.ok_or_else(|| {
             eyre::eyre!("network.vm_gateway is required for VM static addressing")
         })?;
         let cfg = crate::vm_network::StaticVmNetworkConfig {
             address,
             prefix_len,
             gateway,
-            dns: vm_dns.to_vec(),
+            dns: self.dns.to_vec(),
         };
         cfg.validate()?;
         ensure!(
             rpc_bind_ip == Ipv4Addr::LOCALHOST || rpc_bind_ip == address,
             "network.rpc_bind_ip ({rpc_bind_ip}) must be 127.0.0.1 or equal to network.vm_ip ({address})"
         );
+        Ok(())
     }
-    if any_net || any_port {
-        let defaults = crate::vm_network::VmPortsConfig::default();
-        let ports = crate::vm_network::VmPortsConfig {
-            rpc_port: vm_rpc_port.unwrap_or(defaults.rpc_port),
-            consensus_port: vm_consensus_port.unwrap_or(defaults.consensus_port),
-            reth_port: vm_reth_port.unwrap_or(defaults.reth_port),
-            discv5_port: vm_discv5_port.unwrap_or(defaults.discv5_port),
-            radicle_port: vm_radicle_port.unwrap_or(defaults.radicle_port),
-        };
-        ports.validate()?;
-    }
-    Ok(())
-}
 
-#[allow(clippy::too_many_arguments)]
-fn render_optional_vm_static_env(
-    vm_ip: Option<Ipv4Addr>,
-    vm_prefix: Option<u8>,
-    vm_gateway: Option<Ipv4Addr>,
-    vm_dns: &[Ipv4Addr],
-    vm_rpc_port: Option<u16>,
-    vm_consensus_port: Option<u16>,
-    vm_reth_port: Option<u16>,
-    vm_discv5_port: Option<u16>,
-    vm_radicle_port: Option<u16>,
-    always_emit_ports: bool,
-) -> String {
-    let mut out = String::new();
-    let has_net =
-        vm_ip.is_some() && vm_prefix.is_some() && vm_gateway.is_some() && !vm_dns.is_empty();
-    if let (Some(address), Some(prefix), Some(gateway)) = (vm_ip, vm_prefix, vm_gateway) {
-        if !vm_dns.is_empty() {
-            out.push_str(&format!(
-                "OUTBE_VM_IP=\"{address}\"\nOUTBE_VM_PREFIX=\"{prefix}\"\nOUTBE_VM_GATEWAY=\"{gateway}\"\nOUTBE_VM_DNS=\"{}\"\n",
-                crate::vm_network::format_dns_list(vm_dns)
-            ));
+    /// Render the `validator.env` lines for static addressing (only when complete) and all ports.
+    fn render_env(&self) -> String {
+        let mut out = String::new();
+        if let (Some(address), Some(prefix), Some(gateway)) = (self.ip, self.prefix, self.gateway) {
+            if !self.dns.is_empty() {
+                out.push_str(&format!(
+                    "OUTBE_VM_IP=\"{address}\"\nOUTBE_VM_PREFIX=\"{prefix}\"\nOUTBE_VM_GATEWAY=\"{gateway}\"\nOUTBE_VM_DNS=\"{}\"\n",
+                    crate::vm_network::format_dns_list(self.dns)
+                ));
+            }
         }
-    }
-    let any_port = vm_rpc_port.is_some()
-        || vm_consensus_port.is_some()
-        || vm_reth_port.is_some()
-        || vm_discv5_port.is_some()
-        || vm_radicle_port.is_some();
-    if always_emit_ports || has_net || any_port {
-        let defaults = crate::vm_network::VmPortsConfig::default();
+        let ports = self.ports.resolve();
         out.push_str(&format!(
             "OUTBE_RPC_PORT=\"{}\"\nOUTBE_CONSENSUS_PORT=\"{}\"\nOUTBE_RETH_P2P_PORT=\"{}\"\nOUTBE_RETH_DISCOVERY_PORT=\"{}\"\nOUTBE_RADICLE_PORT=\"{}\"\n",
-            vm_rpc_port.unwrap_or(defaults.rpc_port),
-            vm_consensus_port.unwrap_or(defaults.consensus_port),
-            vm_reth_port.unwrap_or(defaults.reth_port),
-            vm_discv5_port.unwrap_or(defaults.discv5_port),
-            vm_radicle_port.unwrap_or(defaults.radicle_port),
+            ports.rpc_port,
+            ports.consensus_port,
+            ports.reth_port,
+            ports.discv5_port,
+            ports.radicle_port,
         ));
+        out
     }
-    out
 }
 
 impl NetworkConfig {
@@ -890,6 +876,23 @@ impl NetworkConfig {
 
     pub(crate) fn effective_rpc_port(&self) -> u16 {
         self.vm_rpc_port.unwrap_or(self.ports.rpc)
+    }
+
+    /// The RPC port is always set: `vm_rpc_port` overrides `ports.rpc`.
+    fn vm_static_network(&self) -> VmStaticNetwork<'_> {
+        VmStaticNetwork {
+            ip: self.vm_ip,
+            prefix: self.vm_prefix,
+            gateway: self.vm_gateway,
+            dns: &self.vm_dns,
+            ports: VmPortOverrides {
+                rpc: Some(self.effective_rpc_port()),
+                consensus: self.vm_consensus_port,
+                reth: self.vm_reth_port,
+                discv5: self.vm_discv5_port,
+                radicle: self.vm_radicle_port,
+            },
+        }
     }
 
     pub(crate) fn local_rpc_url(&self) -> String {

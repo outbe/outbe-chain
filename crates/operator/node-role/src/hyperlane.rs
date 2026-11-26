@@ -61,18 +61,19 @@ pub(crate) async fn ensure_setup(
         != hyperlane
     {
         progress.stage("delegating Hyperlane operations to the Hyperlane signer");
-        let (hash, submitted) = transaction(
-            state.delegate_transaction.as_deref(),
-            request.validator_key,
-            request.rpc_url,
-            &[
+        let (hash, submitted) = CliTransaction {
+            key: request.validator_key,
+            rpc_url: request.rpc_url,
+            args: &[
                 "validator",
                 "delegate",
                 "hyperlane",
                 &format!("{hyperlane:#x}"),
             ],
-            true,
-        )?;
+            drop_privileges: true,
+            bin_dir: None,
+        }
+        .submit_once(state.delegate_transaction.as_deref())?;
         if submitted {
             state.delegate_transaction = Some(hash.clone());
             save(&state)?;
@@ -110,17 +111,18 @@ pub(crate) async fn ensure_setup(
     let record = rpc.validator(validator).await?;
     if record.status == 2 && rpc.hyperlane_signer(validator).await? != hyperlane {
         progress.stage("registering the Hyperlane checkpoint signer");
-        let (hash, submitted) = transaction(
-            state.signer_transaction.as_deref(),
-            request.hyperlane_key,
-            request.rpc_url,
-            &[
+        let (hash, submitted) = CliTransaction {
+            key: request.hyperlane_key,
+            rpc_url: request.rpc_url,
+            args: &[
                 "validator",
                 "set-hyperlane-signer",
                 &format!("{hyperlane:#x}"),
             ],
-            true,
-        )?;
+            drop_privileges: true,
+            bin_dir: None,
+        }
+        .submit_once(state.signer_transaction.as_deref())?;
         if submitted {
             state.signer_transaction = Some(hash.clone());
             save(&state)?;
@@ -134,32 +136,45 @@ pub(crate) async fn ensure_setup(
     Ok(state)
 }
 
+/// Existing RPC client, signing keys, and signer funding amount for [`ensure_setup_via_rpc`].
+pub struct RpcSetupRequest<'a> {
+    pub rpc: &'a RpcClient,
+    pub validator_key: &'a Path,
+    pub hyperlane_key: &'a Path,
+    pub funding: U256,
+}
+
 /// Perform Hyperlane delegate, funding, and signer registration directly over `rpc`
 /// with a cooperative deadline that never cancels an in-flight transaction broadcast.
 ///
 /// Returns `Ok((state, true))` when all steps complete, or `Ok((state, false))` when
 /// `deadline` expires (with any newly broadcast transaction hash already journaled).
-#[allow(clippy::too_many_arguments)]
 pub async fn ensure_setup_via_rpc(
-    rpc: &RpcClient,
-    validator_key: &Path,
-    hyperlane_key: &Path,
-    funding: U256,
+    request: RpcSetupRequest<'_>,
     state: SetupState,
     deadline: Option<Instant>,
     progress: &mut Progress,
     save: impl FnMut(&SetupState) -> Result<()>,
 ) -> Result<(SetupState, bool)> {
-    let validator = validator_address(validator_key)?;
-    let hyperlane = validator_address(hyperlane_key)?;
-    let transport = RealHyperlaneRpc {
-        rpc,
-        validator_key,
-        hyperlane_key,
+    let target = SetupTarget {
+        validator: validator_address(request.validator_key)?,
+        hyperlane: validator_address(request.hyperlane_key)?,
+        funding: request.funding,
     };
-    ensure_setup_cooperative(
-        &transport, validator, hyperlane, funding, state, deadline, progress, save,
-    )
+    let transport = RealHyperlaneRpc {
+        rpc: request.rpc,
+        validator_key: request.validator_key,
+        hyperlane_key: request.hyperlane_key,
+    };
+    CooperativeSetup {
+        transport: &transport,
+        target,
+        state,
+        save,
+        deadline,
+        progress,
+    }
+    .run()
     .await
 }
 
@@ -246,101 +261,169 @@ impl HyperlaneSetupTransport for RealHyperlaneRpc<'_> {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-async fn ensure_setup_cooperative<T: HyperlaneSetupTransport>(
-    transport: &T,
+/// Validator, Hyperlane signer, and signer funding amount that the setup brings on chain.
+#[derive(Clone, Copy, Debug)]
+struct SetupTarget {
     validator: Address,
     hyperlane: Address,
     funding: U256,
-    mut state: SetupState,
+}
+
+/// One on-chain step of the Hyperlane setup, in execution order.
+#[derive(Clone, Copy, Debug)]
+enum SetupStep {
+    Delegate,
+    Fund,
+    RegisterSigner,
+}
+
+impl SetupStep {
+    const ALL: [Self; 3] = [Self::Delegate, Self::Fund, Self::RegisterSigner];
+
+    const fn stage(self) -> &'static str {
+        match self {
+            Self::Delegate => "delegating Hyperlane operations to the Hyperlane signer",
+            Self::Fund => "funding the Hyperlane signer",
+            Self::RegisterSigner => "registering the Hyperlane checkpoint signer",
+        }
+    }
+
+    const fn not_visible_error(self) -> &'static str {
+        match self {
+            Self::Delegate => "Hyperlane delegation is not visible after finality",
+            Self::Fund => "Hyperlane signer funding is not visible after finality",
+            Self::RegisterSigner => "Hyperlane signer registration is not visible after finality",
+        }
+    }
+
+    fn journal_slot(self, state: &mut SetupState) -> &mut Option<String> {
+        match self {
+            Self::Delegate => &mut state.delegate_transaction,
+            Self::Fund => &mut state.funding_transaction,
+            Self::RegisterSigner => &mut state.signer_transaction,
+        }
+    }
+
+    /// Signer registration applies only to an active validator (status 2).
+    async fn needed<T: HyperlaneSetupTransport>(
+        self,
+        transport: &T,
+        target: &SetupTarget,
+    ) -> Result<bool> {
+        if matches!(self, Self::RegisterSigner)
+            && transport.validator(target.validator).await?.status != 2
+        {
+            return Ok(false);
+        }
+        Ok(!self.is_done(transport, target).await?)
+    }
+
+    async fn is_done<T: HyperlaneSetupTransport>(
+        self,
+        transport: &T,
+        target: &SetupTarget,
+    ) -> Result<bool> {
+        Ok(match self {
+            Self::Delegate => {
+                transport.validator_delegate(target.validator).await? == target.hyperlane
+            }
+            Self::Fund => !transport.balance(target.hyperlane).await?.is_zero(),
+            Self::RegisterSigner => {
+                transport.hyperlane_signer(target.validator).await? == target.hyperlane
+            }
+        })
+    }
+
+    async fn send<T: HyperlaneSetupTransport>(
+        self,
+        transport: &T,
+        target: &SetupTarget,
+    ) -> Result<String> {
+        match self {
+            Self::Delegate => transport.send_delegate(target.hyperlane).await,
+            Self::Fund => {
+                transport
+                    .send_funding(target.hyperlane, target.funding)
+                    .await
+            }
+            Self::RegisterSigner => transport.send_set_signer(target.hyperlane).await,
+        }
+    }
+}
+
+/// One deadline-bounded run of the Hyperlane setup. `save` journals `state` after each new
+/// broadcast so that a retry reuses the hash and never broadcasts the step again.
+struct CooperativeSetup<'a, T, S> {
+    transport: &'a T,
+    target: SetupTarget,
+    state: SetupState,
+    save: S,
     deadline: Option<Instant>,
-    progress: &mut Progress,
-    mut save: impl FnMut(&SetupState) -> Result<()>,
-) -> Result<(SetupState, bool)> {
-    let expired = || deadline.is_some_and(|d| Instant::now() >= d);
+    progress: &'a mut Progress,
+}
 
-    if expired() {
-        return Ok((state, false));
-    }
-    if transport.validator_delegate(validator).await? != hyperlane {
-        progress.stage("delegating Hyperlane operations to the Hyperlane signer");
-        let hash = match state.delegate_transaction.as_deref() {
-            Some(existing) => existing.to_owned(),
-            None => {
-                if expired() {
-                    return Ok((state, false));
-                }
-                // Let an in-flight broadcast finish and journal its hash before honoring deadline.
-                let hash = transport.send_delegate(hyperlane).await?;
-                state.delegate_transaction = Some(hash.clone());
-                save(&state)?;
-                hash
+impl<T, S> CooperativeSetup<'_, T, S>
+where
+    T: HyperlaneSetupTransport,
+    S: FnMut(&SetupState) -> Result<()>,
+{
+    /// Returns the journaled state and true when all steps are complete. The flag is false when
+    /// the deadline expires first.
+    async fn run(mut self) -> Result<(SetupState, bool)> {
+        for step in SetupStep::ALL {
+            if self.expired() {
+                return Ok((self.state, false));
             }
-        };
-        if !transport.wait_finalized(&hash, deadline, progress).await? {
-            return Ok((state, false));
+            if !step.needed(self.transport, &self.target).await? {
+                continue;
+            }
+            self.progress.stage(step.stage());
+            if !self.complete_step(step).await? {
+                return Ok((self.state, false));
+            }
         }
-        ensure!(
-            transport.validator_delegate(validator).await? == hyperlane,
-            "Hyperlane delegation is not visible after finality"
-        );
+        Ok((self.state, true))
     }
 
-    if expired() {
-        return Ok((state, false));
-    }
-    if transport.balance(hyperlane).await?.is_zero() {
-        progress.stage("funding the Hyperlane signer");
-        let hash = match state.funding_transaction.as_deref() {
-            Some(existing) => existing.to_owned(),
-            None => {
-                if expired() {
-                    return Ok((state, false));
-                }
-                // Let an in-flight broadcast finish and journal its hash before honoring deadline.
-                let hash = transport.send_funding(hyperlane, funding).await?;
-                state.funding_transaction = Some(hash.clone());
-                save(&state)?;
-                hash
-            }
-        };
-        if !transport.wait_finalized(&hash, deadline, progress).await? {
-            return Ok((state, false));
-        }
-        ensure!(
-            !transport.balance(hyperlane).await?.is_zero(),
-            "Hyperlane signer funding is not visible after finality"
-        );
+    fn expired(&self) -> bool {
+        self.deadline.is_some_and(|d| Instant::now() >= d)
     }
 
-    if expired() {
-        return Ok((state, false));
-    }
-    let record = transport.validator(validator).await?;
-    if record.status == 2 && transport.hyperlane_signer(validator).await? != hyperlane {
-        progress.stage("registering the Hyperlane checkpoint signer");
-        let hash = match state.signer_transaction.as_deref() {
-            Some(existing) => existing.to_owned(),
-            None => {
-                if expired() {
-                    return Ok((state, false));
-                }
-                // Let an in-flight broadcast finish and journal its hash before honoring deadline.
-                let hash = transport.send_set_signer(hyperlane).await?;
-                state.signer_transaction = Some(hash.clone());
-                save(&state)?;
-                hash
-            }
+    /// Returns false when the deadline expires before the step transaction is final.
+    async fn complete_step(&mut self, step: SetupStep) -> Result<bool> {
+        let Some(hash) = self.step_transaction(step).await? else {
+            return Ok(false);
         };
-        if !transport.wait_finalized(&hash, deadline, progress).await? {
-            return Ok((state, false));
+        if !self
+            .transport
+            .wait_finalized(&hash, self.deadline, self.progress)
+            .await?
+        {
+            return Ok(false);
         }
         ensure!(
-            transport.hyperlane_signer(validator).await? == hyperlane,
-            "Hyperlane signer registration is not visible after finality"
+            step.is_done(self.transport, &self.target).await?,
+            "{}",
+            step.not_visible_error()
         );
+        Ok(true)
     }
-    Ok((state, true))
+
+    /// Reuse the journaled hash, or broadcast the step once and journal the new hash. Returns
+    /// `None` when the deadline expires before a broadcast.
+    async fn step_transaction(&mut self, step: SetupStep) -> Result<Option<String>> {
+        if let Some(existing) = step.journal_slot(&mut self.state) {
+            return Ok(Some(existing.clone()));
+        }
+        if self.expired() {
+            return Ok(None);
+        }
+        // Let an in-flight broadcast finish and journal its hash before honoring deadline.
+        let hash = step.send(self.transport, &self.target).await?;
+        *step.journal_slot(&mut self.state) = Some(hash.clone());
+        (self.save)(&self.state)?;
+        Ok(Some(hash))
+    }
 }
 
 /// Sign and broadcast a plain native value transfer from `key_path` to `to` via `eth_sendRawTransaction`.
@@ -455,14 +538,14 @@ pub async fn run_service(bin_dir: Option<&Path>) -> Result<()> {
         } else {
             SetupState::default()
         };
-        let (hash, submitted) = transaction_with_bin_dir(
-            state.signer_transaction.as_deref(),
-            &hyperlane_key,
-            &rpc_url,
-            &["validator", "set-hyperlane-signer", &format!("{signer:#x}")],
-            false,
+        let (hash, submitted) = CliTransaction {
+            key: &hyperlane_key,
+            rpc_url: &rpc_url,
+            args: &["validator", "set-hyperlane-signer", &format!("{signer:#x}")],
+            drop_privileges: false,
             bin_dir,
-        )?;
+        }
+        .submit_once(state.signer_transaction.as_deref())?;
         if submitted {
             state.signer_transaction = Some(hash.clone());
             save_state(&state_path, &state)?;
@@ -508,41 +591,45 @@ pub async fn setup_founder() -> Result<()> {
     Ok(())
 }
 
-fn transaction(
-    existing: Option<&str>,
-    key: &Path,
-    rpc_url: &str,
-    args: &[&str],
+/// One `outbe-cli` transaction command signed with `key`.
+struct CliTransaction<'a> {
+    key: &'a Path,
+    rpc_url: &'a str,
+    args: &'a [&'a str],
+    /// Run `outbe-cli` as the `outbe` user through `runuser`.
     drop_privileges: bool,
-) -> Result<(String, bool)> {
-    transaction_with_bin_dir(existing, key, rpc_url, args, drop_privileges, None)
+    /// Directory of `outbe-cli`. The default is the Outbe install root.
+    bin_dir: Option<&'a Path>,
 }
 
-fn transaction_with_bin_dir(
-    existing: Option<&str>,
-    key: &Path,
-    rpc_url: &str,
-    args: &[&str],
-    drop_privileges: bool,
-    bin_dir: Option<&Path>,
-) -> Result<(String, bool)> {
-    if let Some(hash) = existing {
-        return Ok((hash.to_owned(), false));
+impl CliTransaction<'_> {
+    /// Reuse the `existing` journaled hash, or run the command once and parse its transaction
+    /// hash. The flag is true only for a new broadcast.
+    fn submit_once(&self, existing: Option<&str>) -> Result<(String, bool)> {
+        if let Some(hash) = existing {
+            return Ok((hash.to_owned(), false));
+        }
+        let binary = self
+            .bin_dir
+            .unwrap_or_else(|| Path::new(process::ROOT))
+            .join("outbe-cli");
+        let binary = path_text(&binary)?;
+        let mut full = vec![
+            "--rpc-url",
+            self.rpc_url,
+            "--private-key-file",
+            path_text(self.key)?,
+        ];
+        full.extend_from_slice(self.args);
+        let output = if self.drop_privileges {
+            let mut runuser = vec!["--user", "outbe", "--", binary];
+            runuser.extend(full);
+            process::capture("runuser", &runuser)?
+        } else {
+            process::capture(binary, &full)?
+        };
+        Ok((transaction_hash(&output)?, true))
     }
-    let binary = bin_dir
-        .unwrap_or_else(|| Path::new(process::ROOT))
-        .join("outbe-cli");
-    let binary = path_text(&binary)?;
-    let mut full = vec!["--rpc-url", rpc_url, "--private-key-file", path_text(key)?];
-    full.extend_from_slice(args);
-    let output = if drop_privileges {
-        let mut runuser = vec!["--user", "outbe", "--", binary];
-        runuser.extend(full);
-        process::capture("runuser", &runuser)?
-    } else {
-        process::capture(binary, &full)?
-    };
-    Ok((transaction_hash(&output)?, true))
 }
 
 fn save_state(path: &Path, state: &SetupState) -> Result<()> {
@@ -576,146 +663,4 @@ fn required_path(name: &str) -> Result<std::path::PathBuf> {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-
-    use alloy_primitives::address;
-
-    use super::*;
-
-    struct FakeTransport {
-        hyperlane: Address,
-        funded: AtomicBool,
-        signer_set: AtomicBool,
-        funding_sends: AtomicUsize,
-        send_delay: Duration,
-    }
-
-    impl HyperlaneSetupTransport for FakeTransport {
-        async fn validator_delegate(&self, _validator: Address) -> Result<Address> {
-            Ok(self.hyperlane)
-        }
-
-        async fn balance(&self, _address: Address) -> Result<U256> {
-            if self.funded.load(Ordering::SeqCst) {
-                Ok(U256::from(1_000_u64))
-            } else {
-                Ok(U256::ZERO)
-            }
-        }
-
-        async fn validator(&self, _validator: Address) -> Result<ValidatorRecord> {
-            Ok(ValidatorRecord {
-                registered: true,
-                status: 2,
-                has_bls_share: true,
-            })
-        }
-
-        async fn hyperlane_signer(&self, _validator: Address) -> Result<Address> {
-            if self.signer_set.load(Ordering::SeqCst) {
-                Ok(self.hyperlane)
-            } else {
-                Ok(Address::ZERO)
-            }
-        }
-
-        async fn send_delegate(&self, _hyperlane: Address) -> Result<String> {
-            unreachable!("delegate is already set in fixture")
-        }
-
-        async fn send_funding(&self, _hyperlane: Address, _funding: U256) -> Result<String> {
-            self.funding_sends.fetch_add(1, Ordering::SeqCst);
-            tokio::time::sleep(self.send_delay).await;
-            Ok("0x1111111111111111111111111111111111111111111111111111111111111111".into())
-        }
-
-        async fn send_set_signer(&self, _hyperlane: Address) -> Result<String> {
-            self.signer_set.store(true, Ordering::SeqCst);
-            Ok("0x2222222222222222222222222222222222222222222222222222222222222222".into())
-        }
-
-        async fn wait_finalized(
-            &self,
-            hash: &str,
-            deadline: Option<Instant>,
-            _progress: &mut Progress,
-        ) -> Result<bool> {
-            if deadline.is_some_and(|d| Instant::now() >= d) {
-                return Ok(false);
-            }
-            if hash.starts_with("0x1111") {
-                self.funded.store(true, Ordering::SeqCst);
-            }
-            Ok(true)
-        }
-    }
-
-    #[tokio::test]
-    async fn cooperative_deadline_journals_in_flight_send_and_retry_does_not_resend() {
-        let validator = address!("1000000000000000000000000000000000000001");
-        let hyperlane = address!("2000000000000000000000000000000000000002");
-        let transport = FakeTransport {
-            hyperlane,
-            funded: AtomicBool::new(false),
-            signer_set: AtomicBool::new(false),
-            funding_sends: AtomicUsize::new(0),
-            send_delay: Duration::from_millis(60),
-        };
-        let mut journaled: Option<SetupState> = None;
-        let mut progress = Progress::new();
-
-        // Deadline expires while `send_funding` is in flight: broadcast must finish and journal.
-        let short_deadline = Some(Instant::now() + Duration::from_millis(20));
-        let (state, completed) = ensure_setup_cooperative(
-            &transport,
-            validator,
-            hyperlane,
-            U256::from(1_000_u64),
-            SetupState::default(),
-            short_deadline,
-            &mut progress,
-            |next| {
-                journaled = Some(next.clone());
-                Ok(())
-            },
-        )
-        .await
-        .unwrap();
-        assert!(!completed, "must report timeout after in-flight send");
-        assert_eq!(transport.funding_sends.load(Ordering::SeqCst), 1);
-        assert!(
-            state.funding_transaction.is_some(),
-            "in-flight funding hash must be returned"
-        );
-        assert_eq!(
-            journaled
-                .as_ref()
-                .and_then(|s| s.funding_transaction.as_deref()),
-            state.funding_transaction.as_deref(),
-            "in-flight funding hash must be journaled via save"
-        );
-
-        // Retry with the journaled state must NOT send a second funding transaction.
-        let generous_deadline = Some(Instant::now() + Duration::from_secs(5));
-        let (final_state, completed) = ensure_setup_cooperative(
-            &transport,
-            validator,
-            hyperlane,
-            U256::from(1_000_u64),
-            state,
-            generous_deadline,
-            &mut progress,
-            |_| Ok(()),
-        )
-        .await
-        .unwrap();
-        assert!(completed);
-        assert_eq!(
-            transport.funding_sends.load(Ordering::SeqCst),
-            1,
-            "retry must reuse the journaled funding hash without rebroadcasting"
-        );
-        assert!(final_state.signer_transaction.is_some());
-    }
-}
+mod tests;
