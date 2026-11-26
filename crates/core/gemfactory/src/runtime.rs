@@ -217,7 +217,8 @@ pub fn create_gem_factory_position(
         source_series_id,
         remaining_capacity_minor: capacity,
         issued_at,
-        expires_at: issued_at.saturating_add(outbe_gem::config::read(storage)?.position_validity),
+        expires_at: issued_at
+            .saturating_add(outbe_gem::config::read(storage)?.gem_factory_position_validity),
     };
     factory.add_position(&position)?;
 
@@ -468,7 +469,7 @@ pub fn quote_settlement(
 }
 
 /// The full terms of a Gem Factory position.
-pub fn position_data(
+pub fn gem_factory_position_data(
     storage: &StorageHandle<'_>,
     gem_factory_position_id: U256,
 ) -> Result<crate::precompile::IGemFactory::GemFactoryPositionData> {

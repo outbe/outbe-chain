@@ -97,7 +97,7 @@ pub fn dispatch(
             }),
 
             getGemFactoryPosition(c) => view(c, |c| {
-                runtime::position_data(&storage, c.gemFactoryPositionId)
+                runtime::gem_factory_position_data(&storage, c.gemFactoryPositionId)
             }),
             callState(c) => view(c, |c| crate::call_state::call_state(&storage, c.gemId)),
         }
