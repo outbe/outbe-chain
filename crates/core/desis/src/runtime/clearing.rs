@@ -258,7 +258,7 @@ fn clear_inner(
         )?;
     }
 
-    // A skipped chain's bidders reclaim through the escrow timeout path instead.
+    // A skipped chain's bidders reclaim their locks once the day stays unfinalized for 48 h.
     for &chain_id in included {
         if !result.bidder_chains.contains(&chain_id) {
             continue;
