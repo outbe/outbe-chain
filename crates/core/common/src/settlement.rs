@@ -1,4 +1,4 @@
-//! Settlement rules shared by the rights and by Lysis: the cost, computed at full
+//! Settlement rules shared by the rights: the cost, computed at full
 //! precision with any FX leg and floored once into the asset's minor units, the
 //! settlement deadline, and who pays in which asset.
 

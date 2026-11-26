@@ -15,12 +15,6 @@ pub enum PrimitivesMathError {
     ArithmeticOverflow,
     #[error("value rounds to zero")]
     ValueRoundsToZero,
-    #[error("scaled_math: multiplication overflow")]
-    ScaledMathMultiplicationOverflow,
-    #[error("scaled_math: division by zero")]
-    ScaledMathDivisionByZero,
-    #[error("scaled_math: ceiling overflow")]
-    ScaledMathCeilingOverflow,
     #[error("lb_math: log2 i256 conversion")]
     LbMathLog2I256Conversion,
     #[error("lb_math: log2 underflow (x == 0)")]

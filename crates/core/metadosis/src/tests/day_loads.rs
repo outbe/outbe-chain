@@ -196,8 +196,8 @@ fn pending_desis_limit(provider: &mut HashMapStorageProvider) -> U256 {
     })
 }
 
-/// The sum of the day's Nod loads takes the place of the Lysis Limit, and the limit splits
-/// once between Promis Limit, Desis and the Nods, an empty day included.
+/// The limit splits once between Promis Limit, Desis and the sum of the day's Nod loads,
+/// an empty day included.
 #[test]
 fn metadosis_splits_the_limit_with_the_loads() {
     for nominals in [

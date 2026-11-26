@@ -186,7 +186,7 @@ mod tests {
 
     #[test]
     fn native_split_preserves_the_day_and_carry_economic_vectors() {
-        for (base, lysis, nominal, carry, auction, remaining) in [
+        for (base, loads, nominal, carry, auction, remaining) in [
             (1_000, 32, 100, 0, 68, 900),
             (1_000, 320, 5_000, 0, 680, 0),
             (1_000, 320, 5_000, 2_000, 2_680, 0),
@@ -205,7 +205,7 @@ mod tests {
                 let split = allocate_day_metadosis_limit(
                     storage.clone(),
                     U256::from(base as u64),
-                    U256::from(lysis as u64),
+                    U256::from(loads as u64),
                     U256::from(nominal as u64),
                 )
                 .unwrap();
@@ -238,7 +238,7 @@ mod tests {
 
     #[test]
     fn native_split_and_auction_failures_roll_back_the_whole_effect() {
-        for (base, lysis, nominal, carry) in [
+        for (base, loads, nominal, carry) in [
             (U256::MAX, U256::ZERO, U256::MAX, U256::ZERO),
             (U256::from(100), U256::from(40), U256::from(100), U256::MAX),
         ] {
@@ -253,7 +253,7 @@ mod tests {
             let result = StorageHandle::enter(&mut provider, |storage| {
                 storage.with_checkpoint(|| {
                     let split =
-                        allocate_day_metadosis_limit(storage.clone(), base, lysis, nominal)?;
+                        allocate_day_metadosis_limit(storage.clone(), base, loads, nominal)?;
                     apply_desis_limit(storage.clone(), 20260101, &split)
                 })
             });
@@ -333,11 +333,11 @@ mod tests {
                 Some(U256::MAX),
             ),
         ];
-        for (nominal, lysis, day_limit, draw, expected) in cases {
+        for (nominal, loads, day_limit, draw, expected) in cases {
             assert_eq!(
-                desis_limit(nominal, lysis, day_limit, draw),
+                desis_limit(nominal, loads, day_limit, draw),
                 expected,
-                "nominal {nominal} lysis {lysis} day_limit {day_limit} draw {draw}"
+                "nominal {nominal} loads {loads} day_limit {day_limit} draw {draw}"
             );
         }
     }

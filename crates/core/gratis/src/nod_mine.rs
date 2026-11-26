@@ -397,7 +397,9 @@ mod tests {
             reason: reason.to_owned(),
             inputs_canonical_hash: expected,
             attestation_tag: signer
-                .sign(&attestation(b"outbe/lysis/rejected", expected, reason).unwrap())
+                .sign(
+                    &attestation(b"outbe/nod/issue-at-offer-result/v1", expected, reason).unwrap(),
+                )
                 .to_bytes()
                 .to_vec(),
         };

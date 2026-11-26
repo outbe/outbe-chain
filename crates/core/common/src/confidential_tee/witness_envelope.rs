@@ -47,7 +47,7 @@ macro_rules! impl_confidential_witness_schema {
 pub const V1_RESPONSE_TAG_MAX: u8 = 22;
 
 /// Domain response discriminants that must not be written to the witness tape.
-pub const NON_RECORDABLE_V1_TAGS: [u8; 10] = [0, 3, 6, 7, 11, 12, 13, 14, 17, 18];
+pub const NON_RECORDABLE_V1_TAGS: [u8; 11] = [0, 3, 6, 7, 11, 12, 13, 14, 16, 17, 18];
 
 /// Recordable frozen V1 domain response tag.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -69,8 +69,6 @@ pub enum WitnessResponseTag {
     NodAmountReadV1 = 10,
     /// `FidelityQueryRejected`.
     FidelityQueryRejected = 15,
-    /// `LysisFractionsExecutedV1`.
-    LysisFractionsExecutedV1 = 16,
     /// `NodGroupLoadOpAppliedV1`.
     NodGroupLoadOpAppliedV1 = 19,
     /// `NodGroupLoadReadV1`.
@@ -83,7 +81,7 @@ pub enum WitnessResponseTag {
 
 impl WitnessResponseTag {
     /// Every recordable V1 tag, in discriminant order.
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 12] = [
         Self::GratisOpApplied,
         Self::PromisOpApplied,
         Self::FidelityLeaguesSnapshotted,
@@ -92,7 +90,6 @@ impl WitnessResponseTag {
         Self::EncryptedNodMinedV1,
         Self::NodAmountReadV1,
         Self::FidelityQueryRejected,
-        Self::LysisFractionsExecutedV1,
         Self::NodGroupLoadOpAppliedV1,
         Self::NodGroupLoadReadV1,
         Self::NodQuoteEncryptedV1,

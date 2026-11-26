@@ -65,9 +65,8 @@ pub const EMISSION_ADDRESS: Address = address!("0x000000000000000000000000000000
 /// Legacy alias for [`EMISSION_ADDRESS`].
 pub const EMISSION_LIMIT_ADDRESS: Address = EMISSION_ADDRESS;
 
-/// Metadosis precompile address. Its registered dispatch serves public view
-/// methods (for example `getWorldwideDay`) to any caller. It also routes the
-/// `submitLysisResult` result-vote selector.
+/// Metadosis precompile address. `IMetadosis` declares only events and errors, so its
+/// dispatch rejects every selector.
 pub const METADOSIS_ADDRESS: Address = address!("0x000000000000000000000000000000000000100E");
 
 /// Promis limit precompile address. Its registered dispatch serves the public

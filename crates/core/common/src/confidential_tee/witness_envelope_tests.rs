@@ -4,7 +4,7 @@ use super::*;
 
 /// Independent `(variant, discriminant)` table. Swapping two enum
 /// discriminants fails this list even though `value()` is `as u8`.
-const RECORDABLE_V1_TAG_LITERALS: [(WitnessResponseTag, u8); 13] = [
+const RECORDABLE_V1_TAG_LITERALS: [(WitnessResponseTag, u8); 12] = [
     (WitnessResponseTag::GratisOpApplied, 1),
     (WitnessResponseTag::PromisOpApplied, 2),
     (WitnessResponseTag::FidelityLeaguesSnapshotted, 4),
@@ -13,7 +13,6 @@ const RECORDABLE_V1_TAG_LITERALS: [(WitnessResponseTag, u8); 13] = [
     (WitnessResponseTag::EncryptedNodMinedV1, 9),
     (WitnessResponseTag::NodAmountReadV1, 10),
     (WitnessResponseTag::FidelityQueryRejected, 15),
-    (WitnessResponseTag::LysisFractionsExecutedV1, 16),
     (WitnessResponseTag::NodGroupLoadOpAppliedV1, 19),
     (WitnessResponseTag::NodGroupLoadReadV1, 20),
     (WitnessResponseTag::NodQuoteEncryptedV1, 21),

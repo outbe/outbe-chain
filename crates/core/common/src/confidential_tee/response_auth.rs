@@ -131,27 +131,27 @@ mod tests {
 
     use super::*;
 
-    const LYSIS: &[u8] = b"outbe/lysis/rejected";
+    const ISSUE: &[u8] = b"outbe/nod/issue-at-offer-result/v1";
     const MINT: &[u8] = b"outbe/nod/mint-rejected/v1";
 
     #[test]
-    fn lysis_and_mint_rejection_tags_cannot_cross_domains() {
+    fn issue_and_mint_rejection_tags_cannot_cross_domains() {
         let signer = SigningKey::from_bytes(&[0x53; 32]);
         let public = signer.verifying_key().to_bytes();
         let expected = B256::repeat_byte(0x61);
         let reason = "bad \"quote\"\nline";
-        let lysis = attestation(LYSIS, expected, reason).unwrap();
+        let issue = attestation(ISSUE, expected, reason).unwrap();
         let mint = attestation(MINT, expected, reason).unwrap();
-        let lysis_tag = signer.sign(&lysis).to_bytes();
+        let issue_tag = signer.sign(&issue).to_bytes();
         let mint_tag = signer.sign(&mint).to_bytes();
         let descriptor = super::super::errors::NOD_MINT_REJECTED;
 
-        let lysis_spec = ResponseAuthSpec {
+        let issue_spec = ResponseAuthSpec {
             attestation_pub: &public,
             descriptor,
             expected_inputs_hash: expected,
             actual_inputs_hash: expected,
-            tag: &lysis_tag,
+            tag: &issue_tag,
         };
         let mint_spec = ResponseAuthSpec {
             attestation_pub: &public,
@@ -160,9 +160,9 @@ mod tests {
             actual_inputs_hash: expected,
             tag: &mint_tag,
         };
-        verify_signed_domain(&lysis_spec, LYSIS, reason).unwrap();
+        verify_signed_domain(&issue_spec, ISSUE, reason).unwrap();
         verify_signed_domain(&mint_spec, MINT, reason).unwrap();
-        for (spec, domain) in [(&lysis_spec, MINT), (&mint_spec, LYSIS)] {
+        for (spec, domain) in [(&issue_spec, MINT), (&mint_spec, ISSUE)] {
             let crossed = verify_signed_domain(spec, domain, reason).unwrap_err();
             assert!(matches!(
                 crossed
@@ -181,7 +181,7 @@ mod tests {
         let signed_hash = B256::repeat_byte(0x62);
         let different_hash = B256::repeat_byte(0x63);
         let descriptor = super::super::errors::NOD_MINT_REJECTED;
-        for domain in [LYSIS, MINT] {
+        for domain in [ISSUE, MINT] {
             let signed = attestation(domain, signed_hash, reason).unwrap();
             let tag = signer.sign(&signed).to_bytes();
             let spec = ResponseAuthSpec {
