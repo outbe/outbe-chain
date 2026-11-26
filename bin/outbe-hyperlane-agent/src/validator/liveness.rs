@@ -250,10 +250,12 @@ impl Liveness {
     /// Sends the call of `round` for the domain of `signer`: the signed
     /// checkpoint at `targetIndex(domain)` (the liveness vote) with the report.
     /// When there is no target, or the store does not have that index yet, it
-    /// sends the latest signed checkpoint. It sends nothing when the
-    /// controller already has the report of this round, or when the call
+    /// sends the latest signed checkpoint. It sends nothing when the call
     /// gives the controller no new vote and no newer index: the controller
-    /// rejects such a call. Index 0 is never submitted.
+    /// rejects such a call. When the controller already has the report of
+    /// this round, the agent sends only a new vote, with no names: the
+    /// controller uses the lists of the first call only. Index 0 is never
+    /// submitted.
     async fn submit_round(
         &self,
         provider: &DynProvider,
@@ -271,10 +273,8 @@ impl Liveness {
                 controller,
                 IHyperlaneController::reportedRoundCall { validator, domain },
             )
-            .await?;
-        if reported == round {
-            return Ok(());
-        }
+            .await?
+            == round;
         let Some(latest) = signer.latest_index()? else {
             return Ok(());
         };
@@ -309,7 +309,7 @@ impl Liveness {
                 IHyperlaneController::submittedIndexCall { validator, domain },
             )
             .await?;
-        if !is_vote && latest <= submitted {
+        if !is_vote && (reported || latest <= submitted) {
             return Ok(());
         }
         // The checks of the other validators are for the target index. Without a vote at the
@@ -317,6 +317,7 @@ impl Liveness {
         let mut not_serving = Vec::new();
         let mut not_delivered = Vec::new();
         let (index, checkpoint) = match voted {
+            Some(checkpoint) if reported => (target, checkpoint),
             Some(checkpoint) => {
                 let lists = self.report_lists(provider, validators, &checkpoint);
                 match lists.await {
@@ -334,6 +335,11 @@ impl Liveness {
                 }
                 (target, checkpoint)
             }
+            // The agent did not sign the target yet. A call now has no vote
+            // and no names, and the controller uses only the names of the
+            // first call of a round: wait for the signature until the last
+            // part of the epoch.
+            None if target != 0 && !last_chance => return Ok(()),
             None => match signer.signed_checkpoint(latest)? {
                 Some(checkpoint) => (latest, checkpoint),
                 None => return Ok(()),
@@ -358,8 +364,10 @@ impl Liveness {
             notDelivered: not_delivered.clone(),
         };
         self.submit(provider, call).await?;
-        self.health
-            .set_report(domain, round, &not_serving, &not_delivered);
+        if !reported {
+            self.health
+                .set_report(domain, round, &not_serving, &not_delivered);
+        }
         Ok(())
     }
 
@@ -472,11 +480,13 @@ mod tests {
 
     /// The controller and the validator set on Outbe. `hyperlaneSigner(V)`
     /// returns the shared address, `targetIndex` returns the shared target,
-    /// and `V` has no vote. Each receipt has status 0 (reverted).
+    /// `reportedRound` returns the shared round, and `V` has no vote. The
+    /// liveness round is 1. Each receipt has status 0 (reverted).
     /// Returns the URL and the count of sent transactions.
     async fn outbe(
         signer_of_v: Arc<Mutex<Address>>,
         target: Arc<Mutex<u32>>,
+        reported: Arc<Mutex<u64>>,
     ) -> (String, Arc<Mutex<u32>>) {
         let sent = Arc::new(Mutex::new(0));
         let count = sent.clone();
@@ -528,7 +538,9 @@ mod tests {
                         ) => 0u32.abi_encode(),
                         (VALIDATOR_SET_ADDRESS, _) => vec![V].abi_encode(),
                         (_, IHyperlaneController::livenessRoundCall::SELECTOR) => 1u64.abi_encode(),
-                        (_, IHyperlaneController::reportedRoundCall::SELECTOR) => 0u64.abi_encode(),
+                        (_, IHyperlaneController::reportedRoundCall::SELECTOR) => {
+                            reported.lock().unwrap().abi_encode()
+                        }
                         (_, IHyperlaneController::hyperlaneSignerCall::SELECTOR) => {
                             signer_of_v.lock().unwrap().abi_encode()
                         }
@@ -555,16 +567,24 @@ mod tests {
         (url, sent)
     }
 
-    #[tokio::test]
-    async fn signer_mismatch_blocks_and_a_reverted_receipt_is_a_failure() {
-        let key = PrivateKeySigner::random();
-        let signer_of_v = Arc::new(Mutex::new(Address::repeat_byte(0x99)));
-        let target = Arc::new(Mutex::new(0));
-        let (url, sent) = outbe(signer_of_v.clone(), target.clone()).await;
-        let dir = tempfile::tempdir().unwrap();
-        let store = Arc::new(Store::open(dir.path()).unwrap());
+    fn leaf(index: u32) -> SyncedLeaf {
+        SyncedLeaf {
+            index,
+            message_id: B256::repeat_byte(1),
+            block: 1,
+            root: B256::repeat_byte(2),
+        }
+    }
+
+    /// The liveness of `V` with the key `key` and the Outbe RPC `url`.
+    /// Domain 7 runs and has a signed checkpoint at index 1.
+    async fn liveness_of_v(
+        url: String,
+        key: &PrivateKeySigner,
+    ) -> (Liveness, Arc<DomainSigner>, Arc<ValidatorHealth>) {
+        let dir = tempfile::tempdir().unwrap().keep();
+        let store = Arc::new(Store::open(&dir).unwrap());
         let health = Arc::new(ValidatorHealth::new(store.clone()));
-        // Domain 7 has a signed checkpoint at index 1.
         let origin = Origin {
             domain: 7,
             hook: Address::ZERO,
@@ -573,19 +593,13 @@ mod tests {
             start_block: 1,
         };
         let signer = Arc::new(DomainSigner::new(origin, store, key.clone()).unwrap());
-        let leaf = |index| SyncedLeaf {
-            index,
-            message_id: B256::repeat_byte(1),
-            block: 1,
-            root: B256::repeat_byte(2),
-        };
         let batch = VerifiedBatch {
             domain: 7,
             leaves: vec![leaf(0), leaf(1)],
             cursor: 1,
         };
         signer.commit(&batch).await.unwrap();
-        health.set_running(signer);
+        health.set_running(signer.clone());
         let config = HyperlaneConfig {
             gasless: true,
             ..Default::default()
@@ -601,6 +615,17 @@ mod tests {
             V,
             health.clone(),
         );
+        (liveness, signer, health)
+    }
+
+    #[tokio::test]
+    async fn signer_mismatch_blocks_and_a_reverted_receipt_is_a_failure() {
+        let key = PrivateKeySigner::random();
+        let signer_of_v = Arc::new(Mutex::new(Address::repeat_byte(0x99)));
+        let target = Arc::new(Mutex::new(0));
+        let reported = Arc::new(Mutex::new(0));
+        let (url, sent) = outbe(signer_of_v.clone(), target.clone(), reported).await;
+        let (liveness, _signer, health) = liveness_of_v(url, &key).await;
 
         // hyperlaneSigner(V) is another key: no submit, a health error.
         liveness.tick().await.unwrap();
@@ -633,6 +658,40 @@ mod tests {
         *target.lock().unwrap() = 1;
         liveness.tick().await.unwrap();
         assert_eq!(*sent.lock().unwrap(), 2);
+    }
+
+    /// The agent is behind when it sends its call of the round: the call has
+    /// the report and no vote. When the agent signs the target later in the
+    /// same round, it must send the vote.
+    #[tokio::test]
+    async fn a_vote_goes_also_after_the_report_of_the_round() {
+        let key = PrivateKeySigner::random();
+        let signer_of_v = Arc::new(Mutex::new(key.address()));
+        let target = Arc::new(Mutex::new(2));
+        let reported = Arc::new(Mutex::new(0));
+        let (url, sent) = outbe(signer_of_v, target, reported.clone()).await;
+        let (liveness, signer, _health) = liveness_of_v(url, &key).await;
+
+        // The target is index 2, and the agent signed only index 1: the call
+        // has the latest index and no vote. The controller records the
+        // report of round 1.
+        liveness.tick().await.unwrap();
+        assert_eq!(*sent.lock().unwrap(), 1);
+        *reported.lock().unwrap() = 1;
+
+        // No new vote: no second call.
+        liveness.tick().await.unwrap();
+        assert_eq!(*sent.lock().unwrap(), 1);
+
+        // The agent signs the target: the vote goes.
+        let batch = VerifiedBatch {
+            domain: 7,
+            leaves: vec![leaf(2)],
+            cursor: 2,
+        };
+        signer.commit(&batch).await.unwrap();
+        liveness.tick().await.unwrap();
+        assert_eq!(*sent.lock().unwrap(), 2, "the vote at the target is lost");
     }
 
     #[test]

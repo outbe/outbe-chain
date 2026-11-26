@@ -366,10 +366,15 @@ configuration, so two honest daemons can get different results. When a check did
 again on the next poll. In the last eighth of the epoch it sends
 the call with no names, so the vote is not lost.
 
-The daemon sends no call when `reportedRound(V, domain)` is the current
-`livenessRound()`: the controller has the report of this round. It also sends
-no call that gives the controller no new vote and no newer index. The daemon
-never submits index 0. It waits up to 60 seconds for the receipt.
+When the daemon did not sign the target index yet, it waits for the signature
+until the last eighth of the epoch. Then it sends the call with its latest
+index and no names.
+
+When `reportedRound(V, domain)` is the current `livenessRound()`, the
+controller has the report of this round. The daemon then sends a call only
+for a new vote, with no names: the controller uses the lists of the first
+call only. The daemon sends no call that gives the controller no new vote and
+no newer index. It never submits index 0. It waits up to 60 seconds for the receipt.
 
 The controller gives the liveness verdict in the first block of each epoch.
 
