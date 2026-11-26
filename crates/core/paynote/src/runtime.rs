@@ -22,6 +22,7 @@ use outbe_zk::paynote::{
 use outbe_zk::paynote_merge::{self, PaynoteMerge, MAX_MERGE_INPUTS};
 use outbe_zk_backend::barretenberg::verify_circuit;
 
+use crate::context::withdraw_context;
 use crate::errors::PayNoteError;
 use crate::hash::{empty_subtrees, merkle_node, note_commitment};
 use crate::precompile::IPayNote;
@@ -237,7 +238,7 @@ pub(crate) fn deposit(
     }
     // A spend routes the tokens into the vault of the asset. If the asset has
     // no vault, no spend can settle the note. Thus, reject the deposit.
-    // NB: native COEN has no vault. Its spend path is not defined yet.
+    // NB: native COEN has no vault. A native note can only be withdrawn.
     if !native && outbe_vaultrouter::api::asset_vaults_count(&storage, asset)?.is_zero() {
         return Err(PayNoteError::AssetVaultMissing.into());
     }
@@ -295,7 +296,16 @@ pub(crate) fn deposit(
     })
 }
 
-/// `consume(proof)` — verify a frozen `outbe.paynote@1.3.0` spend proof and
+/// Where a spend sends the released value.
+#[derive(Clone, Copy)]
+enum Payout {
+    /// Settlement: through VaultRouter into the reserve vault of the asset.
+    Vault,
+    /// Withdrawal: straight to this address.
+    Recipient(Address),
+}
+
+/// `consume(proof)` — verify a frozen `outbe.paynote@1.4.0` spend proof and
 /// return the validated claim. The function nullifies the note and appends the
 /// change commitment, if there is one. Then it routes `spend_amount` of the
 /// asset from the pool into the reserve vault of the asset.
@@ -309,6 +319,33 @@ pub(crate) fn deposit(
 /// may relay a proof. The nullifier does not include `context`, so every
 /// statement for one note shares one use.
 pub(crate) fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNoteClaim> {
+    spend(storage, proof, Payout::Vault)
+}
+
+/// `withdraw(proof, recipient)` — spend a note and pay `spend_amount` of its
+/// asset from the pool to `recipient`: an ERC20 transfer, or a native COEN
+/// balance move for a note with the zero asset.
+///
+/// Any address may relay the proof. The proof binds the recipient through
+/// [`withdraw_context`], so a relayer cannot redirect the funds, and a
+/// settlement proof is not a withdrawal proof.
+pub(crate) fn withdraw(
+    storage: &StorageHandle<'_>,
+    proof: &[u8],
+    recipient: Address,
+) -> Result<()> {
+    // A payout to the pool itself would nullify the note and strand its value.
+    if recipient.is_zero() || recipient == PAYNOTE_ADDRESS {
+        return Err(
+            PayNoteError::InvalidInput("recipient must not be zero or the pool".into()).into(),
+        );
+    }
+    spend(storage, proof, Payout::Recipient(recipient)).map(|_| ())
+}
+
+/// The spend transition that settlement and withdrawal share. All guards run
+/// before the proof is verified, and all effects are one rollback unit.
+fn spend(storage: &StorageHandle<'_>, proof: &[u8], payout: Payout) -> Result<PayNoteClaim> {
     // Framing must decode before the function touches any state.
     let claim: PayNotePublicInputs = decode_paynote_public_inputs(proof)
         .and_then(TryInto::try_into)
@@ -325,11 +362,24 @@ pub(crate) fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNo
         return Err(PayNoteError::InvalidInput("chain ID does not match runtime".into()).into());
     }
 
-    // TODO: native COEN spend. Until it exists, a native note cannot be
-    // consumed. The ERC20 routing below would call address 0, which succeeds
-    // silently.
-    if claim.asset.is_zero() {
-        return Err(PayNoteError::InvalidInput("asset must be non-zero".into()).into());
+    match payout {
+        // NB: native COEN has no vault, so a native note cannot settle. The
+        // ERC20 routing below would call address 0, which succeeds silently.
+        Payout::Vault => {
+            if claim.asset.is_zero() {
+                return Err(PayNoteError::InvalidInput("asset must be non-zero".into()).into());
+            }
+        }
+        Payout::Recipient(recipient) => {
+            let expected = withdraw_context(recipient)?;
+            if claim.context != expected {
+                return Err(PayNoteError::ContextMismatch {
+                    expected,
+                    actual: claim.context,
+                }
+                .into());
+            }
+        }
     }
     if claim.context == B256::ZERO {
         return Err(PayNoteError::InvalidInput("context must be non-zero".into()).into());
@@ -387,8 +437,8 @@ pub(crate) fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNo
     }
 
     // These steps roll back as one unit: the nullifier, the optional change
-    // append, the vault routing and the events. The state changes occur before
-    // the token sub-calls.
+    // append, the payout and the events. The state changes occur before the
+    // token sub-calls.
     storage.with_checkpoint(|| {
         paynote.spent_nullifiers.write(&nullifier_word, true)?;
         let change_receipt = if partial {
@@ -398,20 +448,31 @@ pub(crate) fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNo
         } else {
             None
         };
-        // The router pulls exactly `spend_amount` from the pool. Thus, no
-        // allowance stays after the call. The change value stays in the pool.
-        token::approve(
-            storage,
-            claim.asset,
-            VAULT_ROUTER_ADDRESS,
-            claim.spend_amount,
-        )?;
-        outbe_vaultrouter::api::deposit_from(
-            storage,
-            PAYNOTE_ADDRESS,
-            claim.asset,
-            claim.spend_amount,
-        )?;
+        // The change value stays in the pool.
+        match payout {
+            // The router pulls exactly `spend_amount` from the pool. Thus, no
+            // allowance stays after the call.
+            Payout::Vault => {
+                token::approve(
+                    storage,
+                    claim.asset,
+                    VAULT_ROUTER_ADDRESS,
+                    claim.spend_amount,
+                )?;
+                outbe_vaultrouter::api::deposit_from(
+                    storage,
+                    PAYNOTE_ADDRESS,
+                    claim.asset,
+                    claim.spend_amount,
+                )?;
+            }
+            Payout::Recipient(recipient) if claim.asset.is_zero() => {
+                storage.transfer_balance(PAYNOTE_ADDRESS, recipient, claim.spend_amount)?;
+            }
+            Payout::Recipient(recipient) => {
+                token::transfer(storage, claim.asset, recipient, claim.spend_amount)?;
+            }
+        }
         storage.emit_event(
             PAYNOTE_ADDRESS,
             IPayNote::NoteUsed::encode_log_data(&IPayNote::NoteUsed {
@@ -421,6 +482,17 @@ pub(crate) fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNo
                 amountMinor: claim.spend_amount,
             }),
         )?;
+        if let Payout::Recipient(recipient) = payout {
+            storage.emit_event(
+                PAYNOTE_ADDRESS,
+                IPayNote::NoteWithdrawn::encode_log_data(&IPayNote::NoteWithdrawn {
+                    asset: claim.asset,
+                    recipient,
+                    nullifier: nullifier_word,
+                    amount: claim.spend_amount,
+                }),
+            )?;
+        }
         if let Some((index, root_after)) = change_receipt {
             storage.emit_event(
                 PAYNOTE_ADDRESS,

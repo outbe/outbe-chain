@@ -1,7 +1,7 @@
 //! Unit and dispatch tests for the PayNote precompile.
 //!
 //! The round-trip tests are the load-bearing ones: they prove a real
-//! `outbe.paynote@1.3.0` statement from **Rust-computed** public inputs and
+//! `outbe.paynote@1.4.0` statement from **Rust-computed** public inputs and
 //! verify it through the production decoder. If `hash.rs` drifted from the
 //! frozen circuit's `paynote.nr`, the Rust root/nullifier would disagree with
 //! the in-circuit ones and proving would fail. That failure is what pins the
@@ -704,6 +704,128 @@ fn a_note_cannot_be_spent_as_a_different_asset() {
             "PayNote root is not recent",
         );
     });
+}
+
+// ---- withdrawal -----------------------------------------------------------
+
+const BOB: Address = Address::new([0x22; 20]);
+
+/// A 40-of-100 USDC spend bound to a withdrawal to `BOB`.
+fn withdrawal() -> crate::test_support::SpendFixture {
+    note_and_spend_proof(
+        CHAIN_ID,
+        USDC,
+        crate::context::withdraw_context(BOB).unwrap(),
+        U256::from(100u64),
+        U256::from(40u64),
+    )
+}
+
+fn withdraw_call(proof: &[u8], recipient: Address) -> Vec<u8> {
+    IPayNote::withdrawCall {
+        proof: proof.to_vec().into(),
+        recipient,
+    }
+    .abi_encode()
+}
+
+#[test]
+fn anyone_may_relay_a_withdrawal_that_pays_only_the_bound_recipient() {
+    use crate::sol_ext::IERC20;
+    use alloy_sol_types::SolEvent;
+    use outbe_system_common::addresses::PAYNOTE_ADDRESS;
+
+    let fixture = withdrawal();
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    seed_pool(&mut provider, CHAIN_ID, &[fixture.commitment]);
+    let data = withdraw_call(&fixture.proof, BOB);
+    assert_eq!(base_gas(&data), crate::precompile::PAYNOTE_MERGE_BASE_GAS);
+    assert!(!PAYABLE_SELECTORS.contains(&IPayNote::withdrawCall::SELECTOR));
+
+    // ALICE relays. She is neither the recipient nor a settlement factory.
+    provider.enter(|storage| dispatch(storage, &data, ALICE, U256::ZERO).unwrap());
+
+    // The only sub-call pays the spent 40 to BOB. Nothing reaches the vault.
+    let calls: Vec<_> = provider
+        .sub_call_inputs()
+        .iter()
+        .map(|input| (input.target, input.calldata.clone()))
+        .collect();
+    let pay = IERC20::transferCall {
+        to: BOB,
+        amount: U256::from(40),
+    };
+    assert_eq!(calls, [(USDC, pay.abi_encode().into())]);
+
+    let nullifier = b256(fixture.public.nullifier);
+    let withdrawn = IPayNote::NoteWithdrawn {
+        asset: USDC,
+        recipient: BOB,
+        nullifier,
+        amount: U256::from(40),
+    };
+    assert!(provider
+        .get_ordered_events()
+        .iter()
+        .any(|log| log.address == PAYNOTE_ADDRESS && log.data == withdrawn.encode_log_data()));
+    provider.enter(|storage| {
+        let paynote: PayNoteContract<'_> = storage.contract();
+        assert!(paynote.spent_nullifiers.read(&nullifier).unwrap());
+        assert!(paynote
+            .commitments
+            .read(&b256(fixture.public.change_commitment))
+            .unwrap());
+        assert_revert(
+            runtime::withdraw(&storage, &fixture.proof, BOB),
+            "PayNote nullifier has already been spent",
+        );
+    });
+}
+
+#[test]
+fn a_withdrawal_pays_no_one_but_the_recipient_the_proof_binds() {
+    let fixture = withdrawal();
+    // A settlement proof over the same note.
+    let (settlement, _, _) = prove_spend(CHAIN_ID, USDC, 100, 40);
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    seed_pool(&mut provider, CHAIN_ID, &[fixture.commitment]);
+    let before = provider.storage.clone();
+
+    provider.enter(|storage| {
+        for (proof, recipient) in [(&fixture.proof, ALICE), (&settlement, BOB)] {
+            let error = runtime::withdraw(&storage, proof, recipient).unwrap_err();
+            assert!(
+                matches!(&error, PrecompileError::Revert(m) if m.contains("does not match")),
+                "{error:?}"
+            );
+        }
+        for recipient in [
+            Address::ZERO,
+            outbe_system_common::addresses::PAYNOTE_ADDRESS,
+        ] {
+            assert_revert(
+                runtime::withdraw(&storage, &fixture.proof, recipient),
+                "PayNote recipient must not be zero or the pool",
+            );
+        }
+    });
+    assert_eq!(provider.storage, before);
+    assert!(provider.sub_call_inputs().is_empty());
+}
+
+#[test]
+fn a_failed_payout_leaves_the_note_unspent() {
+    let fixture = withdrawal();
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    seed_pool(&mut provider, CHAIN_ID, &[fixture.commitment]);
+    provider.stub_sub_call_revert_at(USDC, Default::default());
+    let before = provider.storage.clone();
+
+    let result = provider.enter(|storage| runtime::withdraw(&storage, &fixture.proof, BOB));
+    assert!(result.is_err(), "{result:?}");
+    assert_eq!(provider.storage, before);
+    assert!(provider.get_ordered_events().is_empty());
+    assert_unspent(&mut provider, &fixture.public);
 }
 
 #[test]

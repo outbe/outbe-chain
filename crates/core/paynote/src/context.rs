@@ -1,4 +1,4 @@
-//! Settlement statement bound into a PayNote spend proof.
+//! Settlement or withdrawal statement bound into a PayNote spend proof.
 //!
 //! The circuit treats `context` as an opaque non-zero field. This module is the
 //! only place that defines what that field means. The field is the canonical
@@ -29,6 +29,10 @@ pub fn intex_holding_target(series_id: &[u8; 14], owner: Address) -> B256 {
     keccak256(preimage)
 }
 
+/// Domain byte of a withdrawal. It is distinct from every [`SettlementDomain`],
+/// so a settlement proof is never a withdrawal proof, nor the reverse.
+const WITHDRAW_DOMAIN: u8 = 4;
+
 fn domain_byte(domain: SettlementDomain) -> u8 {
     match domain {
         SettlementDomain::Nod => 1,
@@ -52,16 +56,30 @@ pub fn settlement_context(
     units: U256,
     snapshot: U256,
 ) -> Result<B256> {
+    context_word(domain_byte(domain), target, units, snapshot)
+}
+
+/// Canonical context word for a withdrawal to `recipient`: domain 4, the
+/// recipient left-padded to 32 bytes as the target, zero units and snapshot.
+/// The proof already binds the asset and the amount as public inputs.
+pub fn withdraw_context(recipient: Address) -> Result<B256> {
+    context_word(
+        WITHDRAW_DOMAIN,
+        recipient.into_word(),
+        U256::ZERO,
+        U256::ZERO,
+    )
+}
+
+fn context_word(domain: u8, target: B256, units: U256, snapshot: U256) -> Result<B256> {
     let mut preimage = [0u8; 97];
-    preimage[0] = domain_byte(domain);
+    preimage[0] = domain;
     preimage[1..33].copy_from_slice(target.as_slice());
     preimage[33..65].copy_from_slice(&units.to_be_bytes::<32>());
     preimage[65..97].copy_from_slice(&snapshot.to_be_bytes::<32>());
     let reduced = field_from_be_bytes(keccak256(preimage).as_slice());
     if reduced.is_zero() {
-        return Err(
-            PayNoteError::InvalidInput("settlement context collapses to zero".into()).into(),
-        );
+        return Err(PayNoteError::InvalidInput("context collapses to zero".into()).into());
     }
     codec::field_to_b256(&reduced).map_err(|error| PrecompileError::Fatal(error.to_string()))
 }

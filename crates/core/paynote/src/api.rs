@@ -22,9 +22,11 @@ use crate::schema::PayNoteContract;
 
 pub use crate::runtime::PayNoteClaim;
 
-pub use crate::context::{intex_holding_target, settlement_context, SettlementDomain};
+pub use crate::context::{
+    intex_holding_target, settlement_context, withdraw_context, SettlementDomain,
+};
 
-/// Verify a `outbe.paynote@1.3.0` spend proof and return the validated claim.
+/// Verify a `outbe.paynote@1.4.0` spend proof and return the validated claim.
 ///
 /// The function nullifies the note and appends the change commitment, if there
 /// is one. Then it routes `claim.spend_amount` of `claim.asset` from the pool

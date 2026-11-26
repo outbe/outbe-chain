@@ -5,16 +5,16 @@ pragma solidity ^0.8.0;
 /// @notice Shielded pool at 0x0000000000000000000000000000000000001019.
 /// A deposit pulls `amount` of `asset` from the caller into this pool. Then it
 /// appends a note commitment to an incremental Merkle tree. The pool keeps the
-/// tokens until a spend. A spend routes the spent amount through VaultRouter
-/// into the reserve vault of the asset. The value of a change note stays in
-/// the pool. The runtime always derives the commitment from the
+/// value until a spend. A settlement spend routes the spent amount through
+/// VaultRouter into the reserve vault of the asset. A withdrawal pays the spent
+/// amount to a recipient. The value of a change note stays in the pool. The runtime always derives the commitment from the
 /// transfer it actually performed. Opaque caller-supplied commitments are
 /// prohibited, so Merkle membership attests both the asset and the amount.
 ///
-/// Spending consumes a frozen `outbe.paynote`, version 1.3.0, UltraHonkKeccak
+/// Spending consumes a frozen `outbe.paynote`, version 1.4.0, UltraHonkKeccak
 /// proof. Only the settlement factories (NodFactory, GemFactory, IntexFactory)
 /// may call `consume`. An EOA pays with a note through the factory's
-/// `settle…WithPayNote` method.
+/// `settle…WithPayNote` method. Any address may relay a `withdraw`.
 interface IPayNote {
     /// @notice The pool holds no vault for this asset.
     error AssetVaultMissing(address asset);
@@ -31,8 +31,8 @@ interface IPayNote {
     /// @dev `noteSn` is the note serial number — a hiding commitment to the spend key,
     /// chosen off-chain as `P(NOTE_SN, [spendKey])`. It reveals nothing about the key.
     /// `asset == address(0)` deposits native COEN: `msg.value` must equal `amount`.
-    /// An ERC20 deposit must send no value. Native notes cannot be spent or
-    /// merged yet.
+    /// An ERC20 deposit must send no value. A native note can be withdrawn. It
+    /// cannot settle a factory payment or be merged yet.
     /// @param asset ERC20 to deposit, which must have a registered reserve vault,
     /// or `address(0)` for native COEN.
     /// @param amount Units to deposit. For an ERC20, the caller must approve
@@ -56,6 +56,18 @@ interface IPayNote {
     function consume(bytes calldata proof)
         external
         returns (address asset, uint256 spendAmount, bytes32 context, bytes32 nullifier);
+
+    /// @notice Pay `spendAmount` of one note out of the pool to `recipient`, as
+    /// the note's ERC20 or, for a native note, as COEN. Any address may relay
+    /// the proof.
+    /// @dev Verifies the proof, nullifies the note and appends the change note,
+    /// if there is one. The proof must carry the withdrawal context of
+    /// `recipient`: the canonical BN254 element of
+    /// `keccak256(0x04 || bytes32(recipient) || bytes32(0) || bytes32(0))`. A
+    /// proof bound to another recipient or to a settlement reverts.
+    /// @param proof Combined `outbe.paynote` public inputs and proof.
+    /// @param recipient Receiver of the funds. Must not be zero or this pool.
+    function withdraw(bytes calldata proof, address recipient) external;
 
     /// @notice Maximum input count supported by the active merge circuit.
     function maxMergeInputs() external view returns (uint32 count);
@@ -88,12 +100,20 @@ interface IPayNote {
         bytes32 indexed commitment, uint32 leafIndex, bytes32 rootAfter, address indexed asset, uint256 noteAmount
     );
 
-    /// @notice A note was spent through `consume`.
-    /// @param asset The spent note's bound ERC20 (indexed).
-    /// @param context Settlement statement bound by the proof (indexed).
+    /// @notice A note was spent through `consume` or `withdraw`.
+    /// @param asset The spent note's bound ERC20, or zero for COEN (indexed).
+    /// @param context Statement bound by the proof (indexed).
     /// @param nullifier The spent nullifier (indexed).
     /// @param amountMinor Units released by the spend.
     event NoteUsed(address indexed asset, bytes32 indexed context, bytes32 indexed nullifier, uint256 amountMinor);
+
+    /// @notice A `withdraw` paid `amount` of `asset` to `recipient`. Follows the
+    /// `NoteUsed` of the same spend.
+    /// @param asset The paid ERC20, or zero for native COEN (indexed).
+    /// @param recipient Receiver of the funds (indexed).
+    /// @param nullifier The spent nullifier (indexed).
+    /// @param amount Units paid out.
+    event NoteWithdrawn(address indexed asset, address indexed recipient, bytes32 indexed nullifier, uint256 amount);
 
     /// @notice These canonical nullifiers were consumed to create one note.
     /// @dev Input commitments and all amounts remain private. NewNote supplies
