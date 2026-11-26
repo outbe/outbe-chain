@@ -75,7 +75,7 @@ impl<'storage> IntexContract<'storage> {
 
 // ---------------------------------------------------------------------
 // Call lifecycle: the price bins of call groups, the called-group queue and the
-// cleanup queue of expired groups
+// forfeit queue of expired groups
 // ---------------------------------------------------------------------
 
 impl IntexContract<'_> {
@@ -113,8 +113,8 @@ impl IntexContract<'_> {
     fn close_call_group(&mut self, group: B256) -> Result<()> {
         let iso = self.call_group_currency.read(&group)?;
         call_bins::remove(&CallBins(&*self, iso), group)?;
+        deadline_queue::remove(&CloseQueue(self), group)?;
         deadline_queue::remove(&ForfeitQueue(self), group)?;
-        deadline_queue::remove(&CleanupQueue(self), group)?;
         self.call_group_currency.clear(&group)?;
         self.call_group_window_seconds.clear(&group)?;
         self.call_group_threshold_seconds.clear(&group)?;
@@ -167,12 +167,12 @@ impl IntexContract<'_> {
     }
 
     /// Whether the group's expiry already returned what its members left unpaid.
-    pub fn group_forfeited(&self, group: B256) -> Result<bool> {
+    pub fn group_closed(&self, group: B256) -> Result<bool> {
         Ok(self.call_group_called_at.read(&group)? != 0
             && self.called_group_slot.read(&group)? == 0)
     }
 
-    /// Calls the group: it leaves its bin and waits on `close_at` in the forfeit queue.
+    /// Calls the group: it leaves its bin and waits on `close_at` in the close queue.
     pub fn record_group_called(
         &mut self,
         group: B256,
@@ -186,15 +186,15 @@ impl IntexContract<'_> {
         let iso = self.call_group_currency.read(&group)?;
         call_bins::remove(&CallBins(&*self, iso), group)?;
         self.call_group_called_at.write(&group, called_at)?;
-        deadline_queue::push(&ForfeitQueue(self), group, close_at)
+        deadline_queue::push(&CloseQueue(self), group, close_at)
     }
 
-    /// Moves an expired group from the forfeit queue to the cleanup, which deletes its
+    /// Moves an expired group from the close queue to the forfeit pass, which deletes its
     /// spent series. Done with the group's credit, so a retry never credits it twice.
-    pub fn hand_to_cleanup(&mut self, group: B256) -> Result<()> {
+    pub fn hand_to_forfeit(&mut self, group: B256) -> Result<()> {
         let close_at = self.called_deadline.read(&group)?;
-        deadline_queue::remove(&ForfeitQueue(self), group)?;
-        deadline_queue::push(&CleanupQueue(self), group, close_at)
+        deadline_queue::remove(&CloseQueue(self), group)?;
+        deadline_queue::push(&ForfeitQueue(self), group, close_at)
     }
 
     /// Widen the currency's stored terms to cover a newly issued series.
@@ -255,16 +255,32 @@ impl IntexContract<'_> {
 
     #[cfg(any(test, feature = "test-utils"))]
     pub fn first_expiry_day(&self) -> Result<Option<u32>> {
-        deadline_queue::first_day(&ForfeitQueue(self))
+        deadline_queue::first_day(&CloseQueue(self))
     }
 
     #[cfg(any(test, feature = "test-utils"))]
-    pub fn first_cleanup_day(&self) -> Result<Option<u32>> {
-        deadline_queue::first_day(&CleanupQueue(self))
+    pub fn first_forfeit_day(&self) -> Result<Option<u32>> {
+        deadline_queue::first_day(&ForfeitQueue(self))
     }
 }
 
 /// This daily queue stores called groups whose settlement window remains open.
+pub struct CloseQueue<'a, 'b>(pub &'a IntexContract<'b>);
+
+outbe_core_common::impl_deadline_queue!(CloseQueue<B256> {
+    root: close_tree_root,
+    mid: close_tree_mid,
+    leaf: close_tree_leaf,
+    len: close_day_len,
+    live: close_day_live,
+    at: close_day_at,
+    slot: called_group_slot,
+    deadline: called_deadline,
+    sweep_day: close_pass_day,
+    cursor: close_cursor,
+});
+
+/// This daily queue stores expired groups whose spent series await deletion.
 pub struct ForfeitQueue<'a, 'b>(pub &'a IntexContract<'b>);
 
 outbe_core_common::impl_deadline_queue!(ForfeitQueue<B256> {
@@ -274,26 +290,10 @@ outbe_core_common::impl_deadline_queue!(ForfeitQueue<B256> {
     len: forfeit_day_len,
     live: forfeit_day_live,
     at: forfeit_day_at,
-    slot: called_group_slot,
-    deadline: called_deadline,
-    sweep_day: forfeit_pass_day,
+    slot: forfeit_group_slot,
+    deadline: forfeit_deadline,
+    sweep_day: forfeit_sweep_day,
     cursor: forfeit_cursor,
-});
-
-/// This daily queue stores expired groups whose spent series await deletion.
-pub struct CleanupQueue<'a, 'b>(pub &'a IntexContract<'b>);
-
-outbe_core_common::impl_deadline_queue!(CleanupQueue<B256> {
-    root: cleanup_tree_root,
-    mid: cleanup_tree_mid,
-    leaf: cleanup_tree_leaf,
-    len: cleanup_day_len,
-    live: cleanup_day_live,
-    at: cleanup_day_at,
-    slot: cleanup_group_slot,
-    deadline: cleanup_deadline,
-    sweep_day: cleanup_sweep_day,
-    cursor: cleanup_cursor,
 });
 
 /// The call-price bins of one reference currency, holding its call groups.

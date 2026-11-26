@@ -1,16 +1,13 @@
 //! Amount-private NOD mining. Applied and refused answers are both signed.
 //!
-//! Tag 9 is the mined result. Tag 8 is the signed refusal. Decrypt failures and
-//! a non-`In` section stay unsigned transport errors.
+//! Tag 9 is the mined result. Tag 8 is the signed refusal. Decrypt failures stay
+//! unsigned transport errors.
 
 use alloy_primitives::{B256, U256};
 use outbe_core_common::confidential_tee::{
-    attestation, consensus_witness_call, hash, DualWitnessAnswer, FIDELITY, GRATIS, NOD,
+    attestation, consensus_witness_call, hash, DualWitnessAnswer, GRATIS, NOD,
 };
 use outbe_core_common::nod_encryption::EncryptedNodV1;
-use outbe_fidelity::{
-    apply_cohort_section, EngineError, FidelityCohortOp, FidelityOpOutcome, FidelityOpSection,
-};
 use outbe_nod::nod_encryption::{self, NodEncryptionError};
 use outbe_tee::in_process::InProcessTeeContext;
 use outbe_tee::resident::StateKeyHandle;
@@ -22,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::engine::apply_op;
-use crate::errors::{display_string, map_consensus_error, nod_mint_rejection};
+use crate::errors::{map_consensus_error, nod_mint_rejection};
 use crate::protocol::{GratisOp, GratisOpRequest, GratisOpStatus};
 use crate::resident::resident_state_key;
 
@@ -43,8 +40,6 @@ pub struct MineEncryptedNodRequestV1 {
     pub current_balance: Vec<u8>,
     /// Owner's modify-key MAC authorization.
     pub modify_auth: crate::protocol::ModifyAuth,
-    /// Co-located Fidelity cohort acquisition section.
-    pub fidelity: FidelityOpSection,
 }
 
 /// Result of mining Gratis from an encrypted NOD record. Tag 9.
@@ -54,8 +49,6 @@ pub struct MineEncryptedNodResultV1 {
     pub new_balance: Vec<u8>,
     /// Next expected Gratis op nonce.
     pub next_op_nonce: u64,
-    /// Updated Fidelity cohort outcome.
-    pub fidelity: FidelityOpOutcome,
     /// Echoed canonical input commitment.
     pub inputs_canonical_hash: B256,
     /// Ed25519 tag. Cleared inside the witness payload.
@@ -89,11 +82,9 @@ pub struct MineKeys<'a> {
     pub nod: &'a StateKeyHandle,
     /// Gratis state key that applies the mint.
     pub gratis: &'a StateKeyHandle,
-    /// Fidelity state key that applies the cohort section.
-    pub fidelity: &'a StateKeyHandle,
 }
 
-/// Failure of the pure mine. Only [`Self::Rejected`] and [`Self::Fidelity`] are signed.
+/// Failure of the pure mine. Only [`Self::Rejected`] is signed.
 #[derive(Debug, Error)]
 pub enum MineError {
     /// Gratis envelope cryptography failed.
@@ -102,9 +93,6 @@ pub enum MineError {
     /// The NOD ciphertext did not open.
     #[error(transparent)]
     Nod(#[from] NodEncryptionError),
-    /// The cohort section failed. Display is the signed refusal sentence.
-    #[error("fidelity section failed: {0}")]
-    Fidelity(#[source] EngineError),
     /// Gratis rejected the mint. `reason` is already the consensus sentence.
     #[error("{reason}")]
     Rejected {
@@ -140,14 +128,11 @@ pub fn result_preimage(
     Ok(bytes)
 }
 
-/// Apply the mint and the cohort section. Chain binding is the host's job.
+/// Apply the mint. Chain binding is the host's job.
 pub fn apply(
     keys: MineKeys<'_>,
     request: &MineEncryptedNodRequestV1,
 ) -> std::result::Result<MineEncryptedNodResultV1, MineError> {
-    if request.fidelity.op != FidelityCohortOp::In {
-        return Err(outbe_core_common::confidential_tee::TeeError::DecryptFailed(None).into());
-    }
     let amount = nod_encryption::decrypt_nod(keys.nod, &request.nod)?;
     let inputs = inputs_hash(request).map_err(MineError::Inputs)?;
     let operation = mint_request(request, amount);
@@ -155,14 +140,10 @@ pub fn apply(
     if let GratisOpStatus::Rejected { reason } = result.status {
         return Err(MineError::Rejected { reason });
     }
-    let fidelity =
-        apply_cohort_section(keys.fidelity, operation.account, amount, &request.fidelity)
-            .map_err(MineError::Fidelity)?;
     Ok(MineEncryptedNodResultV1 {
         new_balance: result.new_balance,
         encrypted_event_amount: result.encrypted_event_amount,
         next_op_nonce: result.next_op_nonce,
-        fidelity,
         inputs_canonical_hash: inputs,
         attestation_tag: Vec::new(),
     })
@@ -177,7 +158,7 @@ fn mint_request(request: &MineEncryptedNodRequestV1, amount: U256) -> GratisOpRe
         current_balance: request.current_balance.clone(),
         current_pledged: Vec::new(),
         modify_auth: request.modify_auth.clone(),
-        fidelity: Some(request.fidelity.clone()),
+        sealed_pledge: None,
     }
 }
 
@@ -227,13 +208,11 @@ fn execute(
 ) -> std::result::Result<MineAnswer, TransportError> {
     let nod = resident_state_key(context, &NOD, STATE_EPOCH)?;
     let gratis = resident_state_key(context, &GRATIS, STATE_EPOCH)?;
-    let fidelity = resident_state_key(context, &FIDELITY, STATE_EPOCH)?;
     require_chain(context, request.nod.terms.chain_id)?;
     let answer = match apply(
         MineKeys {
             nod: &nod,
             gratis: &gratis,
-            fidelity: &fidelity,
         },
         request,
     ) {
@@ -273,7 +252,6 @@ fn sign_refusal(
 fn refusal_reason(error: &MineError) -> Option<String> {
     match error {
         MineError::Rejected { reason } => Some(reason.clone()),
-        MineError::Fidelity(_) => Some(display_string(error)),
         MineError::Crypto(_)
         | MineError::Nod(_)
         | MineError::Inputs(_)
@@ -362,9 +340,6 @@ fn finish(expected: B256, answer: MineAnswer) -> outbe_primitives::error::Result
 pub(crate) fn map_stand_in(error: MineError) -> outbe_primitives::error::PrecompileError {
     match error {
         MineError::Rejected { reason } => nod_mint_rejection(reason),
-        MineError::Fidelity(_) => {
-            crate::errors::GratisError::Rejected(display_string(&error)).into()
-        }
         other => crate::errors::GratisFatalError::TestEnclave {
             source: Box::new(other),
         }
@@ -396,7 +371,9 @@ mod tests {
             reason: reason.to_owned(),
             inputs_canonical_hash: expected,
             attestation_tag: signer
-                .sign(&attestation(b"outbe/lysis/rejected", expected, reason).unwrap())
+                .sign(
+                    &attestation(b"outbe/nod/issue-at-offer-result/v1", expected, reason).unwrap(),
+                )
                 .to_bytes()
                 .to_vec(),
         };

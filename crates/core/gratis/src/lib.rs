@@ -51,11 +51,11 @@ pub use attest::{verify_gratis_op_attestation, GRATIS_OP_ATTESTATION};
 pub use decrypt::decrypt_gratis_balance;
 pub use engine::{
     apply_op, decrypt_balance, decrypt_pledged, derive_account_keys, derive_gratis_state_key,
-    derive_view_key, modify_mac, rejected_result, ModifyOperation,
+    derive_view_key, modify_mac, ModifyOperation,
 };
 pub use protocol::{
     derive_gratis_keys_message, gratis_op_attestation_preimage, gratis_op_canonical_hash, GratisOp,
-    GratisOpRequest, GratisOpResult, GratisOpStatus, ModifyAuth,
+    GratisOpRequest, GratisOpResult, GratisOpStatus, ModifyAuth, SealedPledge,
 };
 pub use schema::Gratis;
 

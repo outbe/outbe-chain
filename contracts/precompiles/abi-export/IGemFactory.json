@@ -1,31 +1,7 @@
 [
   {
     "type": "function",
-    "name": "createGemFactoryPosition",
-    "inputs": [
-      {
-        "name": "intexId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "units",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "gemFactoryPositionId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "getCallProgress",
+    "name": "callState",
     "inputs": [
       {
         "name": "gemId",
@@ -37,7 +13,7 @@
       {
         "name": "",
         "type": "tuple",
-        "internalType": "struct IGemFactory.CallProgress",
+        "internalType": "struct IGemFactory.CallState",
         "components": [
           {
             "name": "callWindowDays",
@@ -83,6 +59,30 @@
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "createGemFactoryPosition",
+    "inputs": [
+      {
+        "name": "intexId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "units",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "gemFactoryPositionId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -136,24 +136,6 @@
             "internalType": "uint64"
           }
         ]
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getStatistics",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "totalGemsIssued",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "totalCapacityMinor",
-        "type": "uint256",
-        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -294,6 +276,24 @@
     "stateMutability": "nonpayable"
   },
   {
+    "type": "function",
+    "name": "statistics",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "totalGemsIssued",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "totalCapacityMinor",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
     "type": "event",
     "name": "GemFactoryPositionCreated",
     "inputs": [
@@ -357,7 +357,7 @@
   },
   {
     "type": "event",
-    "name": "GemFactoryPositionGemIssued",
+    "name": "GemFactoryPositionRedeemed",
     "inputs": [
       {
         "name": "gemFactoryPositionId",
@@ -366,9 +366,21 @@
         "internalType": "uint256"
       },
       {
+        "name": "owner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "promisLoadMinor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
         "name": "gemId",
         "type": "uint256",
-        "indexed": true,
+        "indexed": false,
         "internalType": "uint256"
       }
     ],
@@ -549,7 +561,7 @@
   },
   {
     "type": "error",
-    "name": "EmptyMemberSlotDuringCleanup",
+    "name": "EmptyMemberSlotDuringForfeit",
     "inputs": [
       {
         "name": "groupKey",
@@ -658,7 +670,7 @@
   },
   {
     "type": "error",
-    "name": "MissingMemberRecordDuringCleanup",
+    "name": "MissingMemberRecordDuringForfeit",
     "inputs": [
       {
         "name": "groupKey",

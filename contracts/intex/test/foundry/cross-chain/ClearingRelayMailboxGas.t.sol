@@ -3,10 +3,10 @@ pragma solidity 0.8.30;
 
 import {Test, Vm} from "forge-std/Test.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
-import {IERC7786GatewaySource, IERC7786Recipient} from "@openzeppelin/contracts/interfaces/draft-IERC7786.sol";
+import {IERC7786GatewaySource} from "@openzeppelin/contracts/interfaces/draft-IERC7786.sol";
 
-import {TargetRouter} from "@contracts/target/TargetRouter.sol";
-import {ITargetRouter} from "@contracts/target/interfaces/ITargetRouter.sol";
+import {IntexAuctionTargetRouter} from "@contracts/target/IntexAuctionTargetRouter.sol";
+import {IIntexAuctionTargetRouter} from "@contracts/target/interfaces/IIntexAuctionTargetRouter.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
 import {IGatewayQuote} from "@crosschain/interfaces/IGatewayQuote.sol";
 import {IMailbox} from "@crosschain/interfaces/IHyperlane.sol";
@@ -23,19 +23,9 @@ import {MockERC7786Bridge} from "@test-mocks/MockERC7786Bridge.sol";
 contract LocalHyperlaneGateway is IERC7786GatewaySource, IGatewayQuote {
     using InteroperableAddress for bytes;
 
-    error UnauthorizedSender();
-    error UnauthorizedBridge();
-    error AlreadyExecuted();
-    error ExecutionFailed();
-
-    event MessageReceived(uint32 origin, bytes32 sender, bytes message);
-
     IMailbox private immutable MAILBOX;
     uint32 private immutable DOMAIN;
     uint256 private _nonce;
-    bytes32 private _remoteRouter;
-    bytes private _remoteBridge;
-    mapping(bytes32 id => bool) private _executed;
 
     bytes4 private constant GAS_LIMIT_SELECTOR = bytes4(keccak256("executionGasLimit(uint256)"));
     uint16 private constant HOOK_METADATA_VARIANT = 1;
@@ -48,33 +38,6 @@ contract LocalHyperlaneGateway is IERC7786GatewaySource, IGatewayQuote {
 
     function supportsAttribute(bytes4) external pure returns (bool) {
         return true;
-    }
-
-    function setRemote(bytes32 remoteRouter, bytes calldata remoteBridge) external {
-        _remoteRouter = remoteRouter;
-        _remoteBridge = remoteBridge;
-    }
-
-    /// @dev The adapter's `handle` and the hub's `receiveMessage` back to back: peer check, dedup write and
-    ///      both unwraps, statement for statement as production runs them. The two live in separate
-    ///      contracts there, so a real delivery pays one more call frame and one more 63/64 step than this
-    ///      does. The caller pays for both: it caps its gas below the budget it is testing.
-    function deliver(uint32 origin, bytes32 sender, bytes calldata message) external {
-        require(_remoteRouter != bytes32(0) && sender == _remoteRouter, UnauthorizedSender());
-        emit MessageReceived(origin, sender, message);
-
-        (bytes memory innerSender,, bytes memory wrapped) = abi.decode(message, (bytes, bytes, bytes));
-        require(keccak256(_remoteBridge) == keccak256(innerSender), UnauthorizedBridge());
-
-        bytes32 id = keccak256(abi.encode(innerSender, wrapped));
-        require(!_executed[id], AlreadyExecuted());
-        _executed[id] = true;
-
-        (, bytes memory originalSender, bytes memory recipient, bytes memory payload) =
-            abi.decode(wrapped, (uint256, bytes, bytes, bytes));
-        (, address target) = recipient.parseEvmV1();
-        bytes4 magic = IERC7786Recipient(target).receiveMessage(id, originalSender, payload);
-        require(magic == IERC7786Recipient.receiveMessage.selector, ExecutionFailed());
     }
 
     function quote(bytes calldata recipient, bytes calldata payload) external view returns (uint256) {
@@ -206,10 +169,10 @@ abstract contract RelayGasBase is Test {
     uint32 internal constant EMISSION_DAY = 20260501;
     uint256 internal constant SEEDED_BIDS = 256;
 
-    TargetRouter internal router;
+    IntexAuctionTargetRouter internal router;
     StoredBidStub internal stub;
     address internal admin = address(this);
-    address internal originPeer = address(0x0B1);
+    address internal outbeIca = address(0x0B1);
 
     function _interop(uint32 chainId, address a) internal pure returns (bytes memory) {
         return InteroperableAddress.formatEvmV1(chainId, a);
@@ -225,7 +188,7 @@ abstract contract RelayGasBase is Test {
 
     function _wireRouter(address bridge) internal {
         router = DeployProxy.targetRouter(bridge, admin, DST_CHAIN_ID);
-        router.registerRemoteMessenger(DST_CHAIN_ID, _interop(DST_CHAIN_ID, originPeer));
+        router.grantRole(router.OUTBE_ICA_ROLE(), outbeIca);
         stub = new StoredBidStub();
         stub.seed(SEEDED_BIDS);
         router.setDependencies(address(stub), makeAddr("intex"), makeAddr("escrow"));
@@ -268,8 +231,6 @@ contract ClearingRelayRealMailboxTest is RelayGasBase {
     /// @dev What flipping the auction to Clearing costs on the real contract (`GasBudget.t.sol`).
     uint256 internal constant STAGE_FLIP_GAS = 452_000;
 
-    address internal originBridge = address(0x0B2);
-
     LocalHyperlaneGateway internal gateway;
 
     function setUp() public {
@@ -287,36 +248,21 @@ contract ClearingRelayRealMailboxTest is RelayGasBase {
     /// @notice `INTEX_AUCTION_CLEARING_START` is the budget that a chain with no history gets, so it has
     ///         to be worth sending. The round must place at least one chunk and report the rest.
     ///         Otherwise the day stalls waiting for a hand.
-    /// @dev The test drives the inbound path that a real delivery takes: peer check, hub dedup,
-    ///      both unwraps, and the stage flip at its measured price. The outbound sends go against
-    ///      the canonical mailbox. The cap is the budget less two 63/64 steps. These steps pay for
-    ///      the call frames that production has between the mailbox and the router, which this
-    ///      stand collapses.
+    /// @dev The Interchain Account of Outbe hands the CLEARING over, and the stage flip runs at its
+    ///      measured price. The outbound sends go against the canonical mailbox. The cap is the
+    ///      budget less two 63/64 steps. These steps pay for the call frames that production has
+    ///      between the mailbox and the router, which this stand collapses.
     function test_TheClearingFloorPlacesAChunkAndReportsTheRest() public {
-        bytes memory bridgeInterop = _interop(DST_CHAIN_ID, originBridge);
-        bytes32 bridgePeer = bytes32(uint256(uint160(originBridge)));
-        gateway.setRemote(bridgePeer, bridgeInterop);
         stub.setVisible(SEEDED_BIDS);
         stub.setFlipGas(STAGE_FLIP_GAS);
 
-        bytes memory recipient = _interop(uint32(block.chainid), address(router));
-        bytes memory body = abi.encode(
-            bridgeInterop,
-            recipient,
-            abi.encode(
-                uint256(1),
-                _interop(DST_CHAIN_ID, originPeer),
-                recipient,
-                BridgeMsgCodec.encodeIntexAuctionClearingStart(EMISSION_DAY)
-            )
-        );
-
+        bytes memory message = BridgeMsgCodec.encodeIntexAuctionClearingStart(EMISSION_DAY);
         uint256 cap = ((IntexGas.INTEX_AUCTION_CLEARING_START * 63) / 64 * 63) / 64;
         vm.recordLogs();
+        vm.prank(outbeIca);
         uint256 before = gasleft();
-        (bool delivered,) = address(gateway).call{gas: cap}(
-            abi.encodeCall(LocalHyperlaneGateway.deliver, (DST_CHAIN_ID, bridgePeer, body))
-        );
+        (bool delivered,) =
+            address(router).call{gas: cap}(abi.encodeCall(IntexAuctionTargetRouter.receiveFromOutbe, (message)));
         emit log_named_uint("floor_cap", cap);
         emit log_named_uint("floor_spent", before - gasleft());
         assertTrue(delivered, "the floor could not even carry the delivery");
@@ -326,7 +272,9 @@ contract ClearingRelayRealMailboxTest is RelayGasBase {
         assertEq(totalPages, 4, "256 bids span four chunks");
         assertFalse(done, "the floor is not meant to finish a 256-bid day");
         assertGe(nextPage, 1, "the floor placed no chunk at all");
-        assertTrue(_sawTopic(ITargetRouter.IntexAuctionBidsPauseSent.selector), "the remainder was not reported");
+        assertTrue(
+            _sawTopic(IIntexAuctionTargetRouter.IntexAuctionBidsPauseSent.selector), "the remainder was not reported"
+        );
     }
 
     function _sawTopic(bytes32 topic) private returns (bool) {

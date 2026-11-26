@@ -60,7 +60,12 @@ fn create_gem_factory_position_burns_the_units_and_records_its_owner() {
         assert_eq!(rec.source_series_id, source_series_id());
         assert_eq!(rec.remaining_capacity_minor, capacity);
         assert_eq!(factory.total_capacity_minor.read().unwrap(), capacity);
-        assert_eq!(runtime::position_data(storage, id).unwrap().owner, ALICE);
+        assert_eq!(
+            runtime::gem_factory_position_data(storage, id)
+                .unwrap()
+                .owner,
+            ALICE
+        );
     });
 }
 
@@ -103,13 +108,13 @@ fn an_expired_position_returns_its_remainder() {
     with_storage(None, |storage| {
         let id = seed_and_send(storage, six_decimal_unit(), six_decimal_u128());
         let capacity = sent_capacity(six_decimal_u128());
-        let expires = T_NOW + POSITION_VALIDITY_SECONDS;
+        let expires = T_NOW + GEM_FACTORY_POSITION_VALIDITY_SECONDS;
 
         daily_pass(&block_ctx(storage, expires)).unwrap();
         assert_eq!(unallocated(storage), U256::ZERO);
         storage.set_block_timestamp(U256::from(expires)).unwrap();
         assert_eq!(
-            runtime::position_data(storage, id)
+            runtime::gem_factory_position_data(storage, id)
                 .unwrap()
                 .remainingCapacityMinor,
             U256::ZERO
@@ -124,7 +129,7 @@ fn an_expired_position_returns_its_remainder() {
 
         let factory = GemFactoryContract::new(storage.clone());
         assert!(factory.positions.get(id).unwrap().is_none());
-        assert!(runtime::position_data(storage, id).is_err());
+        assert!(runtime::gem_factory_position_data(storage, id).is_err());
     });
 }
 
@@ -151,7 +156,7 @@ fn position_of_15_units_issues_6_and_gives_back_9() {
         )
         .unwrap();
 
-        let closed = day_closed(T_NOW + POSITION_VALIDITY_SECONDS);
+        let closed = day_closed(T_NOW + GEM_FACTORY_POSITION_VALIDITY_SECONDS);
         let block = daily_pass(&block_ctx(storage, closed)).unwrap();
         assert_eq!(unallocated(storage), U256::from(9u64) * unit);
         assert_eq!(
@@ -206,7 +211,10 @@ fn a_storage_fault_in_the_position_sweep_fails_the_block() {
 
     provider.fail_mutation_at_address(outbe_system_common::addresses::PROMIS_LIMIT_ADDRESS);
     StorageHandle::enter(&mut provider, |storage| {
-        let ctx = block_ctx(&storage, day_closed(T_NOW + POSITION_VALIDITY_SECONDS));
+        let ctx = block_ctx(
+            &storage,
+            day_closed(T_NOW + GEM_FACTORY_POSITION_VALIDITY_SECONDS),
+        );
         assert!(matches!(
             daily_pass(&ctx),
             Err(outbe_primitives::error::PrecompileError::Storage(_))
@@ -243,7 +251,7 @@ fn a_drained_position_returns_nothing_and_is_deleted() {
 
         let block = daily_pass(&block_ctx(
             storage,
-            day_closed(T_NOW + POSITION_VALIDITY_SECONDS),
+            day_closed(T_NOW + GEM_FACTORY_POSITION_VALIDITY_SECONDS),
         ))
         .unwrap();
         assert_eq!(unallocated(storage), U256::ZERO);

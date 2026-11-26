@@ -510,8 +510,8 @@ fn factory_boundaries_are_byte_equal_across_proposer_and_validator_execution() {
             proposer, validator,
             "{boundary:?} must be byte/state equal across execution roles"
         );
-        assert_eq!(proposer.receipt_success, vec![true; 12]);
-        assert_eq!(proposer.cumulative_gas.len(), 12);
+        assert_eq!(proposer.receipt_success, vec![true; 14]);
+        assert_eq!(proposer.cumulative_gas.len(), 14);
         match boundary {
             Boundary::Approved => {
                 assert_eq!(proposer.created_logs, 1);

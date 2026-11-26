@@ -10,7 +10,7 @@ fn a_called_nod_still_mines_at_the_settlement_deadline() {
     let nod_id = world.issue(&input);
 
     let called_at = 1_700_000_000;
-    world.mark_called(nod_id, called_at);
+    world.call_series(nod_id, called_at);
     world.set_timestamp(called_at + u64::from(CALL_NOTICE_PERIOD));
     assert_eq!(public_nod_data(&mut world, nod_id).effectiveState, 1);
 
@@ -46,7 +46,7 @@ fn settlement_is_rejected_once_the_deadline_has_passed() {
     let nod_id = world.issue(&input);
 
     let called_at = 1_700_000_000;
-    world.mark_called(nod_id, called_at);
+    world.call_series(nod_id, called_at);
     world.set_timestamp(called_at + u64::from(CALL_NOTICE_PERIOD) + 1);
 
     let data = public_nod_data(&mut world, nod_id);
@@ -76,7 +76,7 @@ fn settlement_preserves_entitlement_and_failed_mining_can_retry_after_deadline()
     let input = free(Address::repeat_byte(0x81));
     let nod_id = world.issue(&input);
     let called_at = 1_700_000_000;
-    world.mark_called(nod_id, called_at);
+    world.call_series(nod_id, called_at);
     world.set_timestamp(called_at + u64::from(CALL_NOTICE_PERIOD));
     world.settle(nod_id, input.owner).unwrap();
     let stored = world.enter(|storage| {
@@ -209,40 +209,7 @@ fn unsettled_mining_is_rejected() {
 }
 
 #[test]
-fn settlement_leaves_fidelity_alone_and_mining_records_it() {
-    let fidelity = |world: &World| {
-        world
-            .provider
-            .storage
-            .iter()
-            .filter(|((address, _), _)| {
-                *address == outbe_system_common::addresses::FIDELITY_ADDRESS
-            })
-            .map(|(slot, value)| (*slot, *value))
-            .collect::<std::collections::BTreeMap<_, _>>()
-    };
-    let mut world = World::new();
-    let input = free(Address::repeat_byte(0x86));
-    let nod_id = world.issue(&input);
-    let before = fidelity(&world);
-
-    world.settle(nod_id, input.owner).unwrap();
-    assert_eq!(fidelity(&world), before, "settlement acquires no Fidelity");
-
-    let nonce = world.pow_nonce(nod_id);
-    world
-        .mine_gratis(api::MineGratisRequest {
-            caller: input.owner,
-            nod_id,
-            nonce,
-            auth: mine_auth(input.owner, input.gratis_load_minor),
-        })
-        .unwrap();
-    assert_ne!(fidelity(&world), before, "the mint records the acquisition");
-}
-
-#[test]
-fn fidelity_persistence_failure_preserves_settled_entitlement_and_mint_nonce() {
+fn gratis_persistence_failure_preserves_settled_entitlement_and_mint_nonce() {
     let mut world = World::new();
     let input = free(Address::repeat_byte(0x85));
     let nod_id = world.issue(&input);
@@ -252,7 +219,7 @@ fn fidelity_persistence_failure_preserves_settled_entitlement_and_mint_nonce() {
     let nonce = world.pow_nonce(nod_id);
     world
         .provider
-        .fail_mutation_at_address(outbe_system_common::addresses::FIDELITY_ADDRESS);
+        .fail_mutation_at_address(outbe_system_common::addresses::GRATIS_ADDRESS);
     let result = world.mine_gratis(api::MineGratisRequest {
         caller: input.owner,
         nod_id,
@@ -387,7 +354,7 @@ fn erc20_settlement_uses_the_existing_inclusive_deadline() {
     let nod_id = world.issue(&input);
     world.register_reference_currency_asset(SETTLEMENT_ASSET);
     let called_at = 1_700_000_000;
-    world.mark_called(nod_id, called_at);
+    world.call_series(nod_id, called_at);
     let deadline = called_at + u64::from(CALL_NOTICE_PERIOD);
     let foreign = Address::repeat_byte(0x94);
     world.register_settlement_asset(foreign, 978);

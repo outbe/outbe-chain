@@ -57,7 +57,7 @@ pub(super) fn bootstrap() -> SystemTx {
         .unwrap(),
     )
 }
-pub(super) fn begin_stage_inputs() -> [SystemTx; 9] {
+pub(super) fn begin_stage_inputs() -> [SystemTx; 11] {
     std::array::from_fn(|index| SystemTx::BeginBlock {
         step_index: u8::try_from(index).unwrap(),
     })

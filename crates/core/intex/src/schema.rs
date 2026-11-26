@@ -261,11 +261,11 @@ pub struct IntexContract {
 
     // This queue schedules called groups by the day when their settlement window closes.
     #[attribute(order = 44)]
-    pub forfeit_tree_root: outbe_primitives::storage::dsl::Value<U256>,
+    pub close_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 45)]
-    pub forfeit_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
+    pub close_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 46)]
-    pub forfeit_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
+    pub close_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
     /// Group key -> when the group's transit margin past its settlement deadline ends.
     #[attribute(order = 47)]
     pub called_deadline: outbe_primitives::storage::dsl::Map<B256, u64>,
@@ -279,20 +279,20 @@ pub struct IntexContract {
     /// This value counts all slots ever used in a day.
     /// Retirement sets slots to zero without compacting them.
     #[attribute(order = 50)]
-    pub forfeit_day_len: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub close_day_len: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 51)]
-    pub forfeit_day_live: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub close_day_live: outbe_primitives::storage::dsl::Map<u32, u32>,
     /// This map associates `keccak256(day_be32 ++ slot_be32)` with the group key.
     #[attribute(order = 52)]
-    pub forfeit_day_at: outbe_primitives::storage::dsl::Map<B256, B256>,
+    pub close_day_at: outbe_primitives::storage::dsl::Map<B256, B256>,
     /// This map associates a group key with `((day + 1) << 32) | slot`.
     /// Zero means that the group is not queued.
     #[attribute(order = 53)]
     pub called_group_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
     #[attribute(order = 54)]
-    pub forfeit_pass_day: outbe_primitives::storage::dsl::Value<u32>,
+    pub close_pass_day: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 55)]
-    pub forfeit_cursor: outbe_primitives::storage::dsl::Value<u64>,
+    pub close_cursor: outbe_primitives::storage::dsl::Value<u64>,
     #[attribute(order = 56)]
     pub call_latest_day: outbe_primitives::storage::dsl::Value<u32>,
 
@@ -308,34 +308,34 @@ pub struct IntexContract {
     pub call_group_called_at: outbe_primitives::storage::dsl::Map<B256, u64>,
 
     // This queue stores expired groups whose spent series await deletion.
-    // It schedules groups by day, like the forfeit queue.
+    // It schedules groups by day, like the close queue.
     #[attribute(order = 60)]
-    pub cleanup_tree_root: outbe_primitives::storage::dsl::Value<U256>,
+    pub forfeit_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 61)]
-    pub cleanup_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
+    pub forfeit_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 62)]
-    pub cleanup_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
+    pub forfeit_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 63)]
-    pub cleanup_day_len: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub forfeit_day_len: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 64)]
-    pub cleanup_day_live: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub forfeit_day_live: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 65)]
-    pub cleanup_day_at: outbe_primitives::storage::dsl::Map<B256, B256>,
+    pub forfeit_day_at: outbe_primitives::storage::dsl::Map<B256, B256>,
     #[attribute(order = 66)]
-    pub cleanup_group_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
+    pub forfeit_group_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
     #[attribute(order = 67)]
-    pub cleanup_deadline: outbe_primitives::storage::dsl::Map<B256, u64>,
+    pub forfeit_deadline: outbe_primitives::storage::dsl::Map<B256, u64>,
     #[attribute(order = 68)]
-    pub cleanup_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
+    pub forfeit_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 69)]
-    pub cleanup_cursor: outbe_primitives::storage::dsl::Value<u64>,
+    pub forfeit_cursor: outbe_primitives::storage::dsl::Value<u64>,
 
     #[attribute(order = 73)]
     pub daily_phase: outbe_primitives::storage::dsl::Value<u8>,
     #[attribute(order = 74)]
     pub daily_budget: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 76)]
-    pub cleanup_budget: outbe_primitives::storage::dsl::Value<U256>,
+    pub forfeit_budget: outbe_primitives::storage::dsl::Value<U256>,
 
     /// The call terms a group's first series sealed: every member is called and
     /// expires on them.

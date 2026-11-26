@@ -7,7 +7,7 @@
 //! EVM. So `enable_sub_call_stub` stubs the runtime's Rust -> Solidity sub-calls
 //! into `IVaultRouter` / `IERC20` (returns `default_success()`).
 
-mod called;
+mod call;
 mod credis_records;
 mod e2e;
 mod settlement;
@@ -17,7 +17,6 @@ use outbe_system_common::addresses::CREDIS_FACTORY_ADDRESS;
 
 use alloy_sol_types::SolCall;
 use outbe_credis::CredisContract;
-use outbe_fidelity::enclave_client::test_enclave as fidelity_enclave;
 use outbe_gratis::enclave_client::test_enclave;
 use outbe_gratis::{
     decrypt_balance, decrypt_pledged, derive_account_keys, derive_view_key, modify_mac,
@@ -30,7 +29,7 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_system_common::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_system_common::time::{previous_date_key, timestamp_to_date_key};
 use outbe_system_common::units::{checked_protocol_to_native, SCALE_1E6_U256};
-use outbe_vaultrouter::{LiquidityReservation, VaultRouterContract};
+use outbe_vaultrouter::{CredisReservation, VaultRouterContract};
 
 use crate::runtime;
 
@@ -114,46 +113,54 @@ pub fn pledge_cost() -> U256 {
     SCALE_1E6_U256
 }
 
-/// Native COEN stake matching [`pledge_cost`] GRATIS one for one by value.
-pub fn pledge_stake() -> U256 {
-    checked_protocol_to_native(pledge_cost()).expect("pledge fixture fits native U256")
+/// The account of the card issuer that the reservations name.
+pub fn omnibus() -> Address {
+    address!("0x0000000000000000000000000000000000000b0b")
 }
 
-pub fn open(storage: &StorageHandle<'_>, nonce: u64) -> U256 {
-    open_for(storage, alice(), nonce)
+pub fn open(storage: &StorageHandle<'_>) -> U256 {
+    open_for(storage, alice())
 }
-pub fn open_for(storage: &StorageHandle<'_>, who: Address, nonce: u64) -> U256 {
-    let reservation_id = seed_reservation(storage, who, who, pledge_stables());
-    pledge(storage, who, reservation_id, nonce);
-    fund_stake(storage, pledge_stake());
-    runtime::issue_credis(storage.clone(), cca(), reservation_id, pledge_stake())
-        .unwrap()
-        .0
+pub fn open_for(storage: &StorageHandle<'_>, who: Address) -> U256 {
+    let reservation_id = seed_reservation(storage, who, pledge_stables());
+    issue(storage, reservation_id, who).unwrap().0
 }
 
-/// Pledges the reservation's Gratis from `source` through the factory.
-pub fn pledge(storage: &StorageHandle<'_>, source: Address, reservation_id: U256, nonce: u64) {
-    outbe_gratisfactory::runtime::pledge_gratis(
-        storage.clone(),
-        source,
+/// The pledge of `main_account` for the reservation, sealed as a wallet seals it.
+pub fn sealed_pledge(
+    storage: &StorageHandle<'_>,
+    main_account: Address,
+    reservation_id: U256,
+) -> Vec<u8> {
+    let reservation =
+        outbe_vaultrouter::api::credis_reservation_of(storage, reservation_id).unwrap();
+    test_enclave::sealed_pledge(
+        main_account,
+        reservation.gratis_minor,
         reservation_id,
-        auth(GratisOp::Pledge, source, pledge_cost(), nonce),
+        CHAIN_ID,
     )
-    .unwrap();
 }
 
-/// Parks a live vault reservation for `credis_owner`, pledged by `source`, so
-/// `issue_credis` can consume it. This helper writes the hold through VaultRouter
+/// The cash account of the reservation issues its Credis on the Gratis of `main_account`.
+pub fn issue(
+    storage: &StorageHandle<'_>,
+    reservation_id: U256,
+    main_account: Address,
+) -> outbe_primitives::error::Result<(U256, U256)> {
+    let owner = outbe_vaultrouter::api::credis_reservation_of(storage, reservation_id)
+        .unwrap()
+        .credis_owner;
+    let pledge = sealed_pledge(storage, main_account, reservation_id);
+    runtime::issue_credis(storage.clone(), owner, reservation_id, &pledge)
+}
+
+/// Parks a live vault reservation for `credis_owner` so `issue_credis` can consume it. This helper writes the hold through VaultRouter
 /// storage, not the ABI, because these tests stub EVM sub-calls into the router.
 ///
 /// Each reservation's entry price sits a minor unit below the last one's, so every
 /// Credis opens a group of its own unless a test shares one.
-pub fn seed_reservation(
-    storage: &StorageHandle<'_>,
-    credis_owner: Address,
-    source: Address,
-    amount: U256,
-) -> U256 {
+pub fn seed_reservation(storage: &StorageHandle<'_>, credis_owner: Address, amount: U256) -> U256 {
     let now = storage.now_secs().unwrap();
     let expires_at = now + 15 * 60;
     let contract = VaultRouterContract::new(storage.clone());
@@ -174,8 +181,7 @@ pub fn seed_reservation(
     let call_start_day = outbe_system_common::time::first_full_day(now).expect("date step");
     let call_terms = outbe_credis::config::read(storage).expect("call terms");
     contract
-        .reservations
-        .create(&LiquidityReservation {
+        .hold_credis_reservation(&CredisReservation {
             id,
             asset: settlement_asset(),
             amount_minor: amount,
@@ -190,7 +196,6 @@ pub fn seed_reservation(
             issuance_currency: ISSUANCE_ISO,
             asset_decimals: 6,
             reference_currency: REFERENCE_ISO,
-            source,
             series_id,
             sub_series: CredisContract::sub_series_of(now),
             call_start_day,
@@ -198,6 +203,10 @@ pub fn seed_reservation(
             call_window_seconds: call_terms.call_window_seconds,
             call_threshold_seconds: call_terms.call_threshold_seconds,
             call_notice_period_seconds: call_terms.call_notice_period_seconds,
+            wcoen_minor: checked_protocol_to_native(amount / U256::from(2))
+                .expect("reservation WCOEN fits"),
+            cca_receiver: cca(),
+            omnibus: omnibus(),
         })
         .unwrap();
     id
@@ -230,7 +239,7 @@ pub fn seed_reservation_at(
     credis_owner: Address,
     at: Placement,
 ) -> U256 {
-    let id = seed_reservation(storage, credis_owner, credis_owner, pledge_stables());
+    let id = seed_reservation(storage, credis_owner, pledge_stables());
     let router = VaultRouterContract::new(storage.clone());
     let mut reservation = router.reservations.get(id).unwrap().unwrap();
     reservation.series_id = outbe_core_common::series_id::SeriesId::for_pair(
@@ -247,13 +256,9 @@ pub fn seed_reservation_at(
     id
 }
 
-pub fn open_at(storage: &StorageHandle<'_>, who: Address, nonce: u64, at: Placement) -> U256 {
+pub fn open_at(storage: &StorageHandle<'_>, who: Address, at: Placement) -> U256 {
     let reservation_id = seed_reservation_at(storage, who, at);
-    pledge(storage, who, reservation_id, nonce);
-    fund_stake(storage, pledge_stake());
-    runtime::issue_credis(storage.clone(), cca(), reservation_id, pledge_stake())
-        .unwrap()
-        .0
+    issue(storage, reservation_id, who).unwrap().0
 }
 
 pub fn stub_asset(provider: &mut HashMapStorageProvider, asset: Address, iso: u16) {
@@ -453,14 +458,14 @@ fn block_at<'storage>(
 
 /// The daily trigger alone: it schedules the closed day and walks nothing.
 pub fn schedule(storage: &StorageHandle<'_>, timestamp: u64) {
-    crate::called::schedule_call_pass(&block_at(storage, timestamp)).unwrap()
+    crate::call::schedule_call_pass(&block_at(storage, timestamp)).unwrap()
 }
 
 pub fn scan(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
     let credis = CredisContract::new(storage.clone());
     let mut called = 0;
     loop {
-        called += crate::called::scan_and_call(&block_at(storage, timestamp)).unwrap();
+        called += crate::call::scan_and_call(&block_at(storage, timestamp)).unwrap();
         let selected = outbe_system_common::pass_budget::BlockAllowance::unpack(
             credis.daily_budget.read().unwrap(),
         )
@@ -476,24 +481,24 @@ pub fn scan(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
 
 /// One later block's slice of the call sweep in flight.
 pub fn slice(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
-    crate::called::process_call_pass(&block_at(storage, timestamp)).unwrap()
+    crate::call::run_call_pass(&block_at(storage, timestamp)).unwrap()
 }
 
-/// Called groups still in the forfeit queue up to the deadline day of `timestamp`.
-pub fn queued_for_forfeit(
+/// Called groups still in the close queue up to the deadline day of `timestamp`.
+pub fn queued_for_close(
     storage: &StorageHandle<'_>,
     timestamp: u64,
 ) -> outbe_primitives::error::Result<u32> {
     let credis = CredisContract::new(storage.clone());
     let Some(mut day) =
-        outbe_core_common::deadline_queue::first_day(&outbe_credis::ForfeitQueue(&credis))?
+        outbe_core_common::deadline_queue::first_day(&outbe_credis::CloseQueue(&credis))?
     else {
         return Ok(0);
     };
     let last = outbe_core_common::deadline_queue::deadline_day(timestamp)?;
     let mut live = 0;
     while day <= last {
-        live += credis.forfeit_day_live.read(&day)?;
+        live += credis.close_day_live.read(&day)?;
         day += 1;
     }
     Ok(live)
@@ -513,7 +518,7 @@ pub fn prepare_daily_pass(
 }
 
 /// The daily pass through the UTC day before `timestamp`, as the Cycle runs it: its calls,
-/// forfeits and cleanup, one block for each closed day it still has to catch up.
+/// closes and forfeit pass, one block for each closed day it still has to catch up.
 pub fn daily_pass(
     storage: &StorageHandle<'_>,
     timestamp: u64,
@@ -521,7 +526,7 @@ pub fn daily_pass(
     prepare_daily_pass(storage, timestamp)?;
     let credis = CredisContract::new(storage.clone());
     loop {
-        crate::called::process_call_pass(&block_at(storage, timestamp))?;
+        crate::call::run_call_pass(&block_at(storage, timestamp))?;
         let selected =
             outbe_system_common::pass_budget::BlockAllowance::unpack(credis.daily_budget.read()?)?
                 .map_or(0, |allowance| allowance.day);
@@ -536,17 +541,17 @@ pub fn daily_pass(
     }
 }
 
-fn due_forfeit_groups(
+fn due_close_groups(
     credis: &CredisContract<'_>,
     timestamp: u64,
 ) -> outbe_primitives::error::Result<Vec<B256>> {
-    let queue = outbe_credis::ForfeitQueue(credis);
+    let queue = outbe_credis::CloseQueue(credis);
     let mut due = Vec::new();
     let Some(first) = outbe_core_common::deadline_queue::first_day(&queue)? else {
         return Ok(due);
     };
     for day in first..=outbe_core_common::deadline_queue::deadline_day(timestamp)? {
-        for slot in 0..credis.forfeit_day_len.read(&day)? {
+        for slot in 0..credis.close_day_len.read(&day)? {
             let Some(group) = outbe_core_common::deadline_queue::entry_at(&queue, day, slot)?
             else {
                 continue;
@@ -559,20 +564,20 @@ fn due_forfeit_groups(
     Ok(due)
 }
 
-/// Runs `pass` and returns the groups due by `timestamp` it forfeited: they left the forfeit
-/// queue for the cleanup, which may have deleted their Credis already.
-pub fn forfeited_by(
+/// Runs `pass` and returns the groups due by `timestamp` it closed: they left the close
+/// queue for the forfeit pass, which may have deleted their Credis already.
+pub fn closed_by(
     storage: &StorageHandle<'_>,
     timestamp: u64,
     pass: impl FnOnce() -> outbe_primitives::error::Result<()>,
 ) -> outbe_primitives::error::Result<u32> {
     let credis = CredisContract::new(storage.clone());
-    let due = due_forfeit_groups(&credis, timestamp)?;
+    let due = due_close_groups(&credis, timestamp)?;
     pass()?;
     let mut forfeited = 0;
     for group in due {
         if credis.called_group_slot.read(&group)? == 0
-            && (credis.cleanup_group_slot.read(&group)? != 0
+            && (credis.forfeit_group_slot.read(&group)? != 0
                 || credis.group_member_count(group)? == 0)
         {
             forfeited += 1;
@@ -581,9 +586,9 @@ pub fn forfeited_by(
     Ok(forfeited)
 }
 
-/// The daily pass at `timestamp`. Returns the called groups it forfeited.
+/// The daily pass at `timestamp`. Returns the called groups it closed.
 pub fn expire(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
-    forfeited_by(storage, timestamp, || daily_pass(storage, timestamp)).unwrap()
+    closed_by(storage, timestamp, || daily_pass(storage, timestamp)).unwrap()
 }
 
 /// Calls the Credis's group at `now`, as the call scan does. Returns whether it moved.
@@ -598,7 +603,7 @@ pub fn call_credis(storage: &StorageHandle<'_>, id: U256, now: u64) -> bool {
 }
 
 /// This function moves the clock past the day that contains the called Credis's deadline.
-/// It runs that block's forfeit and cleanup. The return value counts forfeited groups.
+/// It runs that block's close and forfeit pass. The return value counts closed groups.
 pub fn lapse(storage: &StorageHandle<'_>, id: U256) -> u32 {
     let record = CredisContract::new(storage.clone()).get_credis(id).unwrap();
     let past = outbe_credis::settlement_deadline(&record) + CLOSED_DAY_DELAY;
@@ -627,6 +632,11 @@ pub fn paying<R>(
     let owed = StorageHandle::enter(provider, |storage| {
         runtime::quote_settlement(&storage, credis_id).unwrap()
     });
+    // A full settlement is not allowed in the issue block, so a payment comes a block later.
+    let block = StorageHandle::enter(provider, |storage| storage.block_number().unwrap());
+    if block == BLOCK_NUMBER {
+        provider.set_block_number(BLOCK_NUMBER + 1);
+    }
     let calls = provider.sub_call_inputs().len();
     let out = StorageHandle::enter(provider, pay);
     let pull = provider.sub_call_inputs()[calls..]
@@ -663,7 +673,7 @@ pub fn settle_principal(
 ) -> (U256, U256) {
     let amount = StorageHandle::enter(provider, |storage| fee_plus(&storage, credis_id, principal));
     paying(provider, credis_id, amount, |storage| {
-        runtime::settle_credis(storage, payer, credis_id, amount).unwrap()
+        runtime::settle_credis(storage, payer, credis_id, Address::ZERO, amount).unwrap()
     })
 }
 
@@ -677,18 +687,6 @@ pub fn iso_word(iso: u16) -> Bytes {
 /// 32-byte zero word - the stubbed `uint256` return for the vault sub-calls.
 pub fn zero_word() -> Bytes {
     Bytes::from(vec![0u8; 32])
-}
-
-/// Positive Fidelity so `gratisfactory::pledge_gratis` clears the eligibility gate.
-pub fn seed_fidelity(storage: StorageHandle<'_>, account: Address) {
-    const ONE_YEAR_SECS: u64 = 365 * DAY;
-    outbe_fidelity::api::cohort_in(
-        storage,
-        account,
-        U256::from(100u64),
-        CREATED_AT - ONE_YEAR_SECS,
-    )
-    .unwrap();
 }
 
 pub fn auth(op: GratisOp, owner: Address, amount: U256, op_nonce: u64) -> ModifyAuth {
@@ -729,7 +727,6 @@ pub fn view_balance(s: &StorageHandle<'_>, a: Address) -> U256 {
 /// Storage set up with the block time, sub-call stubs, and the enclave installed.
 pub fn env() -> HashMapStorageProvider {
     test_enclave::install();
-    fidelity_enclave::install();
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(CREATED_AT));
     storage.set_block_number(BLOCK_NUMBER);
@@ -738,7 +735,7 @@ pub fn env() -> HashMapStorageProvider {
     storage.stub_sub_call_at(settlement_asset(), iso_word(ISSUANCE_ISO));
     storage.stub_sub_call_at_selector(
         VAULT_ROUTER_ADDRESS,
-        outbe_vaultrouter::precompile::IVaultRouter::releaseReservationCall::SELECTOR,
+        outbe_vaultrouter::precompile::IVaultRouter::redeemCredisReservationCall::SELECTOR,
         Bytes::from(pledge_stables().to_be_bytes::<32>().to_vec()),
     );
     storage.stub_sub_call_at_selector(
@@ -769,7 +766,7 @@ pub fn env() -> HashMapStorageProvider {
     storage
 }
 
-/// Mints `amount` gratis to alice and seeds the fidelity + oracle state a pledge needs.
+/// Mints `amount` gratis to alice and seeds the oracle state a pledge needs.
 pub fn bootstrap(storage: &StorageHandle<'_>, amount: U256) {
     bootstrap_for(storage, alice(), amount);
 }
@@ -784,22 +781,9 @@ pub fn bootstrap_for(storage: &StorageHandle<'_>, who: Address, amount: U256) {
         auth(GratisOp::Mint, who, amount, 0),
     )
     .unwrap();
-    seed_fidelity(storage.clone(), who);
     seed_oracle(storage.clone(), oracle_rate());
 }
 
-/// Credits the factory with the stake the payable boundary would have credited.
-///
-/// Tests drive `runtime::issue_credis` directly, below the precompile boundary that
-/// moves `msg.value`. Without this credit, the escrow would have a claim with no
-/// COEN behind it, and the release would underflow.
-pub fn fund_stake(storage: &StorageHandle<'_>, amount: U256) {
-    storage
-        .increase_balance(CREDIS_FACTORY_ADDRESS, amount)
-        .unwrap();
-}
-
 pub fn teardown() {
-    fidelity_enclave::uninstall();
     test_enclave::uninstall();
 }

@@ -14,7 +14,7 @@ pub mod emission_day_state {
 pub mod metadosis_state {
     pub const PENDING: u8 = 0;
     pub const COMPLETED: u8 = 1;
-    pub const CANCELLED: u8 = 2;
+    pub const CANCELED: u8 = 2;
     pub const FAILED: u8 = 3;
 }
 
@@ -147,6 +147,10 @@ impl EmissionDay {
 pub struct EmissionContract {
     #[attribute(order = 0)]
     pub emission_days: outbe_primitives::storage::dsl::Map<u32, EmissionDay>,
+
+    /// The Nod loads that the Metadosis limits of past days did not cover, in minor units.
+    #[attribute(order = 1)]
+    pub excess_nod_loads_minor: outbe_primitives::storage::dsl::Value<U256>,
 }
 
 #[cfg(test)]

@@ -48,6 +48,8 @@ mod rejoin_execution;
 mod retry;
 #[path = "tee_vm_lifecycle_supervisor/running.rs"]
 mod running;
+#[path = "tee_vm_lifecycle_supervisor/schedule_checkpoint_rpc.rs"]
+mod schedule_checkpoint_rpc;
 #[allow(dead_code)]
 #[path = "../../blockchain/tee/tests/in_process_dkg_and_admission/fixtures.rs"]
 mod shared;

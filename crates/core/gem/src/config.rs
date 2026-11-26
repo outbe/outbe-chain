@@ -8,7 +8,8 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_system_common::time::SECONDS_PER_DAY_U32;
 
 use crate::constants::{
-    CALL_NOTICE_PERIOD, CALL_RATE_PCT, CALL_THRESHOLD, CALL_WINDOW, POSITION_VALIDITY_SECONDS,
+    CALL_NOTICE_PERIOD, CALL_RATE_PCT, CALL_THRESHOLD, CALL_WINDOW,
+    GEM_FACTORY_POSITION_VALIDITY_SECONDS,
 };
 use crate::errors::GemError;
 use crate::schema::GemContract;
@@ -24,7 +25,7 @@ pub struct GemParams {
     /// Percentage points over the entry price. See `crate::constants`.
     pub call_rate: u16,
     /// How long a Gem Factory position may still issue gems.
-    pub position_validity: u64,
+    pub gem_factory_position_validity: u64,
 }
 
 impl GemParams {
@@ -34,7 +35,7 @@ impl GemParams {
         call_threshold_seconds: CALL_THRESHOLD,
         call_notice_period_seconds: CALL_NOTICE_PERIOD,
         call_rate: CALL_RATE_PCT,
-        position_validity: POSITION_VALIDITY_SECONDS,
+        gem_factory_position_validity: GEM_FACTORY_POSITION_VALIDITY_SECONDS,
     };
 
     /// Short timings for dev/test. `called` is day-granular, so window and
@@ -44,13 +45,13 @@ impl GemParams {
         call_threshold_seconds: 2 * SECONDS_PER_DAY_U32,
         call_notice_period_seconds: 3 * SECONDS_PER_DAY_U32,
         call_rate: 4,
-        position_validity: 7 * outbe_system_common::time::SECONDS_PER_DAY,
+        gem_factory_position_validity: 7 * outbe_system_common::time::SECONDS_PER_DAY,
     };
 
     /// TESTNET terms with a notice and a validity the end-to-end tests wait out in real time.
     pub const E2E: Self = Self {
         call_notice_period_seconds: 1_800,
-        position_validity: 900,
+        gem_factory_position_validity: 900,
         ..Self::TESTNET
     };
 

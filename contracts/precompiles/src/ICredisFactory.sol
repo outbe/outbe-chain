@@ -3,12 +3,11 @@ pragma solidity ^0.8.30;
 
 interface ICredisFactory {
     error InvalidAmount();
-    error CcaStakeMismatch();
     error ReservationNotFound();
     error ReservationExpired();
-    error ReservationCcaMismatch();
+    error ReservationOwnerMismatch();
     error ZeroIssueTerm();
-    error InvalidSource();
+    error InvalidPledgeAccount();
     error InvalidOwner();
     error CredisAlreadyExists();
     error CredisClosed();
@@ -24,13 +23,14 @@ interface ICredisFactory {
     error AssetDecimalsUndecodable();
     error AssetCurrencyUndecodable();
     error AssetMetadataChanged();
-    error CoenStakeOverflow();
     error CredisChangedDuringIssuance();
     error CollateralIncreased();
     error CollateralReleaseMismatch();
     error CredisChangedDuringPayment();
     error ForfeitureCollateralMismatch();
     error CannotForfeitInIssueBlock();
+    error CannotFullySettleInIssueBlock();
+    error SettlementAssetNotAllowed();
 
     event CredisSeriesOpened(
         bytes14 indexed seriesId,
@@ -42,18 +42,6 @@ interface ICredisFactory {
         uint64 callWindow,
         uint64 callThreshold,
         uint64 callNoticePeriod
-    );
-    event CredisIssued(
-        uint256 indexed credisId,
-        address indexed owner,
-        bytes14 indexed seriesId,
-        uint16 issuanceCurrency,
-        uint16 referenceCurrency,
-        address cca,
-        address asset,
-        uint256 amountMinor,
-        uint256 gratisMinor,
-        uint256 policyRate
     );
     /// Every unsettled Credis of the sub-series is called with its call group.
     event CredisSeriesCalled(
@@ -73,38 +61,33 @@ interface ICredisFactory {
         uint32 forfeitedCount,
         uint256 forfeitedAmountMinor
     );
-    /// @notice One successful settlement. `settledFeeMinor` and `settledAmountMinor`
-    ///         are this payment's fee and amount deltas, and `amountMinor` is their
-    ///         sum. A reverted settlement emits nothing and leaves the Credis unchanged.
-    event CredisSettled(
-        uint256 indexed credisId,
-        address indexed owner,
-        address asset,
-        uint16 issuanceCurrency,
-        uint16 referenceCurrency,
-        uint256 amountMinor,
-        uint256 settledFeeMinor,
-        uint256 settledAmountMinor
-    );
 
-    /// Use the reservation's pledge and every term it fixed, the call terms included.
-    /// The caller must be its CCA.
-    /// msg.value exactly matches reserved Gratis collateral in native COEN units.
-    function issueCredis(uint256 credisReservationId) external payable returns (uint256 credisId, uint256 amountMinor);
-    /// Any payer may repay. Freed collateral is released to the source's liquid Gratis.
-    /// The payer approves the VaultRouter for the repayment first.
-    function settleCredis(uint256 credisId, uint256 amountCapMinor)
+    /// Issue the Credis of the reservation with every term it fixed, the call terms included.
+    /// The caller must be its Credis owner and must have approved the amount of the asset to
+    /// the VaultRouter. `pledge` is the authorization of the main account, sealed to the
+    /// offer key: the main account and its MAC over the account, the Gratis quantity, the
+    /// reservation id and the chain id.
+    function issueCredis(uint256 credisReservationId, bytes calldata pledge)
+        external
+        returns (uint256 credisId, uint256 amountMinor);
+    /// Any payer may repay. Freed collateral goes back to the free Gratis of the main account.
+    /// The payer approves the VaultRouter for the repayment first. `asset` zero pays in the
+    /// asset of the Credis. Another registered asset of the issuance currency is allowed only
+    /// while the asset of the Credis has no vault, at par. `amountCapMinor` is in the units of
+    /// the Credis asset. The full settlement deletes the Credis and fails in its issue block.
+    function settleCredis(uint256 credisId, address asset, uint256 amountCapMinor)
         external
         returns (uint256 settledAmountMinor, uint256 settledFeeMinor);
     /// What paying the Credis off now takes: its outstanding amount plus the fee
-    /// accrued since the last settlement. Zero once it is Settled or Forfeited. Fee
+    /// accrued since the last settlement. Zero once it is Forfeited by its deadline; a full
+    /// settlement or a forfeit deletes the Credis, and then the read reverts. Fee
     /// grows by whole days, so a payment landing a day later needs that day more;
     /// `settleCredis` takes only what is owed, so paying more is safe.
     function quoteSettlement(uint256 credisId) external view returns (uint256 payoffMinor);
 
     /// @notice How close a right is to its group's call. The window ends at the last
     ///         finalized UTC day. Prices are COEN in `referenceCurrency` at scale 1e6.
-    struct CallProgress {
+    struct CallState {
         uint32 callWindowDays;
         uint32 callThresholdDays;
         /// Window days since the group's start, priced or not.
@@ -122,7 +105,7 @@ interface ICredisFactory {
 
     /// @notice Read the call progress of `credisId`. Reverts `CredisNotFound`, or
     ///         `CredisNotIssued` once it is Called, Settled or Forfeited.
-    function getCallProgress(uint256 credisId) external view returns (CallProgress memory);
+    function callState(uint256 credisId) external view returns (CallState memory);
     /// The owner gives up an Issued or Called Credis before its settlement deadline: its remaining
     /// Gratis burns, the amount is forfeited and the Credis is deleted.
     function forfeitCredis(uint256 credisId)

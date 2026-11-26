@@ -65,8 +65,8 @@ fn list_and_count_views_route_to_their_queries() -> Result<()> {
     assert_returns(&mut storage, I::getValidatorsCall {}, vec![FIRST, SECOND]);
     assert_returns(&mut storage, I::getActiveValidatorsCall {}, vec![FIRST]);
     assert_returns(&mut storage, I::getActiveConsensusSetCall {}, vec![FIRST]);
-    let (count, active, consensus, pending, epoch, start_time, start_block, length) =
-        storage.enter(|storage| -> Result<_> {
+    let (count, active, consensus, pending, epoch, start_time, start_block, length) = storage
+        .enter(|storage| -> Result<_> {
             let vs = ValidatorSet::new(storage);
             Ok((
                 vs.validator_count()?,

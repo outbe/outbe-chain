@@ -4,13 +4,12 @@ use std::sync::{Arc, Mutex};
 
 use alloy_primitives::{hex, Address, B256, U256};
 use outbe_core_common::confidential_tee::{
-    attestation, consensus_witness_call, decrypt_fidelity_cohorts, decrypt_gratis_balance,
-    decrypt_promis_balance, derive_account_keys_message, derive_resident_state_key, domain_for,
-    eip191_hash, event_amount_input_hash, hkdf_sha256, offer_material, sign_attestation_tag,
+    attestation, consensus_witness_call, decrypt_gratis_balance, decrypt_promis_balance,
+    derive_account_keys_message, derive_resident_state_key, domain_for, eip191_hash,
+    event_amount_input_hash, hkdf_sha256, offer_material, sign_attestation_tag,
     verify_response_attestation, BalanceTransition, DualWitnessAnswer, EnvelopeCipherSpec, Ledger,
     LocalCryptoError, ModifyAuthorization, ResponseAuthSpec, WitnessDomainWire, WitnessResponseTag,
-    WitnessSchema, FIDELITY_COHORT_ENVELOPE, GRATIS_BALANCE_ENVELOPE, GRATIS_OP_ATTESTATION,
-    PROMIS_BALANCE_ENVELOPE,
+    WitnessSchema, GRATIS_BALANCE_ENVELOPE, GRATIS_OP_ATTESTATION, PROMIS_BALANCE_ENVELOPE,
 };
 use outbe_primitives::tee_attestation_v1::{AttestationMode, NetworkBindingV1};
 use outbe_tee::resident::{AccountKeysHandle, StateKeyHandle};
@@ -25,7 +24,6 @@ fn owner_derive_account_keys_eip191_vectors() {
     for (ledger, preimage, digest) in [
         (Ledger::Gratis, "6f757462652f6772617469732f6465726976652d6b6579732f763122222222222222222222222222222222222222223333333333333333333333333333333333333333333333333333333333333333", "77543b6a6a9d609001a95b206671a7546f624787aa3ddad02db4ff553ae0a114"),
         (Ledger::Promis, "6f757462652f70726f6d69732f6465726976652d6b6579732f763122222222222222222222222222222222222222223333333333333333333333333333333333333333333333333333333333333333", "4358a5160a44f31ab9bd747e2829922960336f30d54af3d1e2b62c5b00708326"),
-        (Ledger::Fidelity, "6f757462652f666964656c6974792f6465726976652d6b6579732f763122222222222222222222222222222222222222223333333333333333333333333333333333333333333333333333333333333333", "0253bd228725e355d543f755abffbaae4b7a317d9d6c7cd09ffd8213abdb15cb"),
         (Ledger::Nod, "6f757462652f6e6f642f6465726976652d6b6579732f763122222222222222222222222222222222222222223333333333333333333333333333333333333333333333333333333333333333", "4bc1efbf18d8381d779979ea9dfdb8d87b1cdb2acc6cef8b42ee5ef60652af8b"),
     ] {
         let message = derive_account_keys_message(
@@ -61,13 +59,6 @@ fn confidential_ledger_domain_vectors() {
             "c3bd3c43c45fcdad0093cb3f6758b3f69c4a16c27e0c5e50c68d53079c1dabfb",
             "0320763f3ed5479059f29142165691624c3849c9b869b403ae354ab31d58b3eb",
             "d8704b22c0854b641b9cae741c4c7f995c3e5ee7b305a3bb78ba42d95d869afc",
-        ),
-        (
-            Ledger::Fidelity,
-            "5e96b66f685c7e2dcb2a1a7adeb6f027c107ac3b022c9b0bab3f7036eaaa20eb",
-            "8ac47b1effa55d1c7b8d287055a49a4ced9b67214cb2d7e0e51750b7b5d0f1d0",
-            "a7c69dcb52cf5651c2031e5a4594f62dd243c7525f9f02f12445bd459afb6cd3",
-            "77f9857ad831c6e5950e73549fae8e9e37a1e8421fb8d0f9910e5da319832c01",
         ),
         (
             Ledger::Nod,
@@ -244,16 +235,12 @@ fn resident_attestation_tag_round_trips() {
 
 /// Independent `(variant, discriminant)` table copied from the frozen V1
 /// response golden. A swapped enum discriminant fails `literal`, not `value()`.
-const RECORDABLE_V1_TAG_LITERALS: [(WitnessResponseTag, u8); 13] = [
+const RECORDABLE_V1_TAG_LITERALS: [(WitnessResponseTag, u8); 9] = [
     (WitnessResponseTag::GratisOpApplied, 1),
     (WitnessResponseTag::PromisOpApplied, 2),
-    (WitnessResponseTag::FidelityLeaguesSnapshotted, 4),
-    (WitnessResponseTag::FidelityIndexQueried, 5),
     (WitnessResponseTag::EncryptedNodMintRejectedV1, 8),
     (WitnessResponseTag::EncryptedNodMinedV1, 9),
     (WitnessResponseTag::NodAmountReadV1, 10),
-    (WitnessResponseTag::FidelityQueryRejected, 15),
-    (WitnessResponseTag::LysisFractionsExecutedV1, 16),
     (WitnessResponseTag::NodGroupLoadOpAppliedV1, 19),
     (WitnessResponseTag::NodGroupLoadReadV1, 20),
     (WitnessResponseTag::NodQuoteEncryptedV1, 21),
@@ -274,34 +261,6 @@ fn recordable_v1_tags_match_independent_literals() {
 }
 
 #[test]
-fn fidelity_cohort_envelope_seal_vector() {
-    let account = Address::repeat_byte(0x22);
-    let previous_blob: &[u8] = &[0x41, 0x42];
-    let padded_state: &[u8] = &[0x51, 0x52, 0x53, 0x54];
-    let previous_len = u64::try_from(previous_blob.len()).unwrap();
-    let state_len = u64::try_from(padded_state.len()).unwrap();
-    let mut binding = Vec::with_capacity(16 + previous_blob.len() + padded_state.len());
-    binding.extend_from_slice(&previous_len.to_be_bytes());
-    binding.extend_from_slice(previous_blob);
-    binding.extend_from_slice(&state_len.to_be_bytes());
-    binding.extend_from_slice(padded_state);
-    let expected = "000000000000000546494432f9dbf39c09d417d4df25eaf1cfb658174cc0507208c43fccfa86fb53e38b47c38c567f2a464d290791d9cc03d17c7a131e618aa8";
-    let actual = FIDELITY_COHORT_ENVELOPE
-        .write_envelope(
-            &StateKeyHandle::for_test([0x11; 32]),
-            (account, &[]),
-            (4, &binding),
-            padded_state,
-        )
-        .unwrap();
-    assert_eq!(hex::encode(actual), expected);
-    assert_eq!(
-        decrypt_fidelity_cohorts(&[0x11; 32], account, &hex::decode(expected).unwrap()).unwrap(),
-        padded_state
-    );
-}
-
-#[test]
 fn event_amount_input_hash_vector() {
     assert_eq!(
         hex::encode(event_amount_input_hash(B256::repeat_byte(0x33))),
@@ -309,12 +268,10 @@ fn event_amount_input_hash_vector() {
     );
 }
 
-const GRATIS_OP_APPLIED_SIGNED: &str = "01000121012220000000000000000000000000000000000000000000000000000000000000001105010121017b072011111111111111111111111111111111111111111111111111111111111111110251520123";
+const GRATIS_OP_APPLIED_SIGNED: &str = "010001210122200000000000000000000000000000000000000000000000000000000000000011052011111111111111111111111111111111111111111111111111111111111111110251520123";
 const NOD_AMOUNT_READ_SIGNED: &str = "0a200000000000000000000000000000000000000000000000000000000000000011201111111111111111111111111111111111111111111111111111111111111111025152";
-const FIDELITY_INDEX_QUERIED_SIGNED: &str = "0520000000000000000000000000000000000000000000000000000000000000001120000000000000000000000000000000000000000000000000000000000000001207201111111111111111111111111111111111111111111111111111111111111111025152";
-const FIDELITY_QUERY_REJECTED_SIGNED: &str =
-    "0f2011111111111111111111111111111111111111111111111111111111111111110872656a6563746564025152";
-const NOD_MINED_SIGNED: &str = "090121050121017b072011111111111111111111111111111111111111111111111111111111111111110251520123";
+const NOD_MINED_SIGNED: &str =
+    "090121052011111111111111111111111111111111111111111111111111111111111111110251520123";
 const NOD_MINT_REJECTED_SIGNED: &str =
     "080872656a6563746564201111111111111111111111111111111111111111111111111111111111111111025152";
 
@@ -325,20 +282,12 @@ enum GratisStatusWire {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-struct FidelityOutcomeWire {
-    new_blob: Vec<u8>,
-    qualified_start_initialized: Option<u64>,
-    league: u16,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct GratisOpAppliedWire {
     status: GratisStatusWire,
     new_balance: Vec<u8>,
     new_pledged: Vec<u8>,
     event_amount: U256,
     next_op_nonce: u64,
-    fidelity: Option<FidelityOutcomeWire>,
     inputs_canonical_hash: B256,
     attestation_tag: Vec<u8>,
     encrypted_event_amount: Vec<u8>,
@@ -352,26 +301,9 @@ struct NodAmountReadWire {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-struct FidelityIndexQueriedWire {
-    rcfi: U256,
-    efficiency: U256,
-    league: u16,
-    inputs_canonical_hash: B256,
-    attestation_tag: Vec<u8>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-struct FidelityQueryRejectedWire {
-    inputs_canonical_hash: B256,
-    reason: String,
-    attestation_tag: Vec<u8>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct NodMinedWire {
     new_balance: Vec<u8>,
     next_op_nonce: u64,
-    fidelity: FidelityOutcomeWire,
     inputs_canonical_hash: B256,
     attestation_tag: Vec<u8>,
     encrypted_event_amount: Vec<u8>,
@@ -410,14 +342,6 @@ macro_rules! schema_wire {
 
 schema_wire!(GratisOpAppliedWire, WitnessResponseTag::GratisOpApplied);
 schema_wire!(NodAmountReadWire, WitnessResponseTag::NodAmountReadV1);
-schema_wire!(
-    FidelityIndexQueriedWire,
-    WitnessResponseTag::FidelityIndexQueried
-);
-schema_wire!(
-    FidelityQueryRejectedWire,
-    WitnessResponseTag::FidelityQueryRejected
-);
 schema_wire!(NodMinedWire, WitnessResponseTag::EncryptedNodMinedV1);
 schema_wire!(
     NodMintRejectedWire,
@@ -532,11 +456,6 @@ fn v1_payloads_match_tag_free_response_vectors() {
             new_pledged: vec![34],
             event_amount: U256::from(0x11u64),
             next_op_nonce: 5,
-            fidelity: Some(FidelityOutcomeWire {
-                new_blob: vec![33],
-                qualified_start_initialized: Some(123),
-                league: 7,
-            }),
             inputs_canonical_hash: hash,
             attestation_tag: tag.clone(),
             encrypted_event_amount: vec![35],
@@ -552,30 +471,9 @@ fn v1_payloads_match_tag_free_response_vectors() {
         NOD_AMOUNT_READ_SIGNED,
     );
     record_pair(
-        FidelityIndexQueriedWire {
-            rcfi: U256::from(0x11u64),
-            efficiency: U256::from(0x12u64),
-            league: 7,
-            inputs_canonical_hash: hash,
-            attestation_tag: tag.clone(),
-        },
-        FidelityQueryRejectedWire {
-            inputs_canonical_hash: hash,
-            reason: "rejected".to_string(),
-            attestation_tag: tag.clone(),
-        },
-        FIDELITY_INDEX_QUERIED_SIGNED,
-        FIDELITY_QUERY_REJECTED_SIGNED,
-    );
-    record_pair(
         NodMinedWire {
             new_balance: vec![33],
             next_op_nonce: 5,
-            fidelity: FidelityOutcomeWire {
-                new_blob: vec![33],
-                qualified_start_initialized: Some(123),
-                league: 7,
-            },
             inputs_canonical_hash: hash,
             attestation_tag: tag.clone(),
             encrypted_event_amount: vec![35],

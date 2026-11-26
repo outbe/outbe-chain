@@ -4,10 +4,10 @@ pragma solidity 0.8.30;
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
-import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
-import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
-import {SendParam, BatchSendParam, MultiRecipientSendParam} from "@contracts/shared/interfaces/IIntexNFT1155Bridge.sol";
-import {IntexNFT1155BridgeCodec} from "@contracts/shared/libs/IntexNFT1155BridgeCodec.sol";
+import {OpenSeriesLib} from "../helpers/OpenSeriesLib.sol";
+import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
+import {SendParam, BatchSendParam, MultiRecipientSendParam} from "@contracts/shared/interfaces/IIntexNFT1155Router.sol";
+import {IntexNFT1155RouterCodec} from "@contracts/shared/libs/IntexNFT1155RouterCodec.sol";
 
 /// @notice The send path rejects a non-canonical recipient (dirty high bits) before any burn, as
 ///         the receive path does. Otherwise the burn would have no mint counterpart and the message
@@ -17,13 +17,13 @@ contract BridgeRecipientValidationTest is CrossChainTest {
     uint256 private constant FEE = 0.001 ether;
 
     IntexNFT1155 private token;
-    IntexNFT1155Bridge private adapter;
+    IntexNFT1155Router private adapter;
 
     address private admin = address(this);
     address private user = address(0x1);
     uint32 private constant SERIES_ID_DAY = 20260401;
     bytes14 private constant SERIES_ID = "20260401-USD-U";
-    uint256 private constant TOKEN_ID = uint256(keccak256(abi.encodePacked(SERIES_ID)));
+    uint256 private constant INTEX_ID = uint256(keccak256(abi.encodePacked(SERIES_ID)));
     uint256 private constant AMOUNT = 100;
 
     /// @dev A bytes32 with a bit set above the low 160 - not a canonical left-padded address.
@@ -35,21 +35,21 @@ contract BridgeRecipientValidationTest is CrossChainTest {
         bridge.setFee(FEE);
 
         token = DeployProxy.intexNFT1155(admin, admin);
-        adapter = DeployProxy.intexNFT1155Bridge(address(token), address(bridge), admin);
+        adapter = DeployProxy.intexNFT1155Router(address(token), address(bridge), admin);
         token.grantRole(token.BRIDGE_ROLE(), address(adapter));
-        adapter.registerRemoteMessenger(B_CHAIN_ID, _interop(B_CHAIN_ID, address(adapter)));
+        adapter.setRemoteRouter(B_CHAIN_ID, _interop(B_CHAIN_ID, address(adapter)));
 
-        token.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, 10_000, 0));
+        token.openSeries(OpenSeriesLib.params(SERIES_ID_DAY, 10_000, 0));
         token.issueIntex(user, AMOUNT, SERIES_ID);
     }
 
     function _expectMalformed() internal {
-        vm.expectRevert(abi.encodeWithSelector(IntexNFT1155BridgeCodec.MalformedAddress.selector, DIRTY));
+        vm.expectRevert(abi.encodeWithSelector(IntexNFT1155RouterCodec.MalformedAddress.selector, DIRTY));
     }
 
     function _ids() private pure returns (uint256[] memory ids) {
         ids = new uint256[](1);
-        ids[0] = TOKEN_ID;
+        ids[0] = INTEX_ID;
     }
 
     function _amounts() private pure returns (uint256[] memory amts) {
@@ -60,17 +60,17 @@ contract BridgeRecipientValidationTest is CrossChainTest {
     function test_send_rejectsMalformedRecipientBeforeBurn() public {
         _expectMalformed();
         vm.prank(user);
-        adapter.send{value: FEE}(SendParam({dstChainId: B_CHAIN_ID, to: DIRTY, tokenId: TOKEN_ID, units: AMOUNT}));
-        assertEq(token.balanceOf(user, TOKEN_ID), AMOUNT, "no burn on malformed recipient");
+        adapter.send{value: FEE}(SendParam({dstChainId: B_CHAIN_ID, to: DIRTY, intexId: INTEX_ID, units: AMOUNT}));
+        assertEq(token.balanceOf(user, INTEX_ID), AMOUNT, "no burn on malformed recipient");
     }
 
     function test_batchSend_rejectsMalformedRecipientBeforeBurn() public {
         _expectMalformed();
         vm.prank(user);
         adapter.batchSend{value: FEE}(
-            BatchSendParam({dstChainId: B_CHAIN_ID, to: DIRTY, tokenIds: _ids(), units: _amounts()})
+            BatchSendParam({dstChainId: B_CHAIN_ID, to: DIRTY, intexIds: _ids(), units: _amounts()})
         );
-        assertEq(token.balanceOf(user, TOKEN_ID), AMOUNT, "no burn on malformed recipient");
+        assertEq(token.balanceOf(user, INTEX_ID), AMOUNT, "no burn on malformed recipient");
     }
 
     function test_multiSend_rejectsMalformedRecipientBeforeBurn() public {
@@ -80,19 +80,19 @@ contract BridgeRecipientValidationTest is CrossChainTest {
         vm.prank(user);
         adapter.multiSend{value: FEE}(
             MultiRecipientSendParam({
-                dstChainId: B_CHAIN_ID, recipients: recipients, tokenIds: _ids(), units: _amounts()
+                dstChainId: B_CHAIN_ID, recipients: recipients, intexIds: _ids(), units: _amounts()
             })
         );
-        assertEq(token.balanceOf(user, TOKEN_ID), AMOUNT, "no burn on malformed recipient");
+        assertEq(token.balanceOf(user, INTEX_ID), AMOUNT, "no burn on malformed recipient");
     }
 
     /// @notice A canonical recipient still passes the guard and burns on the source.
     function test_send_canonicalRecipientStillSends() public {
         SendParam memory p =
-            SendParam({dstChainId: B_CHAIN_ID, to: bytes32(uint256(uint160(user))), tokenId: TOKEN_ID, units: AMOUNT});
+            SendParam({dstChainId: B_CHAIN_ID, to: bytes32(uint256(uint160(user))), intexId: INTEX_ID, units: AMOUNT});
         uint256 fee = adapter.quoteSend(p);
         vm.prank(user);
         adapter.send{value: fee}(p);
-        assertEq(token.balanceOf(user, TOKEN_ID), 0, "burned on valid send");
+        assertEq(token.balanceOf(user, INTEX_ID), 0, "burned on valid send");
     }
 }

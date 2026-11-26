@@ -248,9 +248,9 @@ pub fn read_pending_validators_from_state(
 }
 
 /// Read peers admitted to consensus P2P as SECONDARY from on-chain state:
-/// both pending phases (`WaitingForReadiness`, `Joining`) and both jailed
-/// phases (`JailRetained`, `Jail`). Used as the secondary-tier P2P admission
-/// source so these peers sync + execute offer blocks. Admission grants no vote.
+/// pending (`WaitingForReadiness`, `Joining`), retired (`Unbonding`,
+/// `Inactive`), and jailed (`JailRetained`, `Jail`) records. Secondary
+/// admission allows syncing and executing offer blocks. Admission grants no vote.
 pub fn read_admitted_non_consensus_from_state(
     protocol: &dyn crate::protocol_state::EngineProtocolState,
     state_access: &dyn RethStateAccess,
@@ -274,10 +274,11 @@ enum ValidatorSetKind {
     /// PENDING joiners only - admitted to consensus P2P as SECONDARY peers so they
     /// sync to head before the reshare that makes them signers.
     PendingValidators,
-    /// Peers admitted to consensus P2P as SECONDARY so they sync + execute
-    /// offer blocks: both pending phases (`WaitingForReadiness`, `Joining`) and
-    /// both jailed phases (`JailRetained`, `Jail`). Voting still needs
-    /// `has_bls_share`, so this cannot affect consensus. Distinct from `ReshareTarget`.
+    /// Peers admitted to consensus P2P as SECONDARY so they sync and execute
+    /// offer blocks: pending (`WaitingForReadiness`, `Joining`), retired
+    /// (`Unbonding`, `Inactive`), and jailed (`JailRetained`, `Jail`) records.
+    /// Voting still requires `has_bls_share`, so this view grants no consensus
+    /// authority. Distinct from `ReshareTarget`.
     AdmittedNonConsensus,
 }
 

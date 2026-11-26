@@ -24,7 +24,7 @@ pub(crate) fn expire_through(
     budget: &mut PassBudget,
 ) -> Result<deadline_queue::Progress> {
     let queue = GemFactoryContract::new(ctx.storage.clone());
-    deadline_queue::process_day(
+    deadline_queue::run_through_day(
         &GemFactoryPositionExpiryQueue(&queue),
         ctx,
         through_day,
@@ -41,7 +41,7 @@ pub fn delete_expired_positions(ctx: &BlockRuntimeContext) -> Result<u32> {
         factory: GemFactoryContract::new(ctx.storage.clone()),
         deleted: 0,
     };
-    deadline_queue::process_cleanup(
+    deadline_queue::run_with_saved_budget(
         &GemFactoryPositionDeletionQueue(&queue),
         ctx,
         &queue.deletion_budget,
@@ -75,7 +75,7 @@ impl DeadlineHandler<u64> for GemFactoryPositionExpiry<'_, '_> {
                 .expiry_day_position_count(position_queue_expiry_day(entry)?)?
             {
                 0 => Due::Drop,
-                _ => Due::Process,
+                _ => Due::Handle,
             },
         )
     }
@@ -89,7 +89,7 @@ impl DeadlineHandler<u64> for GemFactoryPositionExpiry<'_, '_> {
     }
 
     /// Nobody issued the capacity, so it goes back to the Promis reserve.
-    fn process_member(&mut self, entry: u64, _member: u64) -> Result<()> {
+    fn handle_member(&mut self, entry: u64, _member: u64) -> Result<()> {
         let day = position_queue_expiry_day(entry)?;
         let returned = self.factory.expiry_day_capacity_minor.read(&day)?;
         if !returned.is_zero() {
@@ -124,7 +124,7 @@ impl DeadlineHandler<u64> for GemFactoryPositionDeletion<'_, '_> {
                 .expiry_day_position_count(position_queue_expiry_day(entry)?)?
             {
                 0 => Due::Drop,
-                _ => Due::Process,
+                _ => Due::Handle,
             },
         )
     }
@@ -143,7 +143,7 @@ impl DeadlineHandler<u64> for GemFactoryPositionDeletion<'_, '_> {
         error.record_pass_failure()
     }
 
-    fn process_member(&mut self, _entry: u64, gem_factory_position_id: U256) -> Result<()> {
+    fn handle_member(&mut self, _entry: u64, gem_factory_position_id: U256) -> Result<()> {
         let record = self
             .factory
             .positions

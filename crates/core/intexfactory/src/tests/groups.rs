@@ -30,14 +30,14 @@ mod group_scans {
             call_trigger: crate::tests::prod_trigger(),
             issuance_currency,
             reference_currency: REFERENCE_ISO,
-            snapshot_chains: vec![1],
+            target_chains: vec![1],
         }
     }
 
     /// Issue one day's series, one per issuance currency.
     fn issue_day(s: &StorageHandle<'_>, emission_day: u32) {
         for issuance in ISSUANCES {
-            runtime::issue_intex(s, params(emission_day, issuance)).unwrap();
+            runtime::open_intex_series(s, params(emission_day, issuance)).unwrap();
         }
     }
 
@@ -97,7 +97,7 @@ mod group_scans {
                 },
                 s.clone(),
             );
-            super::super::called::daily_pass(&ctx).unwrap();
+            super::super::call::daily_pass(&ctx).unwrap();
         });
 
         let called: Vec<_> = storage
@@ -149,7 +149,7 @@ mod group_scans {
         let id = super::super::sid(7);
         StorageHandle::enter(&mut storage, |s| {
             super::super::select_prod_profile(&s);
-            runtime::issue_intex(&s, super::super::sample(7)).unwrap();
+            runtime::open_intex_series(&s, super::super::sample(7)).unwrap();
             outbe_intex::api::call_group_of(&s, id, super::super::ISSUED_AT).unwrap();
             outbe_intex::api::record_settled_units(&s, id, super::super::owner(), 100).unwrap();
             outbe_intex::api::record_mined_units(&s, id, super::super::owner(), 100).unwrap();
@@ -176,9 +176,9 @@ mod group_scans {
                 s.clone(),
             );
             let mut budget = PassBudget::new(100, 100);
-            crate::forfeited::forfeit_through(&ctx, IntexContract::deadline_day(due), &mut budget)
+            crate::close::close_through(&ctx, IntexContract::deadline_day(due), &mut budget)
                 .unwrap();
-            crate::cleanup::cleanup(&ctx).unwrap();
+            crate::forfeit::forfeit_through(&ctx).unwrap();
             assert!(!outbe_intex::api::series_exists(&s, id).unwrap());
         });
 
@@ -214,7 +214,7 @@ mod group_scans {
         let owner = super::super::owner();
         StorageHandle::enter(&mut storage, |s| {
             super::super::select_prod_profile(&s);
-            runtime::issue_intex(&s, super::super::sample(7)).unwrap();
+            runtime::open_intex_series(&s, super::super::sample(7)).unwrap();
             outbe_intex::api::call_group_of(&s, id, super::super::ISSUED_AT).unwrap();
             outbe_intex::api::record_settled_units(&s, id, owner, 60).unwrap();
             outbe_intex::api::record_mined_units(&s, id, owner, 60).unwrap();
@@ -237,7 +237,7 @@ mod group_scans {
                 s.clone(),
             );
             let mut budget = PassBudget::new(100, 100);
-            crate::forfeited::forfeit_through(&ctx, IntexContract::deadline_day(due), &mut budget)
+            crate::close::close_through(&ctx, IntexContract::deadline_day(due), &mut budget)
                 .unwrap();
         });
 

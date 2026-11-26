@@ -3,7 +3,7 @@ pragma solidity 0.8.30;
 
 import {CrossChainTest} from "./helpers/CrossChainTest.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
-import {TargetRouter} from "@contracts/target/TargetRouter.sol";
+import {IntexAuctionTargetRouter} from "@contracts/target/IntexAuctionTargetRouter.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {IntexGas} from "@contracts/shared/libs/IntexGas.sol";
@@ -261,21 +261,20 @@ contract RefundClaimFinalizedGasTest is RefundGasBase {
 contract RefundDayGasTest is RefundGasBase {
     uint256 internal constant BIDDERS = 200;
 
-    TargetRouter internal router;
-    address internal originPeer = address(0x0B1);
+    IntexAuctionTargetRouter internal router;
+    address internal outbeIca = address(0x0B1);
 
     function setUp() public {
         _setUpBridge();
         _setUpEscrow();
 
-        router = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
-        router.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originPeer));
+        router = DeployProxy.targetRouter(
+            address(bridge), admin, OUTBE_CHAIN_ID, address(new LocalWcoenTokenBridge(token, new LocalWcoenGateway()))
+        );
+        _wireOutbeIca(router, outbeIca);
         // A real auction: each chunk asks it whether the day failed, and that read is part of the cost.
         router.setDependencies(
             address(DeployProxy.intexAuction(admin, address(router))), makeAddr("intex"), address(escrow)
-        );
-        router.setProceedsRoute(
-            address(new LocalWcoenTokenBridge(token, new LocalWcoenGateway())), makeAddr("originRouter")
         );
         escrow.setProceedsRecipient(address(router));
         escrow.grantRole(escrow.RELAYER_ROLE(), address(router));
@@ -292,7 +291,7 @@ contract RefundDayGasTest is RefundGasBase {
             DAY, pageIndex, totalPages, CLEARING_RATE, BASIS, _winners(winnerCount), partialIndex, partialWon
         );
         uint256 before = gasleft();
-        _deliver(OUTBE_CHAIN_ID, originPeer, address(router), packet);
+        _deliver(OUTBE_CHAIN_ID, outbeIca, address(router), packet);
         spent = before - gasleft();
     }
 

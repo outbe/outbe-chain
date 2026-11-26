@@ -32,21 +32,17 @@ async fn private_rpc_revokes_before_work_and_reopens_real_sealed_exports() {
     let eph = B256::from(x25519_dalek::PublicKey::from(&eph_secret).to_bytes());
     for state in closed_states() {
         authority.publish(state);
-        for method in ["outbe_deriveKeys", "outbe_deriveGratisKeys"] {
-            let error = if method == "outbe_deriveKeys" {
-                rpc.call::<_, GratisKeysSealed>(method, (Ledger::Gratis, owner, eph, Bytes::new()))
-                    .await
-                    .unwrap_err()
-            } else {
-                rpc.call::<_, GratisKeysSealed>(method, (owner, eph, Bytes::new()))
-                    .await
-                    .unwrap_err()
-            };
-            assert!(
-                error.to_string().contains("PrivateExecutionUnavailable"),
-                "{method}: {error}"
-            );
-        }
+        let error = rpc
+            .call::<_, GratisKeysSealed>(
+                "outbe_deriveKeys",
+                (Ledger::Gratis, owner, eph, Bytes::new()),
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("PrivateExecutionUnavailable"),
+            "{error}"
+        );
         authority.publish(State::Armed {
             enclave_id: B256::repeat_byte(7),
             valid_until: 123,
@@ -59,15 +55,10 @@ async fn private_rpc_revokes_before_work_and_reopens_real_sealed_exports() {
                     )))
                     .unwrap(),
             );
-            let sealed: GratisKeysSealed = if ledger == Ledger::Gratis {
-                rpc.call("outbe_deriveGratisKeys", (owner, eph, signature))
-                    .await
-                    .unwrap()
-            } else {
-                rpc.call("outbe_deriveKeys", (ledger, owner, eph, signature))
-                    .await
-                    .unwrap()
-            };
+            let sealed: GratisKeysSealed = rpc
+                .call("outbe_deriveKeys", (ledger, owner, eph, signature))
+                .await
+                .unwrap();
             assert_eq!(sealed.nonce.len(), 12);
             assert_eq!(sealed.sealed.len(), 80);
             assert_ne!(sealed.enclave_ephemeral_pubkey, B256::ZERO);

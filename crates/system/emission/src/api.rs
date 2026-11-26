@@ -107,6 +107,18 @@ pub fn get_emission_day_record(
     EmissionContract::new(storage).emission_days.get(day)
 }
 
+/// The Nod loads that the Metadosis limits of past days did not cover.
+pub fn excess_nod_loads(storage: StorageHandle<'_>) -> Result<U256> {
+    EmissionContract::new(storage).excess_nod_loads_minor.read()
+}
+
+/// Records the Nod loads that the Metadosis limits so far did not cover.
+pub fn record_excess_nod_loads(storage: StorageHandle<'_>, amount: U256) -> Result<()> {
+    EmissionContract::new(storage)
+        .excess_nod_loads_minor
+        .write(amount)
+}
+
 /// Writes or creates an `EmissionDay` record directly.
 pub fn put_emission_day_record(storage: StorageHandle<'_>, record: &EmissionDay) -> Result<()> {
     let contract = EmissionContract::new(storage);
@@ -211,8 +223,8 @@ pub fn record_day_allocation(
     Ok(record)
 }
 
-/// Records a failed daily allocation: all of `emission_limit` lands in `promis_limit`,
-/// `metadosis_state` becomes `Cancelled`, and `state` becomes `Completed`.
+/// Records a failed daily allocation: all of `emission_limit` lands in `promis_limit` and the
+/// Metadosis limit is zero. The day stays `Processing` until its Metadosis settles the loads.
 pub fn record_failed_day_allocation(
     storage: StorageHandle<'_>,
     day: u32,
@@ -236,9 +248,8 @@ pub fn record_failed_day_allocation(
     record.cca = 0;
     record.nods = 0;
     record.promis_limit = limit_u128;
-    record.metadosis_state = metadosis_state::CANCELLED;
     check_conservation(&record)?;
-    record.state = emission_day_state::COMPLETED;
+    record.state = emission_day_state::PROCESSING;
     EmissionContract::new(storage)
         .emission_days
         .update(&record)?;
@@ -253,8 +264,8 @@ pub struct MetadosisCompletedAmounts {
     pub promis_limit_added: U256,
 }
 
-/// Marks Metadosis of `day` as `Completed` after the Desis brief, recording `desis_limit`,
-/// `nods` (the loads of the Nods), and the part of the Metadosis limit added to `PromisLimit`.
+/// Marks Metadosis of `day` as `Completed` after the Desis brief, recording `desis_limit`, `nods`
+/// (the part of the Metadosis limit that covers Nod loads), and the part added to `PromisLimit`.
 pub fn record_metadosis_completed(
     storage: StorageHandle<'_>,
     day: u32,
@@ -285,7 +296,7 @@ pub fn record_metadosis_completed(
     Ok(record)
 }
 
-/// Marks Metadosis of `day` as `Cancelled` when `metadosis_limit == 0`.
+/// Marks Metadosis of `day` as `CANCELED` when `metadosis_limit == 0`.
 pub fn record_metadosis_canceled(storage: StorageHandle<'_>, day: u32) -> Result<EmissionDay> {
     let contract = EmissionContract::new(storage);
     let mut record = contract
@@ -296,19 +307,18 @@ pub fn record_metadosis_canceled(storage: StorageHandle<'_>, day: u32) -> Result
         return Err(EmissionError::InvalidMetadosisStateTransition {
             day,
             from_state: record.metadosis_state,
-            to_state: metadosis_state::CANCELLED,
+            to_state: metadosis_state::CANCELED,
         }
         .into());
     }
     record.desis_limit = 0;
     record.nods = 0;
-    record.metadosis_state = metadosis_state::CANCELLED;
+    record.metadosis_state = metadosis_state::CANCELED;
     contract.emission_days.update(&record)?;
     Ok(record)
 }
 
-/// Marks Metadosis of `day` as `Failed` and routes `metadosis_limit` to `promis_limit`.
-/// Records a failed Metadosis of `day`. The Nods of the day keep `nods_minor`, so the
+/// Records a failed Metadosis of `day`. `nods_minor` of the limit covers Nod loads, so the
 /// Promis Limit gets only the rest of the limit. Returns that rest.
 pub fn record_metadosis_failed(
     storage: StorageHandle<'_>,
@@ -384,7 +394,7 @@ pub fn record_reward_pool_residue(
         .ok_or(EmissionError::AmountOverflow)?;
     let unsettled = match record.metadosis_state {
         metadosis_state::PENDING => record.metadosis_limit,
-        metadosis_state::COMPLETED | metadosis_state::CANCELLED | metadosis_state::FAILED => 0,
+        metadosis_state::COMPLETED | metadosis_state::CANCELED | metadosis_state::FAILED => 0,
         from_state => {
             return Err(EmissionError::InvalidMetadosisStateTransition {
                 day,
@@ -597,7 +607,7 @@ mod tests {
         let failed_day = 20261002;
         let failed =
             record_failed_day_allocation(storage.clone(), failed_day, U256::from(100u64)).unwrap();
-        assert_eq!(failed.state, emission_day_state::COMPLETED);
+        assert_eq!(failed.state, emission_day_state::PROCESSING);
         assert_eq!(failed.promis_limit, 100);
 
         let unknown_state = 20261003;
@@ -873,7 +883,7 @@ mod tests {
     }
 
     #[test]
-    fn record_metadosis_canceled_requires_pending_zero_limit_and_sets_cancelled() {
+    fn record_metadosis_canceled_requires_pending_zero_limit_and_sets_canceled() {
         let mut provider = HashMapStorageProvider::new(1);
         let storage = StorageHandle::new(&mut provider);
         let day = 20261001;
@@ -899,7 +909,7 @@ mod tests {
             EmissionError::InvalidMetadosisStateTransition {
                 day,
                 from_state: metadosis_state::PENDING,
-                to_state: metadosis_state::CANCELLED,
+                to_state: metadosis_state::CANCELED,
             },
         );
 
@@ -911,18 +921,18 @@ mod tests {
         put_emission_day_record(storage.clone(), &zero_limit_record).unwrap();
 
         let canceled = record_metadosis_canceled(storage.clone(), day).unwrap();
-        assert_eq!(canceled.metadosis_state, metadosis_state::CANCELLED);
+        assert_eq!(canceled.metadosis_state, metadosis_state::CANCELED);
         let completed = complete_day_emission_limit(storage.clone(), day).unwrap();
         assert_eq!(completed.state, emission_day_state::COMPLETED);
-        assert_eq!(completed.metadosis_state, metadosis_state::CANCELLED);
+        assert_eq!(completed.metadosis_state, metadosis_state::CANCELED);
 
         let repeat_err = record_metadosis_canceled(storage, day).unwrap_err();
         assert_emission_error(
             repeat_err,
             EmissionError::InvalidMetadosisStateTransition {
                 day,
-                from_state: metadosis_state::CANCELLED,
-                to_state: metadosis_state::CANCELLED,
+                from_state: metadosis_state::CANCELED,
+                to_state: metadosis_state::CANCELED,
             },
         );
     }

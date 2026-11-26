@@ -1,6 +1,6 @@
 //! Real clearing checkpoints conserve sold units, unused capacity and dust.
 use alloy_primitives::{Address, Bytes, U256};
-use alloy_sol_types::{SolCall, SolEvent};
+use alloy_sol_types::SolEvent;
 use outbe_oracle::{api, schema::OracleContract};
 use outbe_primitives::{
     block::{BlockContext, BlockRuntimeContext},
@@ -14,7 +14,6 @@ use outbe_system_common::time::SECONDS_PER_DAY;
 use outbe_system_common::time::{previous_date_key, timestamp_to_date_key, EmissionDate};
 
 use crate::{
-    constants::ORIGIN_ROUTER_ADDRESS,
     precompile::IDesis,
     runtime,
     schema::{AuctionStage, DesisContract, IntexAuctionBidData},
@@ -36,10 +35,7 @@ fn world(sale: bool) -> HashMapStorageProvider {
 fn world_selling(units: u16) -> HashMapStorageProvider {
     let mut p = HashMapStorageProvider::new(1);
     p.set_timestamp(U256::from(NOW));
-    p.stub_sub_call_at(
-        ORIGIN_ROUTER_ADDRESS,
-        Bytes::from(crate::sol_ext::IOriginRouter::targetsOfCall::abi_encode_returns(&vec![CHAIN])),
-    );
+    super::seed_targets_for(&mut p, &[CHAIN], &[DAY]);
     p.stub_sub_call_at(
         outbe_intexfactory::constants::INTEX_NFT1155_ADDRESS,
         Bytes::from(vec![0; 32]),
@@ -92,7 +88,6 @@ fn world_selling(units: u16) -> HashMapStorageProvider {
         runtime::collect_intex_auction_bids(
             s.clone(),
             runtime::Inbound {
-                caller: ORIGIN_ROUTER_ADDRESS,
                 receive_id: alloy_primitives::B256::ZERO,
                 emission_day: DAY,
                 src_chain_id: CHAIN,
@@ -105,7 +100,6 @@ fn world_selling(units: u16) -> HashMapStorageProvider {
         runtime::complete_intex_auction_bids(
             s,
             runtime::Inbound {
-                caller: ORIGIN_ROUTER_ADDRESS,
                 receive_id: alloy_primitives::B256::ZERO,
                 emission_day: DAY,
                 src_chain_id: CHAIN,

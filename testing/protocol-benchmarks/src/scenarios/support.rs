@@ -3,16 +3,15 @@ use std::time::Instant;
 
 use alloy_primitives::Address;
 use evm2::interpreter::gas::{SSTORE_RESET, WARM_STORAGE_READ_COST};
-use outbe_intexfactory::constants::ORIGIN_ROUTER_ADDRESS;
 use outbe_primitives::storage::hashmap::{
     HashMapStorageProvider, StorageTraceKind, StorageTraceOperation,
 };
 use outbe_system_common::addresses::{
-    CREDIS_ADDRESS, CREDIS_FACTORY_ADDRESS, FIDELITY_ADDRESS, GEM_ADDRESS, GEM_FACTORY_ADDRESS,
-    GRATIS_ADDRESS, GRATIS_FACTORY_ADDRESS, INTEX_ADDRESS, INTEX_FACTORY_ADDRESS,
-    METADOSIS_ADDRESS, NOD_ADDRESS, NOD_FACTORY_ADDRESS, ORACLE_ADDRESS, PROMIS_ADDRESS,
-    PROMIS_FACTORY_ADDRESS, STABLECOIN_FACTORY_ADDRESS, STABLECOIN_POLICY_REGISTRY_ADDRESS,
-    VALIDATOR_SET_ADDRESS, VAULT_ROUTER_ADDRESS, WORLDWIDE_DAY_ADDRESS,
+    CREDIS_ADDRESS, CREDIS_FACTORY_ADDRESS, GEM_ADDRESS, GEM_FACTORY_ADDRESS, GRATIS_ADDRESS,
+    GRATIS_FACTORY_ADDRESS, INTEX_ADDRESS, INTEX_FACTORY_ADDRESS, METADOSIS_ADDRESS, NOD_ADDRESS,
+    NOD_FACTORY_ADDRESS, ORACLE_ADDRESS, PROMIS_ADDRESS, PROMIS_FACTORY_ADDRESS,
+    STABLECOIN_FACTORY_ADDRESS, STABLECOIN_POLICY_REGISTRY_ADDRESS, VALIDATOR_SET_ADDRESS,
+    VAULT_ROUTER_ADDRESS, WORLDWIDE_DAY_ADDRESS,
 };
 
 use crate::{EventCount, GasComponent, GasLedger, StorageOperationKind, StorageTraceEntry};
@@ -180,7 +179,6 @@ fn module_name(address: Address) -> &'static str {
     match address {
         CREDIS_ADDRESS => "credis",
         CREDIS_FACTORY_ADDRESS => "credis_factory",
-        FIDELITY_ADDRESS => "fidelity",
         GEM_ADDRESS => "gem",
         GEM_FACTORY_ADDRESS => "gem_factory",
         GRATIS_ADDRESS => "gratis",
@@ -191,7 +189,6 @@ fn module_name(address: Address) -> &'static str {
         NOD_ADDRESS => "nod",
         NOD_FACTORY_ADDRESS => "nod_factory",
         ORACLE_ADDRESS => "oracle",
-        ORIGIN_ROUTER_ADDRESS => "origin_router",
         PROMIS_ADDRESS => "promis",
         PROMIS_FACTORY_ADDRESS => "promis_factory",
         STABLECOIN_FACTORY_ADDRESS => "stablecoin_factory",

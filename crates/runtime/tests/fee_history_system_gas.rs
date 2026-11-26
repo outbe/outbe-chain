@@ -337,8 +337,8 @@ async fn rpc_fee_history_uses_visible_system_gas() -> eyre::Result<()> {
         .collect::<Vec<_>>();
     assert_eq!(
         system_transactions.len(),
-        12,
-        "system-only block 1 must include the 12 canonical BeginBlock system transaction envelopes"
+        14,
+        "system-only block 1 must include the 14 canonical BeginBlock system transaction envelopes"
     );
     let visible_system_gas_limit: u64 = system_transactions
         .iter()

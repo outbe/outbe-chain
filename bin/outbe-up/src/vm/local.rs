@@ -1,0 +1,457 @@
+//! Thin CLI wrapper for local single-VM management over the local VMM Unix socket.
+//!
+//! Uses only `outbe-operator-vm`; contains no SSH or `outbe-operator-remote` dependencies.
+
+use std::{
+    net::Ipv4Addr,
+    path::{Path, PathBuf},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
+
+use eyre::{Context, Result};
+use outbe_operator_vm::{
+    dnsmasq::DEFAULT_DHCP_LEASES_FILE,
+    local::{
+        create_local_vm_cancellable, default_state_dir, expand_tilde,
+        logs_local_vm_with_expected_id, remove_local_vm, resolve_vmm_paths,
+        start_local_vm_with_expected_id, status_all_local_vms, status_local_vm_with_expected_id,
+        stop_local_vm_with_expected_id, update_local_vm_cancellable, CreateLocalVmOptions,
+        LocalVmStatusOutput, LocalVmStore, RemoveLocalVmOptions, StopLocalVmOptions,
+        UpdateLocalVmOptions, DEFAULT_CREATE_RECOVERY_GRACE, DEFAULT_LOCAL_DISK_GIB,
+        DEFAULT_LOCAL_FLAVOR, DEFAULT_LOCAL_MEMORY_GIB, DEFAULT_LOCAL_VCPU, DEFAULT_POLL_INTERVAL,
+    },
+    vmm::{LocalUnixVmmTransport, VmmClient},
+};
+use tokio::signal::unix::{signal, SignalKind};
+
+#[derive(Clone, Debug)]
+pub struct LocalConnectionArgs {
+    pub vmm_socket: Option<PathBuf>,
+    pub vmm_home: Option<PathBuf>,
+    pub state_dir: Option<PathBuf>,
+    pub fix_permissions: bool,
+    pub json: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct LocalCreateArgs {
+    pub name: String,
+    pub owner_tag: Option<String>,
+    pub image: PathBuf,
+    pub image_name: Option<String>,
+    pub flavor: Option<String>,
+    pub disk: Option<PathBuf>,
+    pub disk_staging: Option<String>,
+    pub consume_staging: bool,
+    pub vcpu: Option<u32>,
+    pub memory_gib: Option<u32>,
+    pub disk_gib: Option<u32>,
+    pub bridge: String,
+    pub app_compose: Option<PathBuf>,
+    pub ip: Option<Ipv4Addr>,
+    pub no_tee: bool,
+    pub retry_create: bool,
+    pub timeout: Option<u64>,
+    pub conn: LocalConnectionArgs,
+}
+
+#[derive(Clone, Debug)]
+pub struct LocalUpdateArgs {
+    pub name: String,
+    pub expect_vm_id: Option<String>,
+    pub image: PathBuf,
+    pub image_name: Option<String>,
+    pub flavor: Option<String>,
+    pub stop_timeout: u64,
+    pub conn: LocalConnectionArgs,
+}
+
+#[derive(Clone, Debug)]
+pub struct LocalRemoveArgs {
+    pub name: String,
+    pub expect_vm_id: Option<String>,
+    pub force: bool,
+    pub forget_intent: bool,
+    pub timeout: Duration,
+    pub conn: LocalConnectionArgs,
+}
+
+fn open_local_context(
+    conn: &LocalConnectionArgs,
+    cancel: Option<Arc<AtomicBool>>,
+) -> Result<(
+    LocalVmStore,
+    VmmClient<LocalUnixVmmTransport>,
+    PathBuf,
+    PathBuf,
+)> {
+    let (vmm_socket, vmm_home) =
+        resolve_vmm_paths(conn.vmm_socket.as_deref(), conn.vmm_home.as_deref())?;
+    let state_dir = match &conn.state_dir {
+        Some(dir) => expand_tilde(dir)?,
+        None => default_state_dir()?,
+    };
+    let store = LocalVmStore::new(state_dir).with_fix_permissions(conn.fix_permissions);
+    let mut transport = LocalUnixVmmTransport::new(&vmm_socket, &vmm_home);
+    if let Some(flag) = cancel {
+        transport = transport.with_cancel(flag);
+    }
+    let client = VmmClient::new(transport, vmm_socket.display().to_string());
+    Ok((store, client, vmm_socket, vmm_home))
+}
+
+fn spawn_cancel_watcher() -> Result<(Arc<AtomicBool>, tokio::task::JoinHandle<()>)> {
+    let cancel = Arc::new(AtomicBool::new(false));
+    let cancel_signal = Arc::clone(&cancel);
+    let mut sigint = signal(SignalKind::interrupt()).wrap_err("register SIGINT handler")?;
+    let mut sigterm = signal(SignalKind::terminate()).wrap_err("register SIGTERM handler")?;
+    let watcher = tokio::spawn(async move {
+        tokio::select! {
+            _ = sigint.recv() => { cancel_signal.store(true, Ordering::SeqCst); }
+            _ = sigterm.recv() => { cancel_signal.store(true, Ordering::SeqCst); }
+        }
+    });
+    Ok((cancel, watcher))
+}
+
+fn resolve_create_disk(
+    store: &LocalVmStore,
+    disk: Option<PathBuf>,
+    disk_staging: Option<String>,
+    consume_staging: bool,
+) -> Result<(PathBuf, Option<String>, bool)> {
+    match (disk, disk_staging) {
+        (Some(disk), None) => {
+            eyre::ensure!(
+                !consume_staging,
+                "--consume-staging requires --disk-staging"
+            );
+            Ok((expand_tilde(&disk)?, None, false))
+        }
+        (None, Some(staging_name)) => {
+            let expected_path = store.staged_disk_path(&staging_name)?;
+            Ok((expected_path, Some(staging_name), consume_staging))
+        }
+        (Some(_), Some(_)) => Err(eyre::eyre!("cannot combine --disk with --disk-staging")),
+        (None, None) => Err(eyre::eyre!(
+            "either --disk or --disk-staging must be specified"
+        )),
+    }
+}
+
+pub async fn create(args: LocalCreateArgs) -> Result<()> {
+    // Install SIGINT/SIGTERM cancellation covering lock wait, pre-RPC checks, HTTP calls, and
+    // `qemu-img` process-group termination.
+    let (cancel, watcher) = spawn_cancel_watcher()?;
+    let (store, vmm, vmm_socket, vmm_home) =
+        open_local_context(&args.conn, Some(Arc::clone(&cancel)))?;
+    let (disk_source, disk_staging_name, consume_staging) =
+        resolve_create_disk(&store, args.disk, args.disk_staging, args.consume_staging)?;
+    let timeout = args.timeout.map(Duration::from_secs);
+    let recovery_grace = timeout.map_or(DEFAULT_CREATE_RECOVERY_GRACE, |t| {
+        DEFAULT_CREATE_RECOVERY_GRACE.min(t)
+    });
+    let opts = CreateLocalVmOptions {
+        name: args.name,
+        owner_tag: args.owner_tag,
+        image_dir: expand_tilde(&args.image)?,
+        image_name: args.image_name,
+        flavor: args
+            .flavor
+            .unwrap_or_else(|| DEFAULT_LOCAL_FLAVOR.to_owned()),
+        disk_source,
+        disk_staging_name,
+        consume_staging,
+        vcpu: args.vcpu.unwrap_or(DEFAULT_LOCAL_VCPU),
+        memory_gib: args.memory_gib.unwrap_or(DEFAULT_LOCAL_MEMORY_GIB),
+        disk_gib: args.disk_gib.unwrap_or(DEFAULT_LOCAL_DISK_GIB),
+        bridge: args.bridge,
+        app_compose_path: args.app_compose.as_deref().map(expand_tilde).transpose()?,
+        intended_ip: args.ip,
+        no_tee: args.no_tee,
+        vmm_socket,
+        vmm_home,
+        retry_create: args.retry_create,
+        timeout,
+        recovery_grace,
+        poll_interval: DEFAULT_POLL_INTERVAL,
+    };
+
+    let cancel_worker = Arc::clone(&cancel);
+    let result = tokio::task::spawn_blocking(move || {
+        create_local_vm_cancellable(&store, &vmm, &opts, &cancel_worker)
+    })
+    .await
+    .wrap_err("local VM create task panicked")?;
+    watcher.abort();
+    let out = result?;
+
+    if let Some(warning) = &out.warning {
+        eprintln!("{warning}");
+    }
+    if args.conn.json {
+        println!("{}", serde_json::to_string_pretty(&out)?);
+        return Ok(());
+    }
+    let image_state = if out.image_reused {
+        "reused"
+    } else {
+        "published"
+    };
+    println!("Created stopped VM `{}` ({})", out.name, out.vm_id);
+    println!("  image:   {} ({image_state})", out.image_name);
+    println!("  bridge:  {} (mac {})", out.bridge, out.mac);
+    if let Some(ip) = out.intended_ip {
+        println!("  ip:      {ip} (service IP; configured in-guest by vm-boot)");
+    }
+    println!("  state:   {}", out.state_file.display());
+    Ok(())
+}
+
+pub fn start(name: &str, expect_vm_id: Option<&str>, conn: LocalConnectionArgs) -> Result<()> {
+    let (store, vmm, _, _) = open_local_context(&conn, None)?;
+    let out = start_local_vm_with_expected_id(&store, &vmm, name, expect_vm_id)?;
+    if conn.json {
+        println!("{}", serde_json::to_string_pretty(&out)?);
+        return Ok(());
+    }
+    let verb = if out.already_running {
+        "is already running"
+    } else {
+        "Started"
+    };
+    if out.already_running {
+        println!(
+            "VM `{}` ({}) {verb} (status: {})",
+            out.name, out.vm_id, out.vmm_status
+        );
+    } else {
+        println!(
+            "{verb} VM `{}` ({}) (status: {})",
+            out.name, out.vm_id, out.vmm_status
+        );
+    }
+    Ok(())
+}
+
+pub fn stop(
+    name: &str,
+    expect_vm_id: Option<&str>,
+    force: bool,
+    timeout: Duration,
+    conn: LocalConnectionArgs,
+) -> Result<()> {
+    let (store, vmm, _, _) = open_local_context(&conn, None)?;
+    let out = stop_local_vm_with_expected_id(
+        &store,
+        &vmm,
+        name,
+        expect_vm_id,
+        StopLocalVmOptions {
+            force,
+            timeout,
+            poll_interval: DEFAULT_POLL_INTERVAL,
+        },
+    )?;
+    if let Some(warning) = &out.warning {
+        eprintln!("{warning}");
+    }
+    if conn.json {
+        println!("{}", serde_json::to_string_pretty(&out)?);
+        return Ok(());
+    }
+    let summary = match (out.already_stopped, out.cleared_started_flag, out.forced) {
+        (true, _, _) => format!(
+            "VM `{}` ({}) is already stopped (status: {})",
+            out.name, out.vm_id, out.vmm_status
+        ),
+        (false, true, _) => format!(
+            "Sent StopVm to exited VM `{}` ({}) to clear dstack started/auto-restart flag (status: {})",
+            out.name, out.vm_id, out.vmm_status
+        ),
+        (false, false, true) => format!(
+            "Force-stopped VM `{}` ({}) (status: {})",
+            out.name, out.vm_id, out.vmm_status
+        ),
+        (false, false, false) => format!(
+            "Gracefully stopped VM `{}` ({}) (status: {})",
+            out.name, out.vm_id, out.vmm_status
+        ),
+    };
+    println!("{summary}");
+    Ok(())
+}
+
+pub async fn update(args: LocalUpdateArgs) -> Result<()> {
+    let (cancel, watcher) = spawn_cancel_watcher()?;
+    let (store, vmm, _, vmm_home) = open_local_context(&args.conn, Some(Arc::clone(&cancel)))?;
+    let opts = UpdateLocalVmOptions {
+        name: args.name,
+        expect_vm_id: args.expect_vm_id,
+        image: expand_tilde(&args.image)?,
+        image_name: args.image_name,
+        flavor: args
+            .flavor
+            .unwrap_or_else(|| DEFAULT_LOCAL_FLAVOR.to_owned()),
+        vmm_home,
+        stop_timeout: Duration::from_secs(args.stop_timeout),
+        poll_interval: DEFAULT_POLL_INTERVAL,
+    };
+
+    let cancel_worker = Arc::clone(&cancel);
+    let result = tokio::task::spawn_blocking(move || {
+        update_local_vm_cancellable(&store, &vmm, &opts, Some(&cancel_worker))
+    })
+    .await
+    .wrap_err("local VM update task panicked")?;
+    watcher.abort();
+    let out = result?;
+
+    if args.conn.json {
+        println!("{}", serde_json::to_string_pretty(&out)?);
+        return Ok(());
+    }
+    if out.already_updated {
+        println!(
+            "VM `{}` ({}) is already running on image `{}` ({})",
+            out.name, out.vm_id, out.image_name, out.os_image_hash
+        );
+    } else {
+        println!(
+            "Updated VM `{}` ({}) image `{}` -> `{}` (status: {})",
+            out.name, out.vm_id, out.previous_image_name, out.image_name, out.vmm_status
+        );
+    }
+    Ok(())
+}
+
+pub fn status(
+    name: Option<&str>,
+    expect_vm_id: Option<&str>,
+    dhcp_leases: Option<&Path>,
+    conn: LocalConnectionArgs,
+) -> Result<()> {
+    let (store, vmm, _, _) = open_local_context(&conn, None)?;
+    let leases_path = match dhcp_leases {
+        Some(path) => expand_tilde(path)?,
+        None => PathBuf::from(DEFAULT_DHCP_LEASES_FILE),
+    };
+    let Some(vm_name) = name else {
+        let out = status_all_local_vms(&store, &vmm, &leases_path)?;
+        if conn.json {
+            println!("{}", serde_json::to_string_pretty(&out)?);
+        } else if out.is_empty() {
+            println!("No local VMs recorded in {}", store.vms_dir().display());
+        } else {
+            print_status_table(&out);
+        }
+        return Ok(());
+    };
+    let out = status_local_vm_with_expected_id(&store, &vmm, vm_name, expect_vm_id, &leases_path)?;
+    if conn.json {
+        println!("{}", serde_json::to_string_pretty(&out)?);
+    } else {
+        print_status_table(&[out]);
+    }
+    Ok(())
+}
+
+pub fn logs(
+    name: &str,
+    expect_vm_id: Option<&str>,
+    lines: usize,
+    conn: LocalConnectionArgs,
+) -> Result<()> {
+    let (store, vmm, _, _) = open_local_context(&conn, None)?;
+    let out = logs_local_vm_with_expected_id(&store, &vmm, name, expect_vm_id, lines)?;
+    if conn.json {
+        println!("{}", serde_json::to_string_pretty(&out)?);
+        return Ok(());
+    }
+    print!("{}", out.log);
+    if !out.log.is_empty() && !out.log.ends_with('\n') {
+        println!();
+    }
+    Ok(())
+}
+
+pub fn remove(args: LocalRemoveArgs) -> Result<()> {
+    let (store, vmm, _, _) = open_local_context(&args.conn, None)?;
+    let out = remove_local_vm(
+        &store,
+        &vmm,
+        &args.name,
+        RemoveLocalVmOptions {
+            force: args.force,
+            forget_intent: args.forget_intent,
+            expect_vm_id: args.expect_vm_id,
+            timeout: args.timeout,
+            recovery_grace: DEFAULT_CREATE_RECOVERY_GRACE.min(args.timeout),
+            poll_interval: DEFAULT_POLL_INTERVAL,
+        },
+    )?;
+    if let Some(warning) = &out.warning {
+        eprintln!("{warning}");
+    }
+    if args.conn.json {
+        println!("{}", serde_json::to_string_pretty(&out)?);
+        return Ok(());
+    }
+    if out.forgot_intent {
+        println!(
+            "Discarded unresolved Creating intent for `{}` and deleted {}",
+            out.name,
+            out.state_file.display()
+        );
+    } else {
+        println!(
+            "Removed VM `{}` ({}) and deleted {} (guest images left intact)",
+            out.name,
+            out.vm_id,
+            out.state_file.display()
+        );
+    }
+    Ok(())
+}
+
+fn non_empty_or_dash(value: &str) -> &str {
+    if value.is_empty() {
+        "-"
+    } else {
+        value
+    }
+}
+
+fn print_status_table(rows: &[LocalVmStatusOutput]) {
+    println!(
+        "{:<20} {:<10} {:<12} {:<18} {:<16} {:<16} IMAGE",
+        "NAME", "STATUS", "UPTIME", "MAC", "SERVICE_IP", "DHCP_IP"
+    );
+    for row in rows {
+        let uptime = non_empty_or_dash(&row.uptime);
+        let mac = non_empty_or_dash(&row.mac);
+        let service_ip = row
+            .service_ip
+            .or(row.intended_ip)
+            .map(|addr| addr.to_string())
+            .unwrap_or_else(|| "-".to_owned());
+        let dhcp_ip = row
+            .dhcp_ip
+            .map(|addr| addr.to_string())
+            .unwrap_or_else(|| "unknown".to_owned());
+        println!(
+            "{:<20} {:<10} {:<12} {:<18} {:<16} {:<16} {}",
+            row.name, row.vmm_status, uptime, mac, service_ip, dhcp_ip, row.image_name
+        );
+        if let Some(boot_err) = &row.boot_error {
+            println!("  boot_error:  {boot_err}");
+        }
+        if let Some(err) = &row.error {
+            println!("  error:       {err}");
+        }
+    }
+}

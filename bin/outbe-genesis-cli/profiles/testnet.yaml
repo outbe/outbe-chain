@@ -121,6 +121,13 @@ validator_set:
 hyperlane_controller:
   admin: "0x2Af7d3C5C3f82Fee4eA037A674f55fa2eD011c05"
 
+# IntexFactory: the target chains of Intex. `own` is this network; a mode is series or auctions.
+intex:
+  target_chains:
+    - { chain_id: 97, mode: auctions }
+    - { chain_id: 11155111, mode: auctions }
+    - { chain_id: own, mode: auctions }
+
 # CodeRegistry: capacity of the Radicle repository list. -1 means unlimited.
 code_registry:
   max_repositories: -1

@@ -124,8 +124,8 @@ fn nominal_epoch_boundary_without_certified_outcome_keeps_activated_epoch() {
         run_begin_block_without_certified_boundary(&ctx);
 
         // (3) The scheduled height is not activation authority. Until the
-        // receipt-visible BoundaryOutcome executes, every consumer - including
-        // native Lysis - must continue to observe the old epoch and its snapshot.
+        // receipt-visible BoundaryOutcome executes, every consumer must continue
+        // to observe the old epoch and its snapshot.
         let vs_after = ValidatorSet::new(storage);
         let epoch_after = vs_after.epoch_snapshot().unwrap();
         assert_eq!(
@@ -243,6 +243,8 @@ fn runtime_order_matches_protocol_contract_and_lower_layer_order() {
             "oracle_slash",
             "hyperlane_slash",
             "cycle_tick",
+            "desis_outbox",
+            "intexfactory_outbox",
             "nod_factory",
             "gem_factory",
             "intex_factory",
@@ -348,7 +350,10 @@ fn runtime_plan_and_fsm_preserve_static_indices_across_filtering() {
                     .collect::<Vec<_>>(),
                 expected_consensus
             );
-            assert_eq!(plan.begin_block_steps.len(), if block == 0 { 0 } else { 9 });
+            assert_eq!(
+                plan.begin_block_steps.len(),
+                if block == 0 { 0 } else { 11 }
+            );
             assert_eq!(plan.end_block_steps.len(), if block >= 2 { 5 } else { 0 });
             assert_eq!(plan.allows_user_txs, block >= 2);
             assert_fsm_reaches_completed(plan);
@@ -431,6 +436,8 @@ fn block_order_preserves_hard_criticality_and_pins_calibrated_soft_step_gas_limi
             ("oracle_slash", false, 701_035_000),
             ("hyperlane_slash", false, 1_362_315_000),
             ("cycle_tick", true, hard),
+            ("desis_outbox", false, 200_000_000),
+            ("intexfactory_outbox", false, 200_000_000),
             ("nod_factory", false, 500_000_000),
             ("gem_factory", false, 500_000_000),
             ("intex_factory", false, 500_000_000),

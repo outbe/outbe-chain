@@ -1,7 +1,7 @@
 //! Nod: the terms, profile and data of a Nod. Bodies, groups, the call bins and the
 //! expiry queue live here, with the read-time state and settlement cost.
 //!
-//! NodFactory applies every rule and runs the call and forfeit sweeps through [`api`].
+//! NodFactory applies every rule and runs the call and close sweeps through [`api`].
 //! The precompile surface is the Nod NFT and its views.
 
 #[cfg(all(feature = "test-enclave", feature = "production-enclave"))]
@@ -27,7 +27,6 @@ pub mod nod_encryption;
 pub mod nod_host;
 pub mod offer;
 pub mod offers;
-pub mod openings;
 pub mod precompile;
 pub mod pricing;
 pub mod runtime;

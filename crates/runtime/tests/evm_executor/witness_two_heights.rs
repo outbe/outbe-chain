@@ -1,8 +1,7 @@
 //! Two executor blocks. H2 runs on H1's merged post-state.
 //!
-//! Each height sends four signed user transactions through `OutbeBlockExecutor`:
-//! Gratis `mineCoen`, Promis `mineCoen`, Fidelity `getFidelityIndex`, and
-//! NOD `quoteSettlement`. The tape must carry a tag from every confidential
+//! Each height sends three signed user transactions through `OutbeBlockExecutor`:
+//! Gratis `mineCoen`, Promis `mineCoen` and NOD `quoteSettlement`. The tape must carry a tag from every confidential
 //! domain, indexed on those user transactions.
 
 use super::*;
@@ -11,30 +10,29 @@ use alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE;
 use alloy_primitives::{Bytes, TxKind, B256, U256};
 use alloy_sol_types::SolCall;
 use outbe_evm::config::OutbeEvmConfig;
-use outbe_fidelity::precompile::IFidelity;
 use outbe_gratisfactory::precompile::IGratisFactory;
 use outbe_nodfactory::precompile::INodFactory;
 use outbe_primitives::reshare_artifact::decode_outbe_block_artifacts;
 use outbe_promisfactory::precompile::IPromisFactory;
 use outbe_system_common::addresses::{
-    EMISSION_ADDRESS, FIDELITY_ADDRESS, GRATIS_ADDRESS, GRATIS_FACTORY_ADDRESS,
-    NOD_FACTORY_ADDRESS, PROMIS_ADDRESS, PROMIS_FACTORY_ADDRESS, REWARDS_ADDRESS,
+    EMISSION_ADDRESS, GRATIS_ADDRESS, GRATIS_FACTORY_ADDRESS, NOD_FACTORY_ADDRESS, PROMIS_ADDRESS,
+    PROMIS_FACTORY_ADDRESS, REWARDS_ADDRESS,
 };
 use outbe_tee::witness::{decode_witness_payload_v1, EnclaveWitnessEntryV1};
 use reth_ethereum::TransactionSigned;
 use reth_primitives_traits::Recovered;
 
-const USER_TXS: usize = 4;
+const USER_TXS: usize = 3;
 const MINT_MINOR: u64 = 1_000_000;
 const BURN_MINOR: u64 = 1;
-const DOMAIN_TAGS: [u8; 5] = [1, 2, 5, 10, 21];
+const DOMAIN_TAGS: [u8; 4] = [1, 2, 10, 21];
 
 #[test]
 fn two_blocks_record_every_domain_across_three_witness_modes() {
     use super::fixtures::{
         begin_system_txs_for_test, dummy_pubkey, post_state_root,
         state_with_active_validators_seeded, test_chain_spec, test_evm_env, test_evm_signer,
-        BeginBlockFixture, BootstrapFixture, CHAIN_ID, TEST_BLOCK_TIMESTAMP_BASE,
+        BeginBlockFixture, BootstrapFixture, CHAIN_ID,
     };
 
     uninstall_domain_standins();
@@ -71,7 +69,6 @@ fn two_blocks_record_every_domain_across_three_witness_modes() {
         outbe_core_common::confidential_tee::PROMIS.state_info(),
         user_sender,
     );
-    let fidelity_sig = fidelity_signature(&user_signer, user_sender, chain);
 
     let signer = test_evm_signer();
     let proposer = signer.address();
@@ -118,17 +115,6 @@ fn two_blocks_record_every_domain_across_three_witness_modes() {
             ),
             user_tx(
                 nonce_base + 2,
-                FIDELITY_ADDRESS,
-                IFidelity::getFidelityIndexCall {
-                    account: user_sender,
-                    expiry: TEST_BLOCK_TIMESTAMP_BASE + 100_000,
-                    signature: Bytes::copy_from_slice(&fidelity_sig),
-                }
-                .abi_encode()
-                .into(),
-            ),
-            user_tx(
-                nonce_base + 3,
                 NOD_FACTORY_ADDRESS,
                 INodFactory::quoteSettlementCall {
                     nodId: nod_id,
@@ -181,7 +167,6 @@ fn two_blocks_record_every_domain_across_three_witness_modes() {
             outbe_system_common::addresses::VAULT_ROUTER_ADDRESS,
             GRATIS_ADDRESS,
             PROMIS_ADDRESS,
-            FIDELITY_ADDRESS,
             EMISSION_ADDRESS,
         ] {
             state.insert_account_info(
@@ -321,7 +306,7 @@ fn two_blocks_record_every_domain_across_three_witness_modes() {
             h1_extra,
             parent_hash,
         );
-        assert_eq!(nonce_h1, USER_TXS as u64, "H1 must consume four nonces");
+        assert_eq!(nonce_h1, USER_TXS as u64, "H1 must consume three nonces");
         let (_state, h2, nonce_h2) = run_height(
             state,
             3,
@@ -412,7 +397,6 @@ fn assert_domain_witness(extra: &Bytes, begin_len: usize, block_number: u64) {
 
 fn uninstall_domain_standins() {
     outbe_gratis::enclave_client::test_enclave::uninstall();
-    outbe_fidelity::enclave_client::test_enclave::uninstall();
     outbe_nod::test_support::uninstall();
 }
 
@@ -539,20 +523,6 @@ fn seed_minted_balances(
         },
     )
     .expect("seed promis");
-}
-
-fn fidelity_signature(
-    signer: &outbe_primitives::signer::OutbeEvmSigner,
-    account: Address,
-    chain_id: B256,
-) -> [u8; 65] {
-    let message = outbe_fidelity::fidelity_query_auth_message(
-        chain_id,
-        account,
-        super::fixtures::TEST_BLOCK_TIMESTAMP_BASE + 100_000,
-    );
-    let hash = outbe_core_common::confidential_tee::eip191_hash(&message);
-    signer.sign_hash(&hash).expect("fidelity query signature")
 }
 
 fn resident_context(seed: u8) -> std::sync::Arc<outbe_tee::in_process::InProcessTeeContext> {

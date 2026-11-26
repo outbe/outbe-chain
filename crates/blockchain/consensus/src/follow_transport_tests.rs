@@ -571,9 +571,61 @@ async fn registry_rpc_and_block_hash_preserve_wire_and_schedule_validation() {
         [3, 4]
     );
     assert!(matches!(
-        rpc.tee_renewal_schedule_v1().await,
+        rpc.tee_renewal_schedule_v1(B256::repeat_byte(0x01)).await,
         Err(crate::errors::FollowTransportError::InvalidRenewalSchedule(
             _
         ))
     ));
+}
+
+#[tokio::test]
+async fn registry_rpc_serializes_exact_checkpoint_hash_param() {
+    use alloy_primitives::B256;
+    use outbe_tee::registry_view::RegistryRpc as _;
+
+    let requested_hash = B256::repeat_byte(0x42);
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind scripted upstream");
+    let url = format!("http://{}", listener.local_addr().expect("local addr"));
+    let seen_params: Arc<Mutex<Vec<serde_json::Value>>> = Arc::default();
+    let captured = Arc::clone(&seen_params);
+    std::thread::spawn(move || {
+        if let Ok((stream, _)) = listener.accept() {
+            let mut writer = stream.try_clone().expect("clone stream");
+            let mut reader = BufReader::new(stream);
+            if let Some(request) = read_request(&mut reader) {
+                captured.lock().unwrap().push(request["params"].clone());
+                let id = request["id"].clone();
+                let result = serde_json::json!({
+                    "finalizedHeight": 120,
+                    "finalizedHash": requested_hash,
+                    "finalizedTimestamp": 1000,
+                    "epochNumber": 2,
+                    "epochStartHeight": 100,
+                    "epochLengthBlocks": 100,
+                    "nextFreezeHeight": 180,
+                    "plannedActivationHeight": 200,
+                    "dkgPrepareWindowBlocks": 20,
+                    "minimumBlockTimeMillis": 2000,
+                });
+                let response = serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": result,
+                })
+                .to_string();
+                let _ = write_response(&mut writer, &response);
+            }
+        }
+    });
+
+    let rpc = client(&url, Duration::from_secs(2));
+    let schedule = rpc
+        .tee_renewal_schedule_v1(requested_hash)
+        .await
+        .expect("schedule request with explicit hash");
+    assert_eq!(schedule.finalized_hash, requested_hash);
+    assert_eq!(
+        *seen_params.lock().unwrap(),
+        vec![serde_json::json!([requested_hash])]
+    );
 }

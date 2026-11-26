@@ -2,7 +2,6 @@
 pragma solidity 0.8.30;
 
 import {IIntexAuction} from "../../target/interfaces/IIntexAuction.sol";
-import {IOriginRouter} from "../../origin/interfaces/IOriginRouter.sol";
 
 /// @title BridgeMsgCodec
 /// @author Outbe
@@ -46,7 +45,7 @@ library BridgeMsgCodec {
     /// @dev A series encodes to 416 bytes, so the 10_000-byte send cap fits 23. This keeps headroom.
     uint16 internal constant MAX_SERIES_PER_ISSUANCE = 16;
 
-    /// @notice Series one MARK_CALLED message may carry. A batch is one day's series called
+    /// @notice Series one INTEX_SERIES_CALL_NOTICE message may carry. A batch is one day's series called
     ///         together.
     uint16 internal constant MAX_SERIES_PER_CALL_NOTICE = 8;
 
@@ -71,7 +70,7 @@ library BridgeMsgCodec {
     uint16 internal constant MIN_LEN_INTEX_AUCTION_RESULT = 34;
     // INTEX_AUCTION_CANCEL: [ver(1)][type(1)][emissionDay(4)][reason(1)]
     uint16 internal constant MIN_LEN_INTEX_AUCTION_CANCEL = 7;
-    // MARK_CALLED: header + abi.encode(emissionDay, calledAt, seriesIds). One series is 5 words.
+    // INTEX_SERIES_CALL_NOTICE: header + abi.encode(emissionDay, calledAt, seriesIds). One series is 5 words.
     uint16 internal constant MIN_LEN_INTEX_SERIES_CALL_NOTICE = HEADER_LEN + 160;
     // BIDS_TOTALS: [ver(1)][type(1)][emissionDay(4)][srcChainId(4)][totalPages(2)][totalBids(4)]
     uint16 internal constant MIN_LEN_BIDS_TOTALS = 16;
@@ -279,7 +278,7 @@ library BridgeMsgCodec {
         uint32 _issuanceEnd,
         uint128 _promisLoadMinor,
         uint32 _minBidRate,
-        IOriginRouter.ReferenceCurrencyPrice[] memory _prices,
+        IIntexAuction.ReferenceCurrencyPrice[] memory _prices,
         uint32 _callNoticePeriod,
         uint32 _callWindow,
         uint32 _callThreshold,
@@ -539,13 +538,13 @@ library BridgeMsgCodec {
         );
     }
 
-    /// @notice Encodes MARK_CALLED message for one day's batch of series.
+    /// @notice Encodes INTEX_SERIES_CALL_NOTICE message for one day's batch of series.
     /// @dev Layout: [bodyVersion(1)][msgType(1)] ++ abi.encode(emissionDay, calledAt, seriesIds).
     ///      The origin's stamp travels so every chain derives the same deadline.
     /// @param _emissionDay The emission day the series were derived from.
     /// @param _calledAt Unix time the origin marked the series Called.
     /// @param _seriesIds The auction series identifiers, 1..`MAX_SERIES_PER_CALL_NOTICE` of them.
-    /// @return The wire-encoded MARK_CALLED message.
+    /// @return The wire-encoded INTEX_SERIES_CALL_NOTICE message.
     function encodeIntexSeriesCallNotice(uint32 _emissionDay, uint64 _calledAt, bytes14[] memory _seriesIds)
         internal
         pure
@@ -824,10 +823,10 @@ library BridgeMsgCodec {
         }
     }
 
-    /// @notice Decodes MARK_CALLED message.
+    /// @notice Decodes INTEX_SERIES_CALL_NOTICE message.
     /// @dev Reverts `InvalidPayloadLength` below the one-series minimum, then
     ///      `UnsupportedBodyVersion`, then the batch bounds, re-checked inbound.
-    /// @param _msg The wire-encoded MARK_CALLED message.
+    /// @param _msg The wire-encoded INTEX_SERIES_CALL_NOTICE message.
     /// @return emissionDay The emission day the series were derived from.
     /// @return calledAt Unix time the origin marked the series Called.
     /// @return seriesIds The auction series identifiers.

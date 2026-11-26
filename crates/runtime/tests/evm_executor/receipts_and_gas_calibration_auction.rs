@@ -8,11 +8,6 @@ fn calibration_populated_auction_handlers() {
     assert_eq!(samples.len(), 7);
     assert!(logs.iter().any(|log| log.data.topics().first()
         == Some(&keccak256("DesisCompleted(uint32,uint32,uint64,uint64)"))));
-    // The Cycle does not push parked router work. Any address pushes it.
-    assert!(!logs.iter().any(
-        |log| outbe_cycle::ICycle::CycleTaskExecuted::decode_log(log)
-            .is_ok_and(|event| event.data.id == 8)
-    ));
 }
 
 #[test]
@@ -27,12 +22,7 @@ fn oversized_clearing_defers_atomically_and_deterministically_without_blocking_u
 }
 
 fn populated_auction(chain_count: u32) -> Calibration {
-    use router_abi::IOriginRouter;
     let targets: Vec<u32> = (1..=chain_count).collect();
-    let router = returning_contract(vec![(
-        IOriginRouter::targetsOfCall::SELECTOR,
-        IOriginRouter::targetsOfCall::abi_encode_returns(&targets),
-    )]);
     let proposer = test_evm_signer().address();
     let timestamp = GENESIS + SECONDS_PER_DAY + 60;
     run_prefix(
@@ -47,6 +37,7 @@ fn populated_auction(chain_count: u32) -> Calibration {
         |storage| {
             seed_cycle_tick_genesis(storage.clone(), GENESIS, proposer).unwrap();
             let day = EmissionDate::new(20240101);
+            seed_intex_targets(&storage, &targets, &[day, EmissionDate::new(20240102)]);
             let auction = outbe_desis::DesisContract::new(storage.clone());
             auction
                 .auction_stage
@@ -108,10 +99,7 @@ fn populated_auction(chain_count: u32) -> Calibration {
                     .unwrap();
             }
         },
-        vec![
-            (outbe_core_common::addresses::ORIGIN_ROUTER_ADDRESS, router),
-            (RELAY, Bytecode::new_legacy(bridge_work(false).into())),
-        ],
+        vec![(RELAY, Bytecode::new_legacy(bridge_work(false).into()))],
         None,
         chain_count > 16,
     )
@@ -119,13 +107,8 @@ fn populated_auction(chain_count: u32) -> Calibration {
 
 #[test]
 fn calibration_live_auction_start() {
-    use router_abi::IOriginRouter;
     let proposer = test_evm_signer().address();
     let timestamp = GENESIS + SECONDS_PER_DAY + 60;
-    let router = returning_contract(vec![(
-        IOriginRouter::targetsOfCall::SELECTOR,
-        IOriginRouter::targetsOfCall::abi_encode_returns(&(1..=16u32).collect::<Vec<_>>()),
-    )]);
     let (_, _, logs, _) = run_prefix(
         (
             "live priced auction start16 chains",
@@ -134,6 +117,7 @@ fn calibration_live_auction_start() {
         ),
         |storage| {
             seed_cycle_tick_genesis(storage.clone(), GENESIS, proposer).unwrap();
+            seed_intex_targets(&storage, &(1..=16u32).collect::<Vec<_>>(), &[]);
             seed_previous_day_vwap(&storage, timestamp, U256::from(1_000_000));
             seed_previous_day_vwap(&storage, GENESIS, U256::from(1_000_000));
             outbe_oracle::schema::OracleContract::new(storage.clone())
@@ -165,10 +149,7 @@ fn calibration_live_auction_start() {
                     .unwrap();
             }
         },
-        vec![
-            (outbe_core_common::addresses::ORIGIN_ROUTER_ADDRESS, router),
-            (RELAY, Bytecode::new_legacy(bridge_work(false).into())),
-        ],
+        vec![(RELAY, Bytecode::new_legacy(bridge_work(false).into()))],
         None,
         false,
     );
@@ -262,14 +243,9 @@ fn max_targets() -> Vec<u32> {
 /// One `advance_auctions` run at 00:00 over `steps`, with the most target chains Desis takes.
 /// Returns the gross gas of the run and the logs of the block.
 fn due_auctions(steps: &[DueStep]) -> (u64, Vec<Log>) {
-    use router_abi::IOriginRouter;
     let proposer = test_evm_signer().address();
     let midnight = GENESIS + SECONDS_PER_DAY;
     let timestamp = midnight + 60;
-    let router = returning_contract(vec![(
-        IOriginRouter::targetsOfCall::SELECTOR,
-        IOriginRouter::targetsOfCall::abi_encode_returns(&max_targets()),
-    )]);
     let (_, samples, logs, _) = run_prefix_checked(
         (
             &format!("due auctions {steps:?} {} chains", max_targets().len()),
@@ -278,6 +254,12 @@ fn due_auctions(steps: &[DueStep]) -> (u64, Vec<Log>) {
         ),
         |storage| {
             seed_cycle_tick_genesis(storage.clone(), GENESIS, proposer).unwrap();
+            let days: Vec<EmissionDate> = steps
+                .iter()
+                .filter(|step| !matches!(step, DueStep::Start))
+                .map(|step| step.day())
+                .collect();
+            seed_intex_targets(&storage, &max_targets(), &days);
             seed_previous_day_vwap(&storage, timestamp, U256::from(1_000_000));
             seed_previous_day_vwap(&storage, GENESIS, U256::from(1_000_000));
             outbe_oracle::schema::OracleContract::new(storage.clone())
@@ -313,10 +295,7 @@ fn due_auctions(steps: &[DueStep]) -> (u64, Vec<Log>) {
                     .unwrap();
             }
         },
-        vec![
-            (outbe_core_common::addresses::ORIGIN_ROUTER_ADDRESS, router),
-            (RELAY, Bytecode::new_legacy(bridge_work(false).into())),
-        ],
+        vec![(RELAY, Bytecode::new_legacy(bridge_work(false).into()))],
         None,
         (false, |state: &mut CalibrationState, _: &[Log]| {
             let read_ctx = BlockContext {
@@ -341,12 +320,25 @@ fn due_auctions(steps: &[DueStep]) -> (u64, Vec<Log>) {
                         "{step:?} advances in the same run"
                     );
                 }
+                if steps.iter().any(|step| matches!(step, DueStep::RevealEnd)) {
+                    let outbox = auction.outbox();
+                    let collecting = max_targets()
+                        .into_iter()
+                        .flat_map(|chain| outbox.messages(chain).unwrap())
+                        .filter(|message| {
+                            message.label.msg_type
+                                == outbe_intexfactory::transport::wire::MSG_INTEX_AUCTION_CLEARING_START
+                        })
+                        .count();
+                    assert_eq!(collecting, outbe_desis::constants::MAX_TARGET_CHAINS);
+                }
             });
         }),
     );
-    assert!(!logs
-        .iter()
-        .any(|log| outbe_cycle::ICycle::CycleTaskOverBudget::decode_log(log).is_ok()));
+    assert!(cycle_task_completed(
+        &logs,
+        outbe_cycle::tasks::TaskId::AdvanceAuctions
+    ));
     let gross = samples
         .iter()
         .find(|(id, _)| *id == outbe_cycle::tasks::TaskId::AdvanceAuctions.as_u32())
@@ -383,16 +375,6 @@ fn calibration_four_due_auctions_at_midnight() {
         })
         .count();
     assert_eq!(created, 1, "START goes out in the run of the brief");
-    let collecting = router_abi::IOriginRouter::sendIntexAuctionClearingStartCall::SELECTOR;
-    assert_eq!(
-        logs.iter()
-            .filter(
-                |log| log.address == outbe_core_common::addresses::ORIGIN_ROUTER_ADDRESS
-                    && log.data.data.starts_with(&collecting)
-            )
-            .count(),
-        outbe_desis::constants::MAX_TARGET_CHAINS
-    );
 }
 
 /// Intake uses the real bridge-facing native entry points before exporting the
@@ -454,13 +436,8 @@ fn seed_accepted_auction(storage: StorageHandle<'_>, timestamp: u64, batches: u1
 
 #[test]
 fn accepted_1088_bid_auction_completes_before_incremental_cycle_cleanup() {
-    use router_abi::IOriginRouter;
     let proposer = test_evm_signer().address();
     let timestamp = GENESIS + SECONDS_PER_DAY + 60;
-    let router = returning_contract(vec![(
-        IOriginRouter::targetsOfCall::SELECTOR,
-        IOriginRouter::targetsOfCall::abi_encode_returns(&vec![1u32]),
-    )]);
     let (_, samples, logs, _) = run_prefix_checked(
         (
             "accepted1088 valid bids/1chain + incremental GC",
@@ -468,10 +445,7 @@ fn accepted_1088_bid_auction_completes_before_incremental_cycle_cleanup() {
             (1, timestamp),
         ),
         |storage| seed_accepted_auction(storage, timestamp, 17),
-        vec![
-            (outbe_core_common::addresses::ORIGIN_ROUTER_ADDRESS, router),
-            (RELAY, Bytecode::new_legacy(bridge_work(false).into())),
-        ],
+        vec![(RELAY, Bytecode::new_legacy(bridge_work(false).into()))],
         None,
         (false, |state, logs| {
             verify_accepted_auction_cleanup(
@@ -482,9 +456,10 @@ fn accepted_1088_bid_auction_completes_before_incremental_cycle_cleanup() {
             )
         }),
     );
-    assert!(!logs
-        .iter()
-        .any(|log| outbe_cycle::ICycle::CycleTaskOverBudget::decode_log(log).is_ok()));
+    assert!(cycle_task_completed(
+        &logs,
+        outbe_cycle::tasks::TaskId::CompleteAuctions
+    ));
     assert!(logs.iter().any(|log| {
         outbe_desis::precompile::IDesis::DesisCompleted::decode_log(log)
             .is_ok_and(|event| event.data.quantity == 3 && event.data.totalDemand == 1088)
@@ -516,16 +491,13 @@ fn accepted_1088_bid_auction_completes_before_incremental_cycle_cleanup() {
 }
 
 #[test]
-fn accepted_bid_deadlines_retire_with_reverting_router_within_advance_budget() {
+fn accepted_bid_deadlines_retire_within_advance_budget() {
     let proposer = test_evm_signer().address();
     let timestamp = GENESIS + SECONDS_PER_DAY + 60;
     for batches in [1, 17] {
         let (_, samples, logs, _) = run_prefix_checked(
             (
-                &format!(
-                    "deadline accepted{} bids reverting router",
-                    u32::from(batches) * 64
-                ),
+                &format!("deadline accepted{} bids", u32::from(batches) * 64),
                 &[(proposer, dummy_pubkey(0xa2))],
                 (1, timestamp),
             ),
@@ -541,10 +513,7 @@ fn accepted_bid_deadlines_retire_with_reverting_router_within_advance_budget() {
                 auction.sched_active_at.write(&0, day.value()).unwrap();
                 auction.sched_active_slot.write(&day, 1).unwrap();
             },
-            vec![(
-                outbe_core_common::addresses::ORIGIN_ROUTER_ADDRESS,
-                Bytecode::new_legacy(vec![0x60, 0, 0x60, 0, 0xfd].into()),
-            )],
+            vec![],
             None,
             (false, |state, logs| {
                 verify_accepted_auction_cleanup(
@@ -577,9 +546,10 @@ fn accepted_bid_deadlines_retire_with_reverting_router_within_advance_budget() {
                 .count(),
             1
         );
-        assert!(!logs
-            .iter()
-            .any(|log| outbe_cycle::ICycle::CycleTaskOverBudget::decode_log(log).is_ok()));
+        assert!(cycle_task_completed(
+            &logs,
+            outbe_cycle::tasks::TaskId::AdvanceAuctions
+        ));
         let cost = samples.iter().find(|(id, _)| *id == 2).unwrap().1;
         let bound =
             outbe_desis::constants::ADVANCE_DAY_BASE_GAS + outbe_desis::constants::ADVANCE_FAIL_GAS;

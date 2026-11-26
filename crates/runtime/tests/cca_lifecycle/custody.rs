@@ -116,7 +116,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
         assert_eq!(allocation.total_excess, U256::ZERO);
         assert_eq!(
             AgentRewardContract::new(s.clone())
-                .get_pool_claimable_reward(RewardPool::Cca, CCA)
+                .get_agent_reward(RewardPool::Cca, CCA)
                 .unwrap(),
             U256::ZERO
         );
@@ -139,7 +139,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
     with_storage(&mut db, |s| {
         assert_eq!(
             AgentRewardContract::new(s)
-                .get_pool_claimable_reward(RewardPool::Cca, CCA)
+                .get_agent_reward(RewardPool::Cca, CCA)
                 .unwrap(),
             U256::from(1000)
         )
@@ -174,7 +174,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
         assert!(api::credis_issued(&s, CCA, 20231115, U256::ONE).is_err());
     });
     let claim = |amount| {
-        IAgentReward::claimRewardCall {
+        IAgentReward::redeemAgentRewardCall {
             pool: 2,
             promisLoadMinor: amount,
             issuanceCurrency: 840,
@@ -189,7 +189,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
         seed_hour_vwap(&storage, U256::from(9_000_000))
     });
     for amount in [U256::ZERO, reward + U256::ONE, U256::ONE] {
-        assert!(claim_reward(&mut db, claim(amount), NOW).is_err());
+        assert!(redeem_agent_reward(&mut db, claim(amount), NOW).is_err());
         assert_eq!(snapshot(&mut db), before);
     }
     // Retry a day later against the window of that hour, with a price distinct from spot.
@@ -208,7 +208,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
         if target == AGENT_REWARD_ADDRESS {
             // The readers route is the live AgentReward entry; an unknown selector is
             // refused there as well.
-            assert!(claim_reward(&mut db, data, claim_time).is_err());
+            assert!(redeem_agent_reward(&mut db, data, claim_time).is_err());
         } else {
             let removed = tx_to(&mut db, target, U256::ZERO, data, claim_time);
             assert!(!removed.is_success());
@@ -225,7 +225,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
             .unwrap();
     });
     let before_failure = snapshot(&mut db);
-    assert!(claim_reward(&mut db, claim(U256::ZERO), claim_time).is_err());
+    assert!(redeem_agent_reward(&mut db, claim(U256::ZERO), claim_time).is_err());
     assert_eq!(snapshot(&mut db), before_failure);
     with_storage(&mut db, |storage| {
         outbe_gemfactory::schema::GemFactoryContract::new(storage)
@@ -241,17 +241,17 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
     });
     for (block, (load, requested)) in (1..).zip([(100, U256::from(100)), (220, U256::ZERO)]) {
         let (output, logs) =
-            claim_reward_in_block(&mut db, claim(requested), claim_time, block).unwrap();
-        let gem_id = IAgentReward::claimRewardCall::abi_decode_returns(&output).unwrap();
+            redeem_agent_reward_in_block(&mut db, claim(requested), claim_time, block).unwrap();
+        let gem_id = IAgentReward::redeemAgentRewardCall::abi_decode_returns(&output).unwrap();
         let claimed = logs
             .iter()
-            .find_map(|log| IAgentReward::RewardsClaimed::decode_log(log).ok())
+            .find_map(|log| IAgentReward::AgentRewardRedeemed::decode_log(log).ok())
             .unwrap()
             .data;
         assert_eq!(claimed.account, CCA);
         assert_eq!(claimed.pool, 2);
         assert!(logs.iter().any(|log| log.address == AGENT_REWARD_ADDRESS
-            && IAgentReward::RewardsClaimed::decode_log(log).is_ok()));
+            && IAgentReward::AgentRewardRedeemed::decode_log(log).is_ok()));
         assert_eq!(claimed.promisLoadMinor, U256::from(load));
         let issued = logs
             .iter()
@@ -278,12 +278,12 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
     with_storage(&mut db, |storage| {
         assert_eq!(
             AgentRewardContract::new(storage)
-                .get_pool_claimable_reward(RewardPool::Cca, CCA)
+                .get_agent_reward(RewardPool::Cca, CCA)
                 .unwrap(),
             U256::ZERO
         )
     });
-    assert!(claim_reward(&mut db, claim(U256::ZERO), claim_time).is_err());
+    assert!(redeem_agent_reward(&mut db, claim(U256::ZERO), claim_time).is_err());
     assert_eq!(balance(&db, CCA_REGISTRY_ADDRESS), BOND_REQUIREMENT);
     assert!(!tx(
         &mut db,

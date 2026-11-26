@@ -90,6 +90,24 @@
   },
   {
     "type": "function",
+    "name": "callSeries",
+    "inputs": [
+      {
+        "name": "seriesId",
+        "type": "bytes14",
+        "internalType": "bytes14"
+      },
+      {
+        "name": "calledAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "contractURI",
     "inputs": [],
     "outputs": [
@@ -100,93 +118,6 @@
       }
     ],
     "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "createSeries",
-    "inputs": [
-      {
-        "name": "params",
-        "type": "tuple",
-        "internalType": "struct IIntexNFT1155.CreateSeriesParams",
-        "components": [
-          {
-            "name": "seriesId",
-            "type": "bytes14",
-            "internalType": "bytes14"
-          },
-          {
-            "name": "emissionDay",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "issuedAt",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "issuanceCurrency",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "referenceCurrency",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "issuedUnits",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "promisLoadMinor",
-            "type": "uint128",
-            "internalType": "uint128"
-          },
-          {
-            "name": "entryPriceMinor",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "callPriceMinor",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "callTrigger",
-            "type": "tuple",
-            "internalType": "struct IIntexNFT1155.IntexCallTrigger",
-            "components": [
-              {
-                "name": "callWindow",
-                "type": "uint32",
-                "internalType": "uint32"
-              },
-              {
-                "name": "callThreshold",
-                "type": "uint32",
-                "internalType": "uint32"
-              },
-              {
-                "name": "callNoticePeriod",
-                "type": "uint32",
-                "internalType": "uint32"
-              },
-              {
-                "name": "transitMargin",
-                "type": "uint32",
-                "internalType": "uint32"
-              }
-            ]
-          }
-        ]
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -260,6 +191,222 @@
   },
   {
     "type": "function",
+    "name": "getIntex",
+    "inputs": [
+      {
+        "name": "intexId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct IIntexNFT1155.SeriesData",
+        "components": [
+          {
+            "name": "issuanceCurrency",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "referenceCurrency",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "issuedUnits",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "promisLoadMinor",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "entryPriceMinor",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "callPriceMinor",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "seriesId",
+            "type": "bytes14",
+            "internalType": "bytes14"
+          },
+          {
+            "name": "callTrigger",
+            "type": "tuple",
+            "internalType": "struct IIntexNFT1155.IntexCallTrigger",
+            "components": [
+              {
+                "name": "callWindow",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "callThreshold",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "callNoticePeriod",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "transitMargin",
+                "type": "uint32",
+                "internalType": "uint32"
+              }
+            ]
+          },
+          {
+            "name": "issuedAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "calledAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "totalSupply",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "state",
+            "type": "uint8",
+            "internalType": "enum IIntexNFT1155.IntexState"
+          },
+          {
+            "name": "emissionDay",
+            "type": "uint32",
+            "internalType": "uint32"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getIntexSeries",
+    "inputs": [
+      {
+        "name": "seriesId",
+        "type": "bytes14",
+        "internalType": "bytes14"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct IIntexNFT1155.SeriesData",
+        "components": [
+          {
+            "name": "issuanceCurrency",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "referenceCurrency",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "issuedUnits",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "promisLoadMinor",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "entryPriceMinor",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "callPriceMinor",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "seriesId",
+            "type": "bytes14",
+            "internalType": "bytes14"
+          },
+          {
+            "name": "callTrigger",
+            "type": "tuple",
+            "internalType": "struct IIntexNFT1155.IntexCallTrigger",
+            "components": [
+              {
+                "name": "callWindow",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "callThreshold",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "callNoticePeriod",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "transitMargin",
+                "type": "uint32",
+                "internalType": "uint32"
+              }
+            ]
+          },
+          {
+            "name": "issuedAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "calledAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "totalSupply",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "state",
+            "type": "uint8",
+            "internalType": "enum IIntexNFT1155.IntexState"
+          },
+          {
+            "name": "emissionDay",
+            "type": "uint32",
+            "internalType": "uint32"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "isApprovedForAll",
     "inputs": [
       {
@@ -307,7 +454,7 @@
   },
   {
     "type": "function",
-    "name": "issuedTokenId",
+    "name": "issuedIntexId",
     "inputs": [
       {
         "name": "seriesId",
@@ -326,24 +473,6 @@
   },
   {
     "type": "function",
-    "name": "markCalled",
-    "inputs": [
-      {
-        "name": "seriesId",
-        "type": "bytes14",
-        "internalType": "bytes14"
-      },
-      {
-        "name": "calledAt",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "name",
     "inputs": [],
     "outputs": [
@@ -357,20 +486,28 @@
   },
   {
     "type": "function",
-    "name": "readData",
+    "name": "openSeries",
     "inputs": [
       {
-        "name": "seriesId",
-        "type": "bytes14",
-        "internalType": "bytes14"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
+        "name": "params",
         "type": "tuple",
-        "internalType": "struct IIntexNFT1155.SeriesData",
+        "internalType": "struct IIntexNFT1155.OpenSeriesParams",
         "components": [
+          {
+            "name": "seriesId",
+            "type": "bytes14",
+            "internalType": "bytes14"
+          },
+          {
+            "name": "emissionDay",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "issuedAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
           {
             "name": "issuanceCurrency",
             "type": "uint16",
@@ -402,11 +539,6 @@
             "internalType": "uint64"
           },
           {
-            "name": "seriesId",
-            "type": "bytes14",
-            "internalType": "bytes14"
-          },
-          {
             "name": "callTrigger",
             "type": "tuple",
             "internalType": "struct IIntexNFT1155.IntexCallTrigger",
@@ -432,144 +564,12 @@
                 "internalType": "uint32"
               }
             ]
-          },
-          {
-            "name": "issuedAt",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "calledAt",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "totalSupply",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "state",
-            "type": "uint8",
-            "internalType": "enum IIntexNFT1155.IntexState"
-          },
-          {
-            "name": "emissionDay",
-            "type": "uint32",
-            "internalType": "uint32"
           }
         ]
       }
     ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "readTokenData",
-    "inputs": [
-      {
-        "name": "tokenId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "tuple",
-        "internalType": "struct IIntexNFT1155.SeriesData",
-        "components": [
-          {
-            "name": "issuanceCurrency",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "referenceCurrency",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "issuedUnits",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "promisLoadMinor",
-            "type": "uint128",
-            "internalType": "uint128"
-          },
-          {
-            "name": "entryPriceMinor",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "callPriceMinor",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "seriesId",
-            "type": "bytes14",
-            "internalType": "bytes14"
-          },
-          {
-            "name": "callTrigger",
-            "type": "tuple",
-            "internalType": "struct IIntexNFT1155.IntexCallTrigger",
-            "components": [
-              {
-                "name": "callWindow",
-                "type": "uint32",
-                "internalType": "uint32"
-              },
-              {
-                "name": "callThreshold",
-                "type": "uint32",
-                "internalType": "uint32"
-              },
-              {
-                "name": "callNoticePeriod",
-                "type": "uint32",
-                "internalType": "uint32"
-              },
-              {
-                "name": "transitMargin",
-                "type": "uint32",
-                "internalType": "uint32"
-              }
-            ]
-          },
-          {
-            "name": "issuedAt",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "calledAt",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "totalSupply",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "state",
-            "type": "uint8",
-            "internalType": "enum IIntexNFT1155.IntexState"
-          },
-          {
-            "name": "emissionDay",
-            "type": "uint32",
-            "internalType": "uint32"
-          }
-        ]
-      }
-    ],
-    "stateMutability": "view"
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -1215,7 +1215,7 @@
     "name": "BridgeAfterDeadline",
     "inputs": [
       {
-        "name": "tokenId",
+        "name": "intexId",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -1239,6 +1239,28 @@
         "name": "nowTs",
         "type": "uint64",
         "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "IntexAlreadyExists",
+    "inputs": [
+      {
+        "name": "intexId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "IntexNotFound",
+    "inputs": [
+      {
+        "name": "intexId",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ]
   },
@@ -1274,7 +1296,7 @@
     "name": "IssueAfterDeadline",
     "inputs": [
       {
-        "name": "tokenId",
+        "name": "intexId",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -1282,17 +1304,6 @@
         "name": "closedAt",
         "type": "uint64",
         "internalType": "uint64"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "NonexistentToken",
-    "inputs": [
-      {
-        "name": "tokenId",
-        "type": "uint256",
-        "internalType": "uint256"
       }
     ]
   },
@@ -1324,21 +1335,10 @@
   },
   {
     "type": "error",
-    "name": "TokenAlreadyExists",
-    "inputs": [
-      {
-        "name": "tokenId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "TransferAfterDeadline",
     "inputs": [
       {
-        "name": "tokenId",
+        "name": "intexId",
         "type": "uint256",
         "internalType": "uint256"
       },

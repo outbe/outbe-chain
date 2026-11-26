@@ -14,24 +14,22 @@ use outbe_system_common::time::{
     date_key_to_utc_timestamp, previous_date_key, timestamp_to_date_key,
 };
 
-mod called {
+mod call {
     use super::*;
-    pub(crate) use crate::called::{call_if_breached, GroupCall};
+    pub(crate) use crate::call::{call_series_if_breached, GroupCall};
 
     pub(super) fn scan_and_call(ctx: &BlockRuntimeContext) -> outbe_primitives::error::Result<u32> {
-        crate::called::scan_and_call(ctx)
+        crate::call::scan_and_call(ctx)
     }
 
-    pub(super) fn process_call_pass(
-        ctx: &BlockRuntimeContext,
-    ) -> outbe_primitives::error::Result<u32> {
-        crate::called::process_call_pass(ctx)
+    pub(super) fn run_call_pass(ctx: &BlockRuntimeContext) -> outbe_primitives::error::Result<u32> {
+        crate::call::run_call_pass(ctx)
     }
 
     pub(super) fn schedule_call_pass(
         ctx: &BlockRuntimeContext,
     ) -> outbe_primitives::error::Result<()> {
-        crate::called::schedule_call_pass(ctx)
+        crate::call::schedule_call_pass(ctx)
     }
 
     /// Finalizes the Oracle through the UTC day before `ctx`.
@@ -57,7 +55,7 @@ mod called {
         let intex = IntexContract::new(ctx.storage.clone());
         loop {
             let mut height = ctx.block.block_number;
-            for packed in [intex.daily_budget.read()?, intex.cleanup_budget.read()?] {
+            for packed in [intex.daily_budget.read()?, intex.forfeit_budget.read()?] {
                 if let Some(previous) =
                     outbe_system_common::pass_budget::BlockAllowance::unpack(packed)?
                 {
@@ -71,7 +69,7 @@ mod called {
                 },
                 ctx.storage.clone(),
             );
-            crate::called::process_call_pass(&block)?;
+            crate::call::run_call_pass(&block)?;
             let selected = outbe_system_common::pass_budget::BlockAllowance::unpack(
                 intex.daily_budget.read()?,
             )?
@@ -147,6 +145,18 @@ fn with_factory<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
     })
 }
 
+/// Registers `chains` in Series, as the genesis does.
+fn seed_series_targets(s: &StorageHandle<'_>, chains: &[u32]) {
+    use crate::targets::{pack_target, TargetMode};
+    let factory = IntexFactoryContract::new(s.clone());
+    for &chain in chains {
+        factory
+            .target_chains
+            .push(pack_target(chain, TargetMode::Series))
+            .unwrap();
+    }
+}
+
 fn factory_provider() -> HashMapStorageProvider {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(ISSUED_AT));
@@ -155,9 +165,9 @@ fn factory_provider() -> HashMapStorageProvider {
         crate::constants::INTEX_NFT1155_ADDRESS,
         alloy_primitives::Bytes::from(vec![0u8; 32]),
     );
-    // Stub OriginRouter: send* calls return bytes32 sendId (32 bytes). The value is ignored.
+    // Stub CrosschainBridge: `callRemoteWithGasLimit` returns a bytes32 message id.
     storage.stub_sub_call_at(
-        crate::constants::ORIGIN_ROUTER_ADDRESS,
+        outbe_system_common::addresses::CROSSCHAIN_BRIDGE_ADDRESS,
         alloy_primitives::Bytes::from(vec![0u8; 32]),
     );
     fund_payer(&mut storage, settlement_asset());
@@ -215,12 +225,12 @@ fn call_group<'s>(
         return 0;
     }
     let factory = IntexFactoryContract::new(s.clone());
-    let call = called::GroupCall {
+    let call = call::GroupCall {
         storage: s,
         intex: f,
         factory: &factory,
     };
-    called::call_if_breached(call, group, &window, now_ts).unwrap()
+    call::call_series_if_breached(call, group, &window, now_ts).unwrap()
 }
 
 /// The PROD call trigger: what the auction start fixes while the PROD profile is live.
@@ -244,8 +254,8 @@ fn sample(emission_day: u32) -> IssuanceParams {
         call_trigger: prod_trigger(),
         issuance_currency: 840,
         reference_currency: 840,
-        // One target in the snapshot exercises the per-chain ISSUANCE loop.
-        snapshot_chains: vec![1],
+        // One target chain exercises the per-chain ISSUANCE loop.
+        target_chains: vec![1],
     }
 }
 
@@ -274,6 +284,7 @@ impl SeedCalledGroup for IntexContract<'_> {
     }
 }
 
+mod bridge_fault;
 mod capacity_conservation;
 mod direct_fx_admission;
 mod entrypoints;
@@ -283,9 +294,9 @@ mod lifecycle;
 mod mining_after_deadline;
 mod mining_sequence;
 mod proceeds;
-mod router_fault;
 mod scans;
 mod settlement;
+mod targets_and_outbox;
 
 // --- // --- Shared across the test modules ---
 const PAIR_ID: u32 = 1;

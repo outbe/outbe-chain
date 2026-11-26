@@ -1,4 +1,4 @@
-//! Pure rules shared by Lysis and Nod issuance.
+//! Pure rules of Nod issuance.
 
 use alloy_primitives::{Address, U256};
 

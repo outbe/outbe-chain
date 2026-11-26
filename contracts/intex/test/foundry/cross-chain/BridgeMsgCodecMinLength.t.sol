@@ -5,7 +5,6 @@ import {Test} from "forge-std/Test.sol";
 import {ReferenceCurrencyPriceLib} from "../helpers/ReferenceCurrencyPriceLib.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
-import {IOriginRouter} from "@contracts/origin/interfaces/IOriginRouter.sol";
 
 /// The inbound length floors are hand-derived ABI arithmetic, so this test pins each one against
 /// the smallest message its encoder can produce.
@@ -46,11 +45,11 @@ contract BridgeMsgCodecMinLengthTest is Test {
 
     function test_ADayMustPriceSomething() public {
         vm.expectRevert(BridgeMsgCodec.MissingReferencePrices.selector);
-        this.encodeStageStart(new IOriginRouter.ReferenceCurrencyPrice[](0));
+        this.encodeStageStart(new IIntexAuction.ReferenceCurrencyPrice[](0));
     }
 
     /// External so the encoder runs one call deep, as a real send does.
-    function encodeStageStart(IOriginRouter.ReferenceCurrencyPrice[] calldata rows)
+    function encodeStageStart(IIntexAuction.ReferenceCurrencyPrice[] calldata rows)
         external
         pure
         returns (bytes memory)

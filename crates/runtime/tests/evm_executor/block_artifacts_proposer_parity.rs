@@ -74,7 +74,7 @@ fn active_lifecycle_proposer_and_replay_match_receipts_roots_and_header_artifact
     let proposer = run(false);
     let replay = run(true);
     assert_eq!(proposer, replay);
-    assert_eq!(proposer.0.len(), 18);
+    assert_eq!(proposer.0.len(), 20);
 }
 
 /// Determinism gate: a block carries a valid BLS late-finalize credit. The block executes on two

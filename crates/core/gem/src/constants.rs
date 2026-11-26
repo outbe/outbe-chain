@@ -24,7 +24,7 @@ pub const CALL_NOTICE_PERIOD: u32 = 7 * SECONDS_PER_DAY_U32;
 
 /// GemFactoryPosition validity period: an Intex in the Gem Factory expires this long after
 /// `issued_at`. No new gems may be issued afterward. 1 year.
-pub const POSITION_VALIDITY_SECONDS: u64 = 365 * SECONDS_PER_DAY;
+pub const GEM_FACTORY_POSITION_VALIDITY_SECONDS: u64 = 365 * SECONDS_PER_DAY;
 
 /// Call-price markup rate: call price = `entry x (100 + CALL_RATE_PCT) / 100`.
 /// Its breach arms a Call Event.

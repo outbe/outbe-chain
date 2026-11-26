@@ -12,11 +12,12 @@ use outbe_system_common::time::EmissionDate;
 use outbe_intex::{IntexContract, IntexState, SeriesRecord};
 use outbe_vaultrouter::settlement::{self, SettlementPayment};
 
-use crate::constants::{INTEX_NFT1155_ADDRESS, MAX_SERIES_PER_MESSAGE, ORIGIN_ROUTER_ADDRESS};
+use crate::constants::{INTEX_NFT1155_ADDRESS, MAX_SERIES_PER_MESSAGE};
 use crate::errors::IntexFactoryError;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
-use crate::sol_ext::{IIntexNFT1155, IOriginRouter, IERC1155};
-use IOriginRouter::IntexSeriesParams;
+use crate::sol_ext::{IIntexNFT1155, IERC1155};
+use crate::transport::outbox::Label;
+use crate::transport::wire::{IntexSeriesPayload as IntexSeriesParams, MSG_INTEX_SERIES};
 
 /// Emit an IntexFactory event from `INTEX_FACTORY_ADDRESS`.
 pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> Result<()> {
@@ -27,7 +28,7 @@ pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> 
 /// The auction fixed them at its start, so this reads no profile value.
 /// Return issuance legs for the caller to broadcast through `send_issuance`.
 /// The broadcast creates IntexNFT1155 series on each target chain, including the origin.
-pub fn issue_intex(
+pub fn open_intex_series(
     storage: &StorageHandle<'_>,
     params: IssuanceParams,
 ) -> Result<Vec<IssuanceLeg>> {
@@ -66,11 +67,11 @@ pub fn issue_intex(
     // Not sent here: only the caller sees the whole day, and a chain's share of it
     // travels in as few messages as the cap allows.
     let legs: Vec<IssuanceLeg> = params
-        .snapshot_chains
+        .target_chains
         .iter()
         .map(|&chain_id| IssuanceLeg {
             chain_id,
-            payload: IOriginRouter::IntexSeriesParams {
+            payload: IntexSeriesParams {
                 seriesId: params.series_id.into(),
                 emissionDay: params.emission_day.into(),
                 issuedAt: issued_at,
@@ -113,7 +114,7 @@ pub fn issue_intex(
 #[derive(Clone)]
 pub struct IssuanceLeg {
     pub chain_id: u32,
-    pub payload: IOriginRouter::IntexSeriesParams,
+    pub payload: IntexSeriesParams,
 }
 
 /// Pack a day's legs into per-chain messages of up to `MAX_SERIES_PER_MESSAGE` series each.
@@ -136,27 +137,35 @@ pub fn pack_issuance_messages(legs: Vec<IssuanceLeg>) -> Vec<(u32, Vec<IntexSeri
     per_chain
 }
 
-/// Send a day's packed issuance messages, each stamped with its position in the chain's run.
-/// Relay-float-funded: value 0. The router quotes and pays the bridge fee from its own float.
+/// Puts a day's packed issuance messages into the outbox, each stamped with its position in the
+/// chain's run.
 pub fn send_issuance(storage: &StorageHandle<'_>, legs: Vec<IssuanceLeg>) -> Result<()> {
     for ((chain_id, emission_day), messages) in
-        chunk_issuance_messages(pack_issuance_messages(legs))
+        page_intex_series_messages(pack_issuance_messages(legs))
     {
         let total_chunks = u16::try_from(messages.len())
-            .map_err(|_| IntexFactoryError::IssuanceChunkCountExceedsU16)?;
+            .map_err(|_| IntexFactoryError::IntexSeriesPageCountExceedsU16)?;
         for (chunk_index, series) in messages.into_iter().enumerate() {
-            storage.call(
-                ORIGIN_ROUTER_ADDRESS,
-                U256::ZERO,
-                IOriginRouter::sendIntexSeriesCall {
-                    dstChainId: chain_id,
-                    emissionDay: emission_day,
-                    pageIndex: chunk_index as u16,
-                    totalPages: total_chunks,
-                    series,
-                }
-                .abi_encode()
-                .into(),
+            let payload = crate::transport::wire::encode_intex_series(
+                emission_day,
+                chunk_index as u16,
+                total_chunks,
+                &series,
+            )?;
+            crate::outbox::push_to(
+                storage,
+                &[chain_id],
+                Label::new(
+                    MSG_INTEX_SERIES,
+                    emission_day,
+                    [
+                        chunk_index as u32,
+                        u32::from(total_chunks),
+                        series.len() as u32,
+                    ],
+                ),
+                crate::transport::gas::intex_series(series.len()),
+                &payload,
             )?;
         }
     }
@@ -170,7 +179,7 @@ pub(crate) type IssuanceRun = ((u32, u32), Vec<Vec<IntexSeriesParams>>);
 /// Group packed messages into the runs the chunk header numbers: one per (chain, day), the pair
 /// the receiver counts chunks against. Callers pass one day's legs (clearing does). This is also
 /// what keeps `pack_issuance_messages` from batching two days into one message.
-pub(crate) fn chunk_issuance_messages(
+pub(crate) fn page_intex_series_messages(
     packed: Vec<(u32, Vec<IntexSeriesParams>)>,
 ) -> Vec<IssuanceRun> {
     let mut runs: Vec<IssuanceRun> = Vec::new();
@@ -339,4 +348,4 @@ pub use mining::{mine_promis, MiningProof};
 pub use pricing::quote_settlement;
 #[cfg(test)]
 pub(crate) use pricing::settlement_units;
-pub use proceeds::burn_intex_auction_proceeds;
+pub use proceeds::{receive_crosschain_proceeds, receive_local_proceeds, CrosschainProceeds};

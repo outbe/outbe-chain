@@ -3,7 +3,7 @@ pragma solidity 0.8.30;
 
 import {AuctionResultLib} from "../helpers/AuctionResultLib.sol";
 
-import {MarkBatchLib} from "../helpers/MarkBatchLib.sol";
+import {CallNoticeBatchLib} from "../helpers/CallNoticeBatchLib.sol";
 import {BidPackLib} from "../helpers/BidPackLib.sol";
 import {ReferenceCurrencyPriceLib} from "../helpers/ReferenceCurrencyPriceLib.sol";
 import {Test} from "forge-std/Test.sol";
@@ -103,24 +103,24 @@ contract BridgeMsgCodecValidationTest is Test {
         this.exposedDecodeAuctionResult(tooLong);
     }
 
-    function test_MarkCalled_EmptyBatch_Reverts() public {
+    function test_CallNotice_EmptyBatch_Reverts() public {
         bytes14[] memory empty = new bytes14[](0);
         vm.expectRevert(BridgeMsgCodec.EmptyCallNoticePage.selector);
-        this.exposedEncodeMarkCalled(20260212, empty);
+        this.exposedEncodeIntexSeriesCallNotice(20260212, empty);
     }
 
-    function test_MarkCalled_OverSizedBatch_Reverts() public {
+    function test_CallNotice_OverSizedBatch_Reverts() public {
         uint256 tooMany = BridgeMsgCodec.MAX_SERIES_PER_CALL_NOTICE + 1;
-        bytes14[] memory batch = MarkBatchLib.sized("20260212-TRY-U", tooMany);
+        bytes14[] memory batch = CallNoticeBatchLib.sized("20260212-TRY-U", tooMany);
         vm.expectRevert(
             abi.encodeWithSelector(
                 BridgeMsgCodec.CallNoticePageTooLarge.selector, tooMany, BridgeMsgCodec.MAX_SERIES_PER_CALL_NOTICE
             )
         );
-        this.exposedEncodeMarkCalled(20260212, batch);
+        this.exposedEncodeIntexSeriesCallNotice(20260212, batch);
     }
 
-    function test_MarkCalled_ShortBody_Reverts() public {
+    function test_CallNotice_ShortBody_Reverts() public {
         bytes memory tooShort = abi.encodePacked(hex"0108", new bytes(64));
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -130,7 +130,7 @@ contract BridgeMsgCodecValidationTest is Test {
                 BridgeMsgCodec.MIN_LEN_INTEX_SERIES_CALL_NOTICE
             )
         );
-        this.exposedDecodeMarkCalled(tooShort);
+        this.exposedDecodeIntexSeriesCallNotice(tooShort);
     }
 
     // --- Happy-path round-trips still pass after the exact-length guard ---
@@ -151,11 +151,13 @@ contract BridgeMsgCodecValidationTest is Test {
             this.exposedDecodeAuctionResult(BridgeMsgCodec.encodeIntexAuctionResult(9, AuctionResultLib.day(1, 1, 1)));
         assertEq(rs, 9, "result");
         assertEq(
-            this.exposedDecodeMarkCalled(
-                BridgeMsgCodec.encodeIntexSeriesCallNotice(20260212, CALLED_AT, MarkBatchLib.one("20260212-TRY-U"))
+            this.exposedDecodeIntexSeriesCallNotice(
+                BridgeMsgCodec.encodeIntexSeriesCallNotice(
+                    20260212, CALLED_AT, CallNoticeBatchLib.one("20260212-TRY-U")
+                )
             ),
             bytes14("20260212-TRY-U"),
-            "markCalled"
+            "callSeries"
         );
     }
 
@@ -294,7 +296,11 @@ contract BridgeMsgCodecValidationTest is Test {
         return BridgeMsgCodec.decodeIntexAuctionResult(p);
     }
 
-    function exposedEncodeMarkCalled(uint32 day, bytes14[] calldata ids) external pure returns (bytes memory) {
+    function exposedEncodeIntexSeriesCallNotice(uint32 day, bytes14[] calldata ids)
+        external
+        pure
+        returns (bytes memory)
+    {
         return BridgeMsgCodec.encodeIntexSeriesCallNotice(day, CALLED_AT, ids);
     }
 
@@ -323,7 +329,7 @@ contract BridgeMsgCodecValidationTest is Test {
         this.exposedDecodeIssuance(packet);
     }
 
-    function exposedDecodeMarkCalled(bytes calldata p) external pure returns (bytes14) {
+    function exposedDecodeIntexSeriesCallNotice(bytes calldata p) external pure returns (bytes14) {
         (,, bytes14[] memory seriesIds) = BridgeMsgCodec.decodeIntexSeriesCallNotice(p);
         return seriesIds[0];
     }
