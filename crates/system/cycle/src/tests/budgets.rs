@@ -209,9 +209,10 @@ fn late_protocol_exhaustion_rolls_back_calendar_and_allocation_then_retries_acro
             .promis_limit()
             .unwrap();
         let world_before =
-            outbe_metadosis::api::worldwide_day(ctx.storage.clone(), 20_240_102u32.into()).unwrap();
+            outbe_worldwideday::api::get_worldwide_day(ctx.storage.clone(), 20_240_102u32.into())
+                .unwrap();
         let record_before =
-            outbe_emission::api::get_emission_day_record(ctx.storage.clone(), 20_240_101).unwrap();
+            outbe_emission::api::get_emission_day(ctx.storage.clone(), 20_240_101).unwrap();
         let cycle = ctx.storage.contract::<Cycle>();
         let timestamp_before = cycle.last_executed_at.read(&0).unwrap();
         let height_before = cycle.last_executed_block_number.read(&0).unwrap();
@@ -224,11 +225,12 @@ fn late_protocol_exhaustion_rolls_back_calendar_and_allocation_then_retries_acro
         assert_eq!(active_utc_day(&ctx), 20_240_101);
         assert!(!is_day_allocated(&ctx, 20_240_101));
         assert_eq!(
-            outbe_emission::api::get_emission_day_record(ctx.storage.clone(), 20_240_101).unwrap(),
+            outbe_emission::api::get_emission_day(ctx.storage.clone(), 20_240_101).unwrap(),
             record_before
         );
         assert_eq!(
-            outbe_metadosis::api::worldwide_day(ctx.storage.clone(), 20_240_102u32.into()).unwrap(),
+            outbe_worldwideday::api::get_worldwide_day(ctx.storage.clone(), 20_240_102u32.into())
+                .unwrap(),
             world_before
         );
         assert_eq!(
@@ -262,10 +264,10 @@ fn late_protocol_exhaustion_rolls_back_calendar_and_allocation_then_retries_acro
         assert!(!is_day_allocated(&ctx, 20_240_102));
         assert_eq!(active_utc_day(&ctx), 20_240_102);
         let settled =
-            outbe_emission::api::get_emission_day_record(ctx.storage.clone(), 20_240_101).unwrap();
+            outbe_emission::api::get_emission_day(ctx.storage.clone(), 20_240_101).unwrap();
         dispatch(&ctx, &tasks).unwrap();
         assert_eq!(
-            outbe_emission::api::get_emission_day_record(ctx.storage.clone(), 20_240_101).unwrap(),
+            outbe_emission::api::get_emission_day(ctx.storage.clone(), 20_240_101).unwrap(),
             settled
         );
     });
@@ -303,19 +305,21 @@ fn bootstrap_without_tasks_creates_genesis_worldwide_day() {
     storage.set_gas_limit(10_000_000);
     storage.enter(|handle| {
         let ctx = runtime_context(block_ctx(1, GENESIS_TS + 60), handle);
-        assert!(
-            outbe_metadosis::api::worldwide_day(ctx.storage.clone(), 20_240_101u32.into())
-                .unwrap()
-                .is_none()
-        );
+        assert!(outbe_worldwideday::api::get_worldwide_day(
+            ctx.storage.clone(),
+            20_240_101u32.into()
+        )
+        .unwrap()
+        .is_none());
         let before = ctx.storage.gas_used().unwrap();
         handle_cycle_tick_with_tasks(&ctx, 1, &[]).unwrap();
         assert!(ctx.storage.gas_used().unwrap() > before);
-        assert!(
-            outbe_metadosis::api::worldwide_day(ctx.storage.clone(), 20_240_101u32.into())
-                .unwrap()
-                .is_some()
-        );
+        assert!(outbe_worldwideday::api::get_worldwide_day(
+            ctx.storage.clone(),
+            20_240_101u32.into()
+        )
+        .unwrap()
+        .is_some());
     });
     assert!(storage.get_events(CYCLE_ADDRESS).is_empty());
 }

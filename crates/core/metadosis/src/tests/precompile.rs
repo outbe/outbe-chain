@@ -44,9 +44,9 @@ fn worldwide_day_and_emission_day_abi_preserve_bidirectional_link() {
         let expected_forming_start = wwd.start_timestamp().unwrap();
         let expected_forming_end =
             expected_forming_start + outbe_chain_constants::get_metadosis_forming_period_seconds();
-        let expected_offerings_start = expected_forming_start
+        let expected_offering_start = expected_forming_start
             + outbe_chain_constants::OFFERING_START_AFTER_FORMING_START_SECONDS;
-        let expected_offering_end = expected_offerings_start
+        let expected_offering_end = expected_offering_start
             + outbe_chain_constants::get_metadosis_offering_period_seconds();
         let day = query_worldwide_day(
             storage.clone(),
@@ -63,7 +63,7 @@ fn worldwide_day_and_emission_day_abi_preserve_bidirectional_link() {
             (
                 expected_forming_start,
                 expected_forming_end,
-                expected_offerings_start,
+                expected_offering_start,
                 expected_offering_end,
             )
         );
@@ -92,10 +92,10 @@ pub(super) fn seed_offering_day(storage: StorageHandle<'_>) {
     let day = 20261014u32;
     let forming_start = wwd.start_timestamp().unwrap();
     let forming_end = forming_start + outbe_chain_constants::get_metadosis_forming_period_seconds();
-    let offerings_start =
+    let offering_start =
         forming_start + outbe_chain_constants::OFFERING_START_AFTER_FORMING_START_SECONDS;
     let offering_end =
-        offerings_start + outbe_chain_constants::get_metadosis_offering_period_seconds();
+        offering_start + outbe_chain_constants::get_metadosis_offering_period_seconds();
     let binding = outbe_system_common::metadosis_bindings::metadosis_process_ready_binding(
         storage.chain_id().unwrap(),
         storage.block_number().unwrap(),
@@ -111,10 +111,10 @@ pub(super) fn seed_offering_day(storage: StorageHandle<'_>) {
                     &mut factory,
                     wwd,
                     outbe_worldwideday::NewWwdSchedule {
-                        day,
+                        emission_day: day,
                         forming_start,
                         forming_end,
-                        offerings_start,
+                        offering_start,
                         offering_end,
                     },
                 )?;
@@ -122,17 +122,11 @@ pub(super) fn seed_offering_day(storage: StorageHandle<'_>) {
             },
         )
         .unwrap();
-    let metadosis = MetadosisContract::new(storage);
-    metadosis
-        .emission_days()
-        .create(&crate::schema::EmissionDay::new_with_limit(
-            day,
-            wwd,
-            50,
-            100,
-            metadosis_state::PENDING,
-        ))
-        .unwrap();
+    outbe_emission::api::put_emission_day(
+        storage,
+        &outbe_emission::EmissionDay::new_with_limit(day, wwd, 50, 100, metadosis_state::PENDING),
+    )
+    .unwrap();
 }
 
 #[test]

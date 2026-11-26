@@ -40,7 +40,7 @@ fn latest_allocated_day_through(
 ) -> Result<Option<u32>> {
     let mut d = from_day;
     loop {
-        if let Some(record) = outbe_emission::api::get_emission_day_record(storage.clone(), d)? {
+        if let Some(record) = outbe_emission::api::get_emission_day(storage.clone(), d)? {
             if record.state == emission_day_state::PROCESSING
                 || record.state == emission_day_state::COMPLETED
             {
@@ -276,9 +276,9 @@ fn schedule_auction_of(ctx: &BlockRuntimeContext, prev_day: u32) -> Result<()> {
 
 /// Returns whether `prev_day` is already allocated (`state == PROCESSING || state == COMPLETED`).
 fn is_day_allocated(ctx: &BlockRuntimeContext, prev_day: u32) -> Result<bool> {
-    let allocated = outbe_emission::api::get_emission_day_record(ctx.storage.clone(), prev_day)
+    let allocated = outbe_emission::api::get_emission_day(ctx.storage.clone(), prev_day)
         .map_err(|e| {
-            tracing::error!(target: "outbe::cycle", step = "get_emission_day_record", prev_day, error = ?e, "emission_limit_daily step failed");
+            tracing::error!(target: "outbe::cycle", step = "get_emission_day", prev_day, error = ?e, "emission_limit_daily step failed");
             e
         })?
         .is_some_and(|rec| {
@@ -548,13 +548,12 @@ fn process_emission_day_steps(ctx: &BlockRuntimeContext) -> Result<Readiness> {
 
 /// Returns `day` when it is allocated, its Metadosis is pending and its start time has come.
 fn metadosis_due(ctx: &BlockRuntimeContext, day: u32) -> Result<Option<u32>> {
-    let due = outbe_emission::api::get_emission_day_record(ctx.storage.clone(), day)?.is_some_and(
-        |record| {
+    let due =
+        outbe_emission::api::get_emission_day(ctx.storage.clone(), day)?.is_some_and(|record| {
             record.state == emission_day_state::PROCESSING
                 && record.metadosis_state == metadosis_state::PENDING
                 && ctx.block.timestamp >= record.metadosis_start
-        },
-    );
+        });
     Ok(due.then_some(day))
 }
 

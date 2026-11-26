@@ -284,9 +284,11 @@ pub(crate) fn offering_end_of(
         outbe_system_common::time::previous_date_key(day.value())
             .map_err(crate::errors::date_step_error)?,
     );
-    Ok(outbe_worldwideday::worldwide_day(nod.storage.clone(), wwd)?
-        .filter(|record| record.day == day.value())
-        .map_or(start_ts, |record| record.offering_end))
+    Ok(
+        outbe_worldwideday::get_worldwide_day(nod.storage.clone(), wwd)?
+            .filter(|record| record.emission_day == day.value())
+            .map_or(start_ts, |record| record.offering_end),
+    )
 }
 
 /// The terms a group is decided on: the ones it sealed, from the group's own first

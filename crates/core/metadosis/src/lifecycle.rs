@@ -1,7 +1,7 @@
 //! EmissionDay and WorldwideDay lifecycle orchestration.
 
 use alloy_primitives::U256;
-use outbe_emission::schema::metadosis_state;
+use outbe_emission::{api::get_emission_day, schema::metadosis_state, EmissionDay};
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PassFailure, Result},
@@ -13,7 +13,7 @@ use outbe_worldwideday::WorldwideDayContract;
 use crate::{
     errors::{MetadosisCallerError, MetadosisStorageCorruptionError},
     precompile::IMetadosis,
-    schema::{EmissionDay, MetadosisContract},
+    schema::MetadosisContract,
 };
 
 pub(crate) fn date_step_error(
@@ -36,7 +36,7 @@ pub(crate) fn ready_emission_day(
     ctx: &BlockRuntimeContext<'_>,
     day: u32,
 ) -> Result<Option<EmissionDay>> {
-    let Some(record) = metadosis.emission_days().get(day)? else {
+    let Some(record) = get_emission_day(metadosis.storage.clone(), day)? else {
         return Ok(None);
     };
     if record.state != outbe_emission::schema::emission_day_state::PROCESSING
@@ -110,7 +110,7 @@ pub(crate) fn cancel_metadosis(
     reason: u8,
 ) -> Result<()> {
     cancel_auction_of(metadosis, day)?;
-    if metadosis.emission_days().get(day)?.is_some() {
+    if get_emission_day(metadosis.storage.clone(), day)?.is_some() {
         let record =
             outbe_emission::api::record_metadosis_canceled(metadosis.storage.clone(), day)?;
         if !outbe_agentreward::distribution::has_pending_accruals_for_day(
@@ -135,7 +135,7 @@ pub(crate) fn fail_metadosis(
     reason: u8,
 ) -> Result<()> {
     cancel_auction_of(metadosis, day)?;
-    if let Some(pending) = metadosis.emission_days().get(day)? {
+    if let Some(pending) = get_emission_day(metadosis.storage.clone(), day)? {
         let loads_minor = match crate::loads::day_loads(&metadosis.storage, pending.wwd) {
             Ok(loads) => loads.loads_minor,
             // An unreadable day sum leaves the whole limit with the Nods: nothing goes back.

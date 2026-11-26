@@ -237,7 +237,7 @@ fn job_rounding_rest_goes_to_promis_limit_once() {
         )
         .unwrap();
         crate::api::process_agent_rewards(&context).unwrap();
-        let ledger = outbe_emission::api::emission_day(storage.clone(), DAY.value())
+        let ledger = outbe_emission::api::get_emission_day(storage.clone(), DAY.value())
             .unwrap()
             .unwrap();
         assert_eq!(
@@ -281,7 +281,7 @@ fn job_rounding_rest_goes_to_promis_limit_once() {
         )
         .unwrap();
         assert_eq!(excess, U256::from(40));
-        let ledger = outbe_emission::api::emission_day(storage.clone(), DAY.value())
+        let ledger = outbe_emission::api::get_emission_day(storage.clone(), DAY.value())
             .unwrap()
             .unwrap();
         assert_eq!(
@@ -684,9 +684,10 @@ fn missing_ledger_rolls_back_credits_and_worker_height_and_is_retryable() {
             .unwrap();
         let context = ctx(storage.clone(), 0);
         allocate_fixture(&context, DAY, &[(PoolKind::Waa, U256::from(10))]).unwrap();
-        let emission = outbe_emission::schema::EmissionContract::new(storage.clone());
-        let ledger = emission.emission_days.get(DAY.value()).unwrap().unwrap();
-        emission.emission_days.delete(DAY.value()).unwrap();
+        let ledger = outbe_emission::api::get_emission_day(storage.clone(), DAY.value())
+            .unwrap()
+            .unwrap();
+        outbe_emission::api::delete_emission_day(storage.clone(), DAY.value()).unwrap();
         assert!(crate::api::process_agent_rewards(&context).is_err());
         assert_eq!(
             contract.get_claimable_reward(numbered_address(1)).unwrap(),
@@ -694,7 +695,7 @@ fn missing_ledger_rolls_back_credits_and_worker_height_and_is_retryable() {
         );
         assert!(!contract.worker_initialized.read().unwrap());
         assert_eq!(contract.accrual_head.read().unwrap(), 0);
-        emission.emission_days.create(&ledger).unwrap();
+        outbe_emission::api::put_emission_day(storage.clone(), &ledger).unwrap();
         crate::api::process_agent_rewards(&context).unwrap();
         assert_eq!(
             contract.get_claimable_reward(numbered_address(1)).unwrap(),

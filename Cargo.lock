@@ -8704,6 +8704,7 @@ dependencies = [
  "outbe-stablecoinfactory",
  "outbe-system-common",
  "outbe-vaultrouter",
+ "outbe-worldwideday",
  "serde",
  "serde_json",
  "tempfile",

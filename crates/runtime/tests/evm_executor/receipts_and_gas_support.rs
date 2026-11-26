@@ -154,7 +154,7 @@ pub(super) fn assert_dense_agent_accrual_pending(
     assert_eq!(waa_job.next_index, 0);
     assert_eq!(waa_job.credited_minor, U256::ZERO);
     assert!(!waa_job.pool_minor.is_zero());
-    let emission_day = outbe_emission::api::get_emission_day_record(storage.clone(), prev_day)?
+    let emission_day = outbe_emission::api::get_emission_day(storage.clone(), prev_day)?
         .expect("GAS-05: previous-day emission allocation must exist");
     assert!(
         !emission_day.metadosis_limit_minor().is_zero(),

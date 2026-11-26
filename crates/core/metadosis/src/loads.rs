@@ -2,6 +2,7 @@
 //! hold their loads, and Metadosis splits its limit with their sum.
 
 use alloy_primitives::U256;
+use outbe_emission::EmissionDay;
 use outbe_primitives::{block::BlockRuntimeContext, error::Result, storage::StorageHandle};
 use outbe_system_common::metadosis_bindings::MetadosisStorageExt;
 use outbe_system_common::time::WorldwideDay;
@@ -11,7 +12,7 @@ use crate::{
     lifecycle::{complete_metadosis, fail_metadosis},
     limits::{allocate_day_metadosis_limit, apply_desis_limit},
     precompile::IMetadosis,
-    schema::{EmissionDay, MetadosisContract},
+    schema::MetadosisContract,
 };
 
 /// The nominal and the Gratis loads of the Nods of one Worldwide Day.

@@ -48,9 +48,5 @@ mod schema;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_support;
 
-pub use api::EmissionDayProjection;
-pub use outbe_worldwideday::WwdProjection;
-pub use schema::EmissionDay;
-
 #[cfg(test)]
 mod tests;

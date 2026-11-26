@@ -151,16 +151,19 @@ fn delayed_first_cycle_tick_starts_all_fresh_passes_at_chainspec_genesis() {
             );
             assert_eq!(latest, 20_240_202);
         }
-        assert!(outbe_metadosis::api::worldwide_day(
+        assert!(outbe_worldwideday::api::get_worldwide_day(
             storage.clone(),
             WorldwideDay::from_timestamp(block_ts)
         )
         .unwrap()
         .is_some());
         assert!(
-            outbe_metadosis::api::worldwide_day(storage, WorldwideDay::from_timestamp(genesis_ts))
-                .unwrap()
-                .is_some(),
+            outbe_worldwideday::api::get_worldwide_day(
+                storage,
+                WorldwideDay::from_timestamp(genesis_ts)
+            )
+            .unwrap()
+            .is_some(),
             "Metadosis retains its existing catch-up and lookahead initialization"
         );
     });
@@ -716,15 +719,12 @@ fn stale_oracle_cycle_credits_validator_reward_and_allows_later_feeder_vote() {
                 )
                 .unwrap(),
                 last_executed_at: cycle.last_executed_at.read(&emission_task).unwrap(),
-                day_settled: outbe_emission::api::get_emission_day_record(
-                    storage.clone(),
-                    PREVIOUS_DAY,
-                )
-                .unwrap()
-                .is_some_and(|r| {
-                    r.state == outbe_emission::schema::emission_day_state::PROCESSING
-                        || r.state == outbe_emission::schema::emission_day_state::COMPLETED
-                }),
+                day_settled: outbe_emission::api::get_emission_day(storage.clone(), PREVIOUS_DAY)
+                    .unwrap()
+                    .is_some_and(|r| {
+                        r.state == outbe_emission::schema::emission_day_state::PROCESSING
+                            || r.state == outbe_emission::schema::emission_day_state::COMPLETED
+                    }),
                 voter_claimable: outbe_agentreward::AgentRewardContract::new(storage.clone())
                     .get_pool_claimable_reward(
                         outbe_agentreward::schema::RewardPool::Validator,
@@ -733,7 +733,7 @@ fn stale_oracle_cycle_credits_validator_reward_and_allows_later_feeder_vote() {
                     .unwrap(),
                 voter_gems: outbe_gem::api::balance_of(&storage, voter).unwrap(),
                 feeder_vote_exists: oracle.vote_exists.read(&proposer).unwrap(),
-                formation_exists: outbe_metadosis::api::emission_day(storage, PREVIOUS_DAY)
+                formation_exists: outbe_emission::api::get_emission_day(storage, PREVIOUS_DAY)
                     .unwrap()
                     .is_some(),
             }

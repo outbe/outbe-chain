@@ -10,7 +10,7 @@
 //!
 //! [`tasks::TaskId::ProcessEmissionDay`] fires one second into each UTC hour
 //! (`period = 3_600`, `offset = 1`). Its handler derives the active UTC day from
-//! [`outbe_emission::schema::EmissionContract::emission_days`], allocates it and runs its
+//! [`outbe_emission::api::get_emission_day`], allocates it and runs its
 //! Metadosis. Until the votes of the day are sealed it answers not ready, and its dependents wait.
 //! A handler revert rolls its atomic work-budget scope back, records the slot, emits
 //! `CycleTaskFailed`, and the walk continues. A revert of ProcessEmissionDay fails the block.

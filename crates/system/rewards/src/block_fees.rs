@@ -840,7 +840,7 @@ mod tests {
             assert_eq!(residue, expected_residue * unit);
             let utc_day = outbe_system_common::time::timestamp_to_date_key(timestamp);
             assert!(
-                outbe_emission::api::emission_day(ctx.storage.clone(), utc_day)
+                outbe_emission::api::get_emission_day(ctx.storage.clone(), utc_day)
                     .unwrap()
                     .is_none()
             );
@@ -885,10 +885,10 @@ mod tests {
             )
             .unwrap();
 
-            let emission_day = outbe_emission::api::emission_day(ctx.storage.clone(), utc_day)
+            let emission_day = outbe_emission::api::get_emission_day(ctx.storage.clone(), utc_day)
                 .unwrap()
                 .unwrap();
-            assert_eq!(emission_day.emission_limit_minor, daily_base);
+            assert_eq!(U256::from(emission_day.emission_limit), daily_base);
             assert_eq!(
                 PromisLimitContract::new(ctx.storage.clone())
                     .promis_limit()

@@ -52,12 +52,15 @@ fn init_genesis_day_creates_the_pipeline_lookahead_with_bidirectional_links_and_
         assert!(pipeline.contains(&WorldwideDay::new(20260926)));
 
         // Verify wwd = 20260920 -> day = 20260921 (and wwd = 20260925 -> day = 20260926)
-        let wwd_20 = api::worldwide_day(storage.clone(), WorldwideDay::new(20260920))
-            .unwrap()
-            .unwrap();
-        assert_eq!(wwd_20.day, 20260921);
+        let wwd_20 = outbe_worldwideday::api::get_worldwide_day(
+            storage.clone(),
+            WorldwideDay::new(20260920),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(wwd_20.emission_day, 20260921);
 
-        let ed_21 = api::emission_day(storage.clone(), 20260921)
+        let ed_21 = outbe_emission::api::get_emission_day(storage.clone(), 20260921)
             .unwrap()
             .unwrap();
         assert_eq!(ed_21.day, 20260921);
@@ -67,33 +70,39 @@ fn init_genesis_day_creates_the_pipeline_lookahead_with_bidirectional_links_and_
             date_key_to_utc_timestamp(next_date_key(20260921).expect("date step")).unwrap()
                 + 12 * 3_600
         );
-        assert_eq!(ed_21.state, metadosis_state::PENDING);
-        assert_eq!(ed_21.emission_limit_minor, U256::ZERO);
+        assert_eq!(ed_21.metadosis_state, metadosis_state::PENDING);
+        assert_eq!((ed_21.emission_limit, ed_21.metadosis_limit), (0, 0));
 
-        let wwd_25 = api::worldwide_day(storage.clone(), WorldwideDay::new(20260925))
-            .unwrap()
-            .unwrap();
-        assert_eq!(wwd_25.day, 20260926);
-        let ed_26 = api::emission_day(storage.clone(), 20260926)
+        let wwd_25 = outbe_worldwideday::api::get_worldwide_day(
+            storage.clone(),
+            WorldwideDay::new(20260925),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(wwd_25.emission_day, 20260926);
+        let ed_26 = outbe_emission::api::get_emission_day(storage.clone(), 20260926)
             .unwrap()
             .unwrap();
         assert_eq!(ed_26.wwd, WorldwideDay::new(20260925));
-        assert_eq!(ed_26.emission_limit_minor, U256::ZERO);
+        assert_eq!((ed_26.emission_limit, ed_26.metadosis_limit), (0, 0));
 
         // 20260920..=20260926 stay linked after the daily steps. 20260920 is sealed
         // on 20260923 and leaves the pipeline; the record and its emission day remain.
         let mut wwd_key = 20260920;
         for _ in 0..7u32 {
             let wwd = WorldwideDay::new(wwd_key);
-            let wwd_proj = api::worldwide_day(storage.clone(), wwd).unwrap().unwrap();
-            let ed_proj = api::emission_day(storage.clone(), wwd_proj.day)
+            let wwd_record = outbe_worldwideday::api::get_worldwide_day(storage.clone(), wwd)
                 .unwrap()
                 .unwrap();
-            assert_eq!(ed_proj.wwd, wwd);
-            assert_eq!(ed_proj.emission_limit_minor, U256::ZERO);
+            let ed =
+                outbe_emission::api::get_emission_day(storage.clone(), wwd_record.emission_day)
+                    .unwrap()
+                    .unwrap();
+            assert_eq!(ed.wwd, wwd);
+            assert_eq!((ed.emission_limit, ed.metadosis_limit), (0, 0));
             assert_eq!(
-                ed_proj.metadosis_start,
-                date_key_to_utc_timestamp(next_date_key(ed_proj.day).expect("date step")).unwrap()
+                ed.metadosis_start,
+                date_key_to_utc_timestamp(next_date_key(ed.day).expect("date step")).unwrap()
                     + 12 * 3_600
             );
             wwd_key = next_date_key(wwd_key).expect("date step");
@@ -122,29 +131,29 @@ fn schedule_places_emission_day_after_offering_wwd_and_resumes_oldest_due_after_
             storage.clone(),
         );
 
-        let wwd_proj = api::worldwide_day(storage.clone(), wwd_sep_01)
+        let wwd_record = outbe_worldwideday::api::get_worldwide_day(storage.clone(), wwd_sep_01)
             .unwrap()
             .unwrap();
         assert_eq!(
-            WorldwideDay::from_timestamp(wwd_proj.offerings_start),
+            WorldwideDay::from_timestamp(wwd_record.offering_start),
             WorldwideDay::new(20260902)
         );
         assert_eq!(
-            wwd_proj.offering_end,
+            wwd_record.offering_end,
             date_key_to_utc_timestamp(20260903).unwrap() + 12 * 3_600
         );
-        assert_eq!(wwd_proj.day, 20260902);
+        assert_eq!(wwd_record.emission_day, 20260902);
 
         let expected_metadosis_start = date_key_to_utc_timestamp(20260903).unwrap() + 12 * 3_600;
-        assert_eq!(expected_metadosis_start, wwd_proj.offering_end);
+        assert_eq!(expected_metadosis_start, wwd_record.offering_end);
 
-        let ed_02 = api::emission_day(storage.clone(), 20260902)
+        let ed_02 = outbe_emission::api::get_emission_day(storage.clone(), 20260902)
             .unwrap()
             .unwrap();
         assert_eq!(ed_02.day, 20260902);
         assert_eq!(ed_02.wwd, wwd_sep_01);
         assert_eq!(ed_02.metadosis_start, expected_metadosis_start);
-        assert_eq!(ed_02.emission_limit_minor, U256::ZERO);
+        assert_eq!((ed_02.emission_limit, ed_02.metadosis_limit), (0, 0));
 
         // Nested process-ready checks recompute the lease from the provider clock
         // and block. Allocate day 20260902 into Processing.
@@ -191,12 +200,12 @@ fn schedule_places_emission_day_after_offering_wwd_and_resumes_oldest_due_after_
         let briefed = outbe_system_common::time::EmissionDate::new(20260902);
         outbe_desis::api::schedule_auction(storage.clone(), briefed).unwrap();
         crate::commands::process_emission_day(&aligned, 20260902).unwrap();
-        let completed = api::emission_day(storage.clone(), 20260902)
+        let completed = outbe_emission::api::get_emission_day(storage.clone(), 20260902)
             .unwrap()
             .unwrap();
         assert_eq!(completed.day, 20260902);
         assert_eq!(completed.wwd, wwd_sep_01);
-        assert_eq!(completed.state, metadosis_state::COMPLETED);
+        assert_eq!(completed.metadosis_state, metadosis_state::COMPLETED);
         let desis = outbe_desis::schema::DesisContract::new(storage);
         assert_eq!(desis.desis_limit_set.read(&briefed).unwrap(), 1);
         assert_eq!(desis.has_desis_limit.read(&briefed).unwrap(), 0);
@@ -222,7 +231,7 @@ fn genesis_ctx<'a>(storage: &StorageHandle<'a>, timestamp: u64) -> BlockRuntimeC
 }
 
 #[test]
-fn first_wwd_for_genesis_splits_0_or_1_empty_emission_days_across_noon_utc() {
+fn first_wwd_for_genesis_splits_0_or_1_empty_emission_day_across_noon_utc() {
     // Genesis on 2026-10-01 at 11:59 UTC -> first_wwd = 20260930 (G - 1), whose
     // emission day is G: no empty EmissionDay.
     with_storage(|storage| {
@@ -235,10 +244,13 @@ fn first_wwd_for_genesis_splits_0_or_1_empty_emission_days_across_noon_utc() {
         let ctx = genesis_ctx(&storage, genesis_before_noon);
         outbe_worldwideday::advance_worldwide_days_command(&ctx).unwrap();
 
-        let first_proj = api::worldwide_day(storage.clone(), WorldwideDay::new(20260930))
-            .unwrap()
-            .unwrap();
-        assert_eq!(first_proj.day, 20261001);
+        let first_wwd = outbe_worldwideday::api::get_worldwide_day(
+            storage.clone(),
+            WorldwideDay::new(20260930),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(first_wwd.emission_day, 20261001);
     });
 
     // Genesis on 2026-10-01 at 12:01 UTC -> first_wwd = 20261001 (G), whose
@@ -252,10 +264,13 @@ fn first_wwd_for_genesis_splits_0_or_1_empty_emission_days_across_noon_utc() {
         let ctx = genesis_ctx(&storage, genesis_after_noon);
         outbe_worldwideday::advance_worldwide_days_command(&ctx).unwrap();
 
-        let first_proj = api::worldwide_day(storage.clone(), WorldwideDay::new(20261001))
-            .unwrap()
-            .unwrap();
-        assert_eq!(first_proj.day, 20261002);
+        let first_wwd = outbe_worldwideday::api::get_worldwide_day(
+            storage.clone(),
+            WorldwideDay::new(20261001),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(first_wwd.emission_day, 20261002);
         let shell = outbe_emission::api::ensure_emission_day_shell(storage.clone(), 20261001)
             .expect("empty day shell");
         assert_eq!(shell.wwd, WorldwideDay::new(0));
@@ -266,11 +281,11 @@ fn first_wwd_for_genesis_splits_0_or_1_empty_emission_days_across_noon_utc() {
             date_key_to_utc_timestamp(20261002).unwrap() + 12 * 3_600,
         );
         crate::commands::process_emission_day(&empty_due_ctx, 20261001).unwrap();
-        let settled_empty = api::emission_day(storage.clone(), 20261001)
+        let settled_empty = outbe_emission::api::get_emission_day(storage.clone(), 20261001)
             .unwrap()
             .unwrap();
         assert_eq!(settled_empty.wwd, WorldwideDay::new(0));
-        assert_eq!(settled_empty.state, metadosis_state::COMPLETED);
+        assert_eq!(settled_empty.metadosis_state, metadosis_state::COMPLETED);
 
         // Catch-up on 2026-10-11 opens every WWD whose offering_end is still after
         // 2026-10-11 00:00 UTC: 20261009..=20261012.
@@ -292,12 +307,16 @@ fn first_wwd_for_genesis_splits_0_or_1_empty_emission_days_across_noon_utc() {
         );
         outbe_worldwideday::advance_worldwide_days_command(&catchup_ctx).unwrap();
         for wwd_key in 20261009..=20261012 {
-            let proj = api::worldwide_day(storage.clone(), WorldwideDay::new(wwd_key))
-                .unwrap()
-                .expect("catch-up and lookahead WWD must exist");
-            let ed = api::emission_day(storage.clone(), proj.day)
-                .unwrap()
-                .expect("linked emission day must exist");
+            let wwd_record = outbe_worldwideday::api::get_worldwide_day(
+                storage.clone(),
+                WorldwideDay::new(wwd_key),
+            )
+            .unwrap()
+            .expect("catch-up and lookahead WWD must exist");
+            let ed =
+                outbe_emission::api::get_emission_day(storage.clone(), wwd_record.emission_day)
+                    .unwrap()
+                    .expect("linked emission day must exist");
             assert_eq!(ed.wwd, WorldwideDay::new(wwd_key));
         }
     });
@@ -311,36 +330,38 @@ fn wwd_takes_offers_only_by_the_time_and_seals_on_close() {
         advance_at(&storage, genesis_ts, genesis_ts);
 
         let factory = WorldwideDayContract::new(storage.clone());
-        let proj = api::worldwide_day(storage.clone(), wwd).unwrap().unwrap();
+        let wwd_record = outbe_worldwideday::api::get_worldwide_day(storage.clone(), wwd)
+            .unwrap()
+            .unwrap();
         assert_eq!(
-            proj.forming_end,
+            wwd_record.forming_end().unwrap(),
             date_key_to_utc_timestamp(20261002).unwrap() + 12 * 3_600
         );
         assert_eq!(
-            proj.offerings_start,
+            wwd_record.offering_start,
             date_key_to_utc_timestamp(20261001).unwrap() + 10 * 3_600
         );
         assert_eq!(
-            proj.offering_end,
+            wwd_record.offering_end,
             date_key_to_utc_timestamp(20261003).unwrap() + 12 * 3_600
         );
         assert!(!outbe_worldwideday::is_worldwide_day_sealed(storage.clone(), wwd).unwrap());
 
         // The day takes offers by the time, with no oracle price.
         storage
-            .set_block_timestamp(U256::from(proj.offerings_start))
+            .set_block_timestamp(U256::from(wwd_record.offering_start))
             .unwrap();
         assert!(api::is_offering_day(storage.clone(), wwd).unwrap());
         assert!(api::offering_worldwide_days(storage.clone())
             .unwrap()
             .contains(&wwd));
         storage
-            .set_block_timestamp(U256::from(proj.offering_end))
+            .set_block_timestamp(U256::from(wwd_record.offering_end))
             .unwrap();
         assert!(!api::is_offering_day(storage.clone(), wwd).unwrap());
 
         // The daily step on 2026-10-04 00:00 UTC seals the offering window.
-        let seal_ts = proj.offering_end + 12 * 3_600;
+        let seal_ts = wwd_record.offering_end + 12 * 3_600;
         advance_at(&storage, seal_ts, genesis_ts);
         assert!(!factory.pipeline_wwd.read_all().unwrap().contains(&wwd));
         assert!(outbe_worldwideday::is_worldwide_day_sealed(storage.clone(), wwd).unwrap());
@@ -358,26 +379,28 @@ fn wwd_without_price_runs_as_empty_day() {
         let genesis_ts = date_key_to_utc_timestamp(20261001).unwrap() + 12 * 3_600;
         advance_at(&storage, genesis_ts, genesis_ts);
 
-        let proj = api::worldwide_day(storage.clone(), wwd).unwrap().unwrap();
-        assert_eq!(proj.day, emission_day);
-        let linked = api::emission_day(storage.clone(), emission_day)
+        let wwd_record = outbe_worldwideday::api::get_worldwide_day(storage.clone(), wwd)
+            .unwrap()
+            .unwrap();
+        assert_eq!(wwd_record.emission_day, emission_day);
+        let linked = outbe_emission::api::get_emission_day(storage.clone(), emission_day)
             .unwrap()
             .unwrap();
         assert_eq!(linked.wwd, wwd);
-        assert_eq!(linked.state, metadosis_state::PENDING);
+        assert_eq!(linked.metadosis_state, metadosis_state::PENDING);
 
-        let step_ts = proj.forming_end + 12 * 3_600;
+        let step_ts = wwd_record.forming_end().unwrap() + 12 * 3_600;
         advance_at(&storage, step_ts, genesis_ts);
         assert_eq!(
-            api::emission_day(storage.clone(), emission_day)
+            outbe_emission::api::get_emission_day(storage.clone(), emission_day)
                 .unwrap()
                 .unwrap()
-                .state,
+                .metadosis_state,
             metadosis_state::PENDING
         );
 
         storage
-            .set_block_timestamp(U256::from(proj.offerings_start))
+            .set_block_timestamp(U256::from(wwd_record.offering_start))
             .unwrap();
         assert!(api::is_offering_day(storage.clone(), wwd).unwrap());
 
@@ -409,10 +432,10 @@ fn wwd_without_price_runs_as_empty_day() {
             genesis_ts,
         );
         assert!(outbe_worldwideday::is_worldwide_day_sealed(storage.clone(), wwd).unwrap());
-        let settled = api::emission_day(storage.clone(), emission_day)
+        let settled = outbe_emission::api::get_emission_day(storage.clone(), emission_day)
             .unwrap()
             .unwrap();
-        assert_eq!(settled.state, metadosis_state::COMPLETED);
+        assert_eq!(settled.metadosis_state, metadosis_state::COMPLETED);
         assert_eq!(settled.wwd, wwd);
         assert_eq!(
             outbe_worldwideday::worldwide_day_totals(storage.clone(), wwd)
@@ -496,7 +519,7 @@ fn zero_metadosis_limit_cancels_day_with_reason_one_and_preserves_cancelled_stat
         );
         crate::commands::process_emission_day(&ctx, emission_day).unwrap();
 
-        let record = outbe_emission::api::get_emission_day_record(storage, emission_day)
+        let record = outbe_emission::api::get_emission_day(storage, emission_day)
             .unwrap()
             .unwrap();
         assert_eq!(

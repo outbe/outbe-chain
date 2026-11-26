@@ -196,7 +196,7 @@ pub fn issue_nod(storage: &StorageHandle<'_>, input: IssueNodInput) -> Result<U2
     let (sub_series_id, entry_price_minor) = offer_terms(storage, &wwd, &input, now, &pricing)?;
     let request = offer_request(
         &input,
-        (wwd.day, entry_price_minor),
+        (wwd.emission_day, entry_price_minor),
         &pricing,
         OfferZkContext {
             derived_owner: proof.public.derived_owner,
@@ -225,14 +225,18 @@ pub fn issue_nod(storage: &StorageHandle<'_>, input: IssueNodInput) -> Result<U2
 /// Nod, or the 24-hour reference VWAP of the hour for a new sub-series.
 pub(crate) fn offer_terms(
     storage: &StorageHandle<'_>,
-    wwd: &outbe_worldwideday::WwdProjection,
+    wwd: &outbe_worldwideday::WorldwideDayRecord,
     input: &IssueNodInput,
     now: u64,
     pricing: &outbe_oracle::api::OfferPricingInputs,
 ) -> Result<(u16, U256)> {
-    let sub_series_id = offer_hour(now, wwd.offerings_start)?;
-    let series_id = SeriesId::for_pair(wwd.day, input.issuance_currency, input.reference_currency)
-        .map_err(|_| crate::errors::NodFactoryError::InvalidEncryptedNod)?;
+    let sub_series_id = offer_hour(now, wwd.offering_start)?;
+    let series_id = SeriesId::for_pair(
+        wwd.emission_day,
+        input.issuance_currency,
+        input.reference_currency,
+    )
+    .map_err(|_| crate::errors::NodFactoryError::InvalidEncryptedNod)?;
     let entry_price_minor = nod_api::sub_series_entry_price(storage, series_id, sub_series_id)?
         .unwrap_or(pricing.reference_vwap_minor);
     Ok((sub_series_id, entry_price_minor))
@@ -313,9 +317,9 @@ pub(crate) fn record_offer(
 }
 
 /// Whole hours from the start of the offering window to the hour of `now`.
-pub(crate) fn offer_hour(now: u64, offerings_start: u64) -> Result<u16> {
+pub(crate) fn offer_hour(now: u64, offering_start: u64) -> Result<u16> {
     let hour_start = now - now % SECONDS_PER_HOUR;
-    let hours = hour_start.saturating_sub(offerings_start) / SECONDS_PER_HOUR;
+    let hours = hour_start.saturating_sub(offering_start) / SECONDS_PER_HOUR;
     Ok(u16::try_from(hours).map_err(|_| crate::errors::NodFactoryError::InvalidEncryptedNod)?)
 }
 
@@ -413,7 +417,7 @@ pub(crate) fn pricing(
     storage: &StorageHandle<'_>,
     input: &IssueNodInput,
 ) -> Result<(
-    outbe_worldwideday::WwdProjection,
+    outbe_worldwideday::WorldwideDayRecord,
     outbe_oracle::api::OfferPricingInputs,
 )> {
     let worldwide_day = input.worldwide_day;
@@ -423,7 +427,7 @@ pub(crate) fn pricing(
     if !outbe_worldwideday::is_offering_day(storage.clone(), worldwide_day)? {
         return Err(OfferError::WorldwideDayNotOffering { worldwide_day }.into());
     }
-    let wwd = outbe_worldwideday::worldwide_day(storage.clone(), worldwide_day)?
+    let wwd = outbe_worldwideday::get_worldwide_day(storage.clone(), worldwide_day)?
         .ok_or(OfferError::WorldwideDayNotOffering { worldwide_day })?;
     outbe_oracle::api::check_reference_currency(input.reference_currency)?;
     let pricing = outbe_oracle::api::offer_pricing_inputs(

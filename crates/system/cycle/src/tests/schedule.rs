@@ -202,7 +202,7 @@ fn block_1_cycle_tick_creates_genesis_worldwide_day() {
 
         // Sanity: no worldwide day exists before CycleTick.
         assert!(
-            outbe_metadosis::api::worldwide_days(ctx.storage.clone())
+            outbe_worldwideday::api::worldwide_days(ctx.storage.clone())
                 .unwrap()
                 .is_empty(),
             "no worldwide day should exist before block-1 CycleTick"
@@ -211,7 +211,7 @@ fn block_1_cycle_tick_creates_genesis_worldwide_day() {
         run_cycle_tick(&ctx).unwrap();
 
         assert!(
-            !outbe_metadosis::api::worldwide_days(ctx.storage.clone())
+            !outbe_worldwideday::api::worldwide_days(ctx.storage.clone())
                 .unwrap()
                 .is_empty(),
             "block-1 CycleTick must create the genesis worldwide day"
@@ -244,7 +244,7 @@ fn frozen_final_profile_initializes_metadosis_at_its_existing_activation_height(
         run_cycle_tick_at_activation(&block_1, 32).unwrap();
 
         assert!(
-            outbe_metadosis::api::worldwide_days(block_1.storage.clone())
+            outbe_worldwideday::api::worldwide_days(block_1.storage.clone())
                 .unwrap()
                 .is_empty(),
             "the frozen Final/32 evidence profile must not initialize Metadosis at block 1"
@@ -257,7 +257,7 @@ fn frozen_final_profile_initializes_metadosis_at_its_existing_activation_height(
         run_cycle_tick_at_activation(&activation, 32).unwrap();
 
         assert!(
-            !outbe_metadosis::api::worldwide_days(activation.storage.clone())
+            !outbe_worldwideday::api::worldwide_days(activation.storage.clone())
                 .unwrap()
                 .is_empty(),
             "the existing Final/32 evidence profile must initialize Metadosis after its fork install"

@@ -31,6 +31,7 @@ outbe-primitives = { workspace = true, features = ["bench-utils", "test-utils"] 
 outbe-promis = { workspace = true, features = ["test-enclave"] }
 outbe-promisfactory.workspace = true
 outbe-vaultrouter = { workspace = true, features = ["test-utils"] }
+outbe-worldwideday.workspace = true
 evm2 = { workspace = true, features = ["std"] }
 serde.workspace = true
 serde_json.workspace = true

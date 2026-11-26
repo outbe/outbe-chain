@@ -70,10 +70,10 @@ fn fixture(limit: u64, nominals: &[u64]) -> HashMapStorageProvider {
         let forming_start = WWD.start_timestamp().unwrap();
         let forming_end =
             forming_start + outbe_chain_constants::get_metadosis_forming_period_seconds();
-        let offerings_start =
+        let offering_start =
             forming_start + outbe_chain_constants::OFFERING_START_AFTER_FORMING_START_SECONDS;
         let offering_end =
-            offerings_start + outbe_chain_constants::get_metadosis_offering_period_seconds();
+            offering_start + outbe_chain_constants::get_metadosis_offering_period_seconds();
         let binding = outbe_system_common::metadosis_bindings::metadosis_process_ready_binding(
             storage.chain_id().unwrap(),
             storage.block_number().unwrap(),
@@ -85,8 +85,7 @@ fn fixture(limit: u64, nominals: &[u64]) -> HashMapStorageProvider {
                 binding,
                 || {
                     let mut factory = WorldwideDayContract::new(storage.clone());
-                    let metadosis = MetadosisContract::new(storage.clone());
-                    let mut ed = crate::schema::EmissionDay::new_with_limit(
+                    let mut ed = outbe_emission::EmissionDay::new_with_limit(
                         DAY,
                         WWD,
                         50,
@@ -94,15 +93,15 @@ fn fixture(limit: u64, nominals: &[u64]) -> HashMapStorageProvider {
                         metadosis_state::PENDING,
                     );
                     ed.state = outbe_emission::schema::emission_day_state::PROCESSING;
-                    metadosis.emission_days().create(&ed)?;
+                    outbe_emission::api::put_emission_day(storage.clone(), &ed)?;
                     outbe_worldwideday::open_worldwide_day(
                         &mut factory,
                         WWD,
                         outbe_worldwideday::NewWwdSchedule {
-                            day: DAY,
+                            emission_day: DAY,
                             forming_start,
                             forming_end,
-                            offerings_start,
+                            offering_start,
                             offering_end,
                         },
                     )?;
@@ -181,7 +180,7 @@ fn promis_limit(provider: &mut HashMapStorageProvider) -> U256 {
 
 fn record(provider: &mut HashMapStorageProvider) -> outbe_emission::schema::EmissionDay {
     StorageHandle::enter(provider, |storage| {
-        outbe_emission::api::get_emission_day_record(storage, DAY)
+        outbe_emission::api::get_emission_day(storage, DAY)
             .unwrap()
             .unwrap()
     })

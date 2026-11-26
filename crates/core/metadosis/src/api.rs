@@ -1,55 +1,5 @@
-use alloy_primitives::U256;
 use outbe_primitives::{error::Result, storage::StorageHandle};
 use outbe_system_common::time::WorldwideDay;
-use outbe_worldwideday::{ValidatedWwdAggregate, WwdProjection};
-
-use crate::schema::{EmissionContract, EmissionDay};
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct EmissionDayProjection {
-    pub day: u32,
-    pub emission_limit_minor: U256,
-    pub wwd: WorldwideDay,
-    pub metadosis_start: u64,
-    pub state: u8,
-}
-
-impl From<EmissionDay> for EmissionDayProjection {
-    fn from(record: EmissionDay) -> Self {
-        Self {
-            day: record.day,
-            emission_limit_minor: U256::from(record.metadosis_limit.max(record.emission_limit)),
-            wwd: record.wwd,
-            metadosis_start: record.metadosis_start,
-            state: record.metadosis_state,
-        }
-    }
-}
-
-/// Reads one typed EmissionDay projection by its `YYYYMMDD` UTC day key from `EMISSION_ADDRESS`.
-pub fn emission_day(storage: StorageHandle<'_>, day: u32) -> Result<Option<EmissionDayProjection>> {
-    Ok(EmissionContract::new(storage)
-        .emission_days
-        .get(day)?
-        .map(EmissionDayProjection::from))
-}
-
-/// Reads one typed WWD projection without exposing its storage facade.
-pub fn worldwide_day(
-    storage: StorageHandle<'_>,
-    wwd: WorldwideDay,
-) -> Result<Option<WwdProjection>> {
-    outbe_worldwideday::api::worldwide_day(storage, wwd)
-}
-
-/// Reads the complete bounded typed WWD aggregate without exposing indexes or
-/// storage entries. This function sorts the returned projections by WorldwideDay.
-pub fn worldwide_days(storage: StorageHandle<'_>) -> Result<Vec<WwdProjection>> {
-    Ok(ValidatedWwdAggregate::load_and_validate(storage)?
-        .records()
-        .copied()
-        .collect())
-}
 
 /// Checks whether the current block timestamp falls in the offering window of `wwd`.
 pub fn is_offering_day(storage: StorageHandle<'_>, wwd: WorldwideDay) -> Result<bool> {

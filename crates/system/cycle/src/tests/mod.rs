@@ -302,7 +302,7 @@ pub(super) fn active_utc_day(ctx: &BlockRuntimeContext<'_>) -> u32 {
 }
 
 pub(super) fn is_day_allocated(ctx: &BlockRuntimeContext<'_>, day: u32) -> bool {
-    outbe_emission::api::get_emission_day_record(ctx.storage.clone(), day)
+    outbe_emission::api::get_emission_day(ctx.storage.clone(), day)
         .unwrap()
         .is_some_and(|rec| {
             rec.state == outbe_emission::schema::emission_day_state::PROCESSING

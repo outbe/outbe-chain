@@ -9,47 +9,6 @@ use crate::{
     schema::{emission_day_state, metadosis_state, EmissionContract, EmissionDay},
 };
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct EmissionDayProjection {
-    pub day: u32,
-    pub wwd: WorldwideDay,
-    pub metadosis_start: u64,
-    pub state: u8,
-    pub metadosis_state: u8,
-    pub emission_limit: u128,
-    pub emission_limit_minor: U256,
-    pub metadosis_limit: u128,
-    pub desis_limit: u128,
-    pub validators: u128,
-    pub waa: u128,
-    pub sra: u128,
-    pub cca: u128,
-    pub nods: u128,
-    pub promis_limit: u128,
-}
-
-impl From<EmissionDay> for EmissionDayProjection {
-    fn from(record: EmissionDay) -> Self {
-        Self {
-            day: record.day,
-            wwd: record.wwd,
-            metadosis_start: record.metadosis_start,
-            state: record.state,
-            metadosis_state: record.metadosis_state,
-            emission_limit: record.emission_limit,
-            emission_limit_minor: U256::from(record.emission_limit),
-            metadosis_limit: record.metadosis_limit,
-            desis_limit: record.desis_limit,
-            validators: record.validators,
-            waa: record.waa,
-            sra: record.sra,
-            cca: record.cca,
-            nods: record.nods,
-            promis_limit: record.promis_limit,
-        }
-    }
-}
-
 /// Amounts produced by daily `EmissionDay(E)` limit allocation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DayAllocationAmounts {
@@ -91,30 +50,26 @@ pub fn compute_metadosis_start(day: u32) -> Result<u64> {
         .ok_or_else(|| EmissionError::WaitingWindowOverflow.into())
 }
 
-/// Reads one typed `EmissionDayProjection` by its `YYYYMMDD` UTC day key.
-pub fn emission_day(storage: StorageHandle<'_>, day: u32) -> Result<Option<EmissionDayProjection>> {
-    Ok(EmissionContract::new(storage)
-        .emission_days
-        .get(day)?
-        .map(EmissionDayProjection::from))
-}
-
-/// Reads the raw `EmissionDay` record by its `YYYYMMDD` UTC day key.
-pub fn get_emission_day_record(
-    storage: StorageHandle<'_>,
-    day: u32,
-) -> Result<Option<EmissionDay>> {
+/// Reads the stored `EmissionDay` record by its `YYYYMMDD` UTC day key.
+pub fn get_emission_day(storage: StorageHandle<'_>, day: u32) -> Result<Option<EmissionDay>> {
     EmissionContract::new(storage).emission_days.get(day)
 }
 
-/// Writes or creates an `EmissionDay` record directly.
-pub fn put_emission_day_record(storage: StorageHandle<'_>, record: &EmissionDay) -> Result<()> {
+/// Creates or replaces an `EmissionDay` record with no checks. Test builds only.
+#[cfg(any(test, feature = "test-utils"))]
+pub fn put_emission_day(storage: StorageHandle<'_>, record: &EmissionDay) -> Result<()> {
     let contract = EmissionContract::new(storage);
     if contract.emission_days.get(record.day)?.is_some() {
         contract.emission_days.update(record)
     } else {
         contract.emission_days.create(record)
     }
+}
+
+/// Deletes the `EmissionDay` record of `day` with no checks. Test builds only.
+#[cfg(any(test, feature = "test-utils"))]
+pub fn delete_emission_day(storage: StorageHandle<'_>, day: u32) -> Result<()> {
+    EmissionContract::new(storage).emission_days.delete(day)
 }
 
 /// Links `WorldwideDay` `wwd` (`D`) to `EmissionDay` `day` (`E`).
@@ -487,10 +442,13 @@ mod tests {
         // Idempotent repeat:
         link_wwd(storage.clone(), day, wwd).unwrap();
 
-        let proj = emission_day(storage.clone(), day).unwrap().unwrap();
-        assert_eq!(proj.wwd, wwd);
-        assert_eq!(proj.state, emission_day_state::PENDING);
-        assert_eq!(proj.metadosis_start, compute_metadosis_start(day).unwrap());
+        let record = get_emission_day(storage.clone(), day).unwrap().unwrap();
+        assert_eq!(record.wwd, wwd);
+        assert_eq!(record.state, emission_day_state::PENDING);
+        assert_eq!(
+            record.metadosis_start,
+            compute_metadosis_start(day).unwrap()
+        );
 
         // Conflicting WWD is rejected:
         let err = link_wwd(storage.clone(), day, WorldwideDay::new(20261002)).unwrap_err();
@@ -603,7 +561,7 @@ mod tests {
         let unknown_state = 20261003;
         let mut record = EmissionDay::new_pending(unknown_state, WorldwideDay::new(0), 1);
         record.state = 3;
-        put_emission_day_record(storage.clone(), &record).unwrap();
+        put_emission_day(storage.clone(), &record).unwrap();
         let expected = EmissionError::DayAlreadyAllocated {
             day: unknown_state,
             state: 3,
@@ -650,11 +608,9 @@ mod tests {
         let broken = 20261002;
         record_day_allocation(storage.clone(), broken, amounts).unwrap();
         record_metadosis_failed(storage.clone(), broken, U256::ZERO).unwrap();
-        let mut record = get_emission_day_record(storage.clone(), broken)
-            .unwrap()
-            .unwrap();
+        let mut record = get_emission_day(storage.clone(), broken).unwrap().unwrap();
         record.validators += 1;
-        put_emission_day_record(storage.clone(), &record).unwrap();
+        put_emission_day(storage.clone(), &record).unwrap();
         let mismatch = EmissionError::ConservationInvariantViolated {
             day: broken,
             expected_limit: 100,
@@ -671,10 +627,7 @@ mod tests {
             record_reward_pool_residue(storage.clone(), broken, RewardPool::Waa, U256::from(1))
                 .unwrap_err();
         assert_emission_error(error, mismatch);
-        assert_eq!(
-            get_emission_day_record(storage, broken).unwrap(),
-            Some(record)
-        );
+        assert_eq!(get_emission_day(storage, broken).unwrap(), Some(record));
     }
 
     #[test]
@@ -718,9 +671,7 @@ mod tests {
             .into_iter()
             .enumerate()
             {
-                let before = get_emission_day_record(storage.clone(), day)
-                    .unwrap()
-                    .unwrap();
+                let before = get_emission_day(storage.clone(), day).unwrap().unwrap();
                 let after =
                     record_reward_pool_residue(storage.clone(), day, pool, U256::from(3)).unwrap();
                 let mut expected = before;
@@ -736,10 +687,7 @@ mod tests {
                     after.promis_limit,
                     if settle_metadosis_first { 60 } else { 0 } + 3 * (index as u128 + 1)
                 );
-                assert_eq!(
-                    get_emission_day_record(storage.clone(), day).unwrap(),
-                    Some(after)
-                );
+                assert_eq!(get_emission_day(storage.clone(), day).unwrap(), Some(after));
             }
             if !settle_metadosis_first {
                 record_metadosis_failed(storage.clone(), day, U256::ZERO).unwrap();
@@ -758,7 +706,7 @@ mod tests {
         let error = record_reward_pool_residue(storage.clone(), day, RewardPool::Waa, U256::ZERO)
             .unwrap_err();
         assert_emission_error(error, EmissionError::EmissionDayNotFound);
-        assert_eq!(get_emission_day_record(storage.clone(), day).unwrap(), None);
+        assert_eq!(get_emission_day(storage.clone(), day).unwrap(), None);
 
         for state in [
             emission_day_state::PENDING,
@@ -767,7 +715,7 @@ mod tests {
         ] {
             let mut record = EmissionDay::new_pending(day, WorldwideDay::new(0), 1);
             record.state = state;
-            put_emission_day_record(storage.clone(), &record).unwrap();
+            put_emission_day(storage.clone(), &record).unwrap();
             let error =
                 record_reward_pool_residue(storage.clone(), day, RewardPool::Waa, U256::ZERO)
                     .unwrap_err();
@@ -780,7 +728,7 @@ mod tests {
                 },
             );
             assert_eq!(
-                get_emission_day_record(storage.clone(), day).unwrap(),
+                get_emission_day(storage.clone(), day).unwrap(),
                 Some(record)
             );
         }
@@ -796,7 +744,7 @@ mod tests {
         record.metadosis_state = metadosis_state::COMPLETED;
         record.emission_limit = u128::MAX;
         record.validators = u128::MAX;
-        put_emission_day_record(storage.clone(), &record).unwrap();
+        put_emission_day(storage.clone(), &record).unwrap();
         for (pool, residue) in [
             (RewardPool::Validator, U256::from(u128::MAX) + U256::from(1)),
             (RewardPool::Waa, U256::from(1)),
@@ -807,7 +755,7 @@ mod tests {
                 record_reward_pool_residue(storage.clone(), day, pool, residue).unwrap_err();
             assert_emission_error(error, EmissionError::AmountOverflow);
             assert_eq!(
-                get_emission_day_record(storage.clone(), day).unwrap(),
+                get_emission_day(storage.clone(), day).unwrap(),
                 Some(record)
             );
         }
@@ -823,12 +771,12 @@ mod tests {
         check_conservation(&after).unwrap();
 
         record.promis_limit = u128::MAX;
-        put_emission_day_record(storage.clone(), &record).unwrap();
+        put_emission_day(storage.clone(), &record).unwrap();
         let error =
             record_reward_pool_residue(storage.clone(), day, RewardPool::Validator, U256::from(1))
                 .unwrap_err();
         assert_emission_error(error, EmissionError::AmountOverflow);
-        assert_eq!(get_emission_day_record(storage, day).unwrap(), Some(record));
+        assert_eq!(get_emission_day(storage, day).unwrap(), Some(record));
     }
 
     #[test]
@@ -843,7 +791,7 @@ mod tests {
         record.waa = 10;
         for metadosis_state in [metadosis_state::PENDING, metadosis_state::COMPLETED] {
             record.metadosis_state = metadosis_state;
-            put_emission_day_record(storage.clone(), &record).unwrap();
+            put_emission_day(storage.clone(), &record).unwrap();
             let error =
                 record_reward_pool_residue(storage.clone(), day, RewardPool::Waa, U256::from(1))
                     .unwrap_err();
@@ -860,16 +808,16 @@ mod tests {
                 },
             );
             assert_eq!(
-                get_emission_day_record(storage.clone(), day).unwrap(),
+                get_emission_day(storage.clone(), day).unwrap(),
                 Some(record)
             );
         }
         record.metadosis_state = u8::MAX;
-        put_emission_day_record(storage.clone(), &record).unwrap();
+        put_emission_day(storage.clone(), &record).unwrap();
         assert!(
             record_reward_pool_residue(storage.clone(), day, RewardPool::Waa, U256::ZERO).is_err()
         );
-        assert_eq!(get_emission_day_record(storage, day).unwrap(), Some(record));
+        assert_eq!(get_emission_day(storage, day).unwrap(), Some(record));
     }
 
     #[test]
@@ -903,12 +851,10 @@ mod tests {
             },
         );
 
-        let mut zero_limit_record = get_emission_day_record(storage.clone(), day)
-            .unwrap()
-            .unwrap();
+        let mut zero_limit_record = get_emission_day(storage.clone(), day).unwrap().unwrap();
         zero_limit_record.metadosis_limit = 0;
         zero_limit_record.promis_limit = 20;
-        put_emission_day_record(storage.clone(), &zero_limit_record).unwrap();
+        put_emission_day(storage.clone(), &zero_limit_record).unwrap();
 
         let canceled = record_metadosis_canceled(storage.clone(), day).unwrap();
         assert_eq!(canceled.metadosis_state, metadosis_state::CANCELLED);

@@ -12,11 +12,11 @@ pub mod record;
 pub mod schema;
 
 pub use aggregate::{
-    close_worldwide_day, open_worldwide_day, NewWwdSchedule, ValidatedWwdAggregate, WwdProjection,
+    close_worldwide_day, open_worldwide_day, NewWwdSchedule, ValidatedWwdAggregate,
 };
 pub use api::{
-    emission_day_of, is_offering_day, is_worldwide_day_sealed, offering_worldwide_days,
-    record_worldwide_day_nod, seal_worldwide_day, worldwide_day, worldwide_day_totals,
+    emission_day_of, get_worldwide_day, is_offering_day, is_worldwide_day_sealed,
+    offering_worldwide_days, record_worldwide_day_nod, seal_worldwide_day, worldwide_day_totals,
     worldwide_days, WorldwideDayTotals,
 };
 pub use lifecycle::{
