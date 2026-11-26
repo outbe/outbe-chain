@@ -15,6 +15,7 @@
 //! calls that a spend makes.
 
 mod merge;
+mod transfer;
 
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolCall;

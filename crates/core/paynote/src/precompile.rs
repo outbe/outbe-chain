@@ -1,7 +1,8 @@
 //! Outbe `DispatchFn` adapter for the PayNote precompile, the payable-selector
 //! policy, and the selector-sensitive base gas.
 //!
-//! Deposits, proof-authorized merges and withdrawals, and views are public.
+//! Deposits, proof-authorized merges, withdrawals and transfers, and views are
+//! public.
 //! Only the settlement factories may call `consume`. They reach it through [`crate::api::consume`].
 
 use alloy_primitives::{Address, Bytes, U256};
@@ -98,6 +99,12 @@ pub fn dispatch(
             withdraw(c) => mutate_void(&storage, c, caller, |_, c| {
                 runtime::withdraw(&storage, &c.proof, c.recipient)
             }),
+            transfer(c) => mutate_void(&storage, c, caller, |_, c| {
+                runtime::transfer(&storage, &c.proof)
+            }),
+            resolveTransfer(c) => mutate_void(&storage, c, caller, |_, c| {
+                runtime::resolve_transfer(&storage, &c.proof)
+            }),
             maxMergeInputs(c) => view(c, |_| runtime::max_merge_inputs()),
             currentRoot(c) => view(c, |_| {
                 let paynote: PayNoteContract<'_> = storage.contract();
@@ -130,7 +137,9 @@ pub fn base_gas(input: &[u8]) -> u64 {
         Some(&IPayNote::depositCall::SELECTOR) => PAYNOTE_DEPOSIT_BASE_GAS,
         Some(&IPayNote::mergePayNotesCall::SELECTOR)
         | Some(&IPayNote::consumeCall::SELECTOR)
-        | Some(&IPayNote::withdrawCall::SELECTOR) => PAYNOTE_MERGE_BASE_GAS,
+        | Some(&IPayNote::withdrawCall::SELECTOR)
+        | Some(&IPayNote::transferCall::SELECTOR)
+        | Some(&IPayNote::resolveTransferCall::SELECTOR) => PAYNOTE_MERGE_BASE_GAS,
         Some(&IPayNote::currentRootCall::SELECTOR)
         | Some(&IPayNote::maxMergeInputsCall::SELECTOR)
         | Some(&IPayNote::leafCountCall::SELECTOR)

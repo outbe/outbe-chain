@@ -115,6 +115,45 @@ pub fn change_key(note_spend_key: Field, note_nullifier: Field) -> Result<Field,
     )
 }
 
+/// `lock = P(TRANSFER_LOCK, [recipient_pk, sender_serial, rho])` — who may
+/// resolve a locked transfer note. Both parties are [`note_sn`] of a key they
+/// hold. `rho` is the sender's random nonce.
+pub fn transfer_lock(
+    recipient_pk: Field,
+    sender_serial: Field,
+    rho: Field,
+) -> Result<Field, Error> {
+    Pool::hash_multi(
+        tag(hash::ascii_field("TRANSFER_LOCK"))?,
+        &[recipient_pk, sender_serial, rho],
+    )
+}
+
+/// `P(TRANSFER, [chain_id, lock, deadline, asset, amount limbs])` — the leaf of
+/// a locked transfer note. Its nullifier is [`note_nullifier`] under `rho`.
+#[cfg(feature = "alloy")]
+pub fn transfer_commitment(
+    chain_id: u64,
+    lock: Field,
+    deadline: u64,
+    asset: Address,
+    amount: U256,
+) -> Result<Field, Error> {
+    let [lo, mid, hi] = codec::fields_from_u256(&amount)?;
+    Pool::hash_multi(
+        tag(hash::ascii_field("TRANSFER"))?,
+        &[
+            chain_id.to_field()?,
+            lock,
+            deadline.to_field()?,
+            asset.to_field()?,
+            lo,
+            mid,
+            hi,
+        ],
+    )
+}
+
 /// Chain-specific empty leaf: `P(EMPTY, [chain_id])`. Deliberately not zero —
 /// the circuit's `commitment != 0` assert is what blocks spending a
 /// zero-padded slot, and this keeps empty slots distinguishable per chain.

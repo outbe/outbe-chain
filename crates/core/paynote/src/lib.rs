@@ -27,6 +27,14 @@
 //! recipient through [`api::withdraw_context`]. The pool pays the spent amount
 //! to that recipient, as the ERC20 of the note or as native COEN.
 //!
+//! A **transfer** pays another party without sharing a key. `IPayNote.transfer`
+//! turns part of a note into a locked note for the recipient's public key,
+//! which is the note serial of a key the recipient holds. The recipient
+//! resolves it with `IPayNote.resolveTransfer`: into a note of their own, or,
+//! to decline, into the sender's refund serial. After the 30-day timelock the
+//! sender may resolve it too. The sender gives the recipient the note details
+//! off-chain. They do not let anyone spend.
+//!
 //! The hash/tree formulas mirror the frozen noir circuit's `paynote.nr`. The
 //! runtime operates over persistent EVM storage.
 //!

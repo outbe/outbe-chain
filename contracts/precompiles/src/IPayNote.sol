@@ -15,6 +15,10 @@ pragma solidity ^0.8.0;
 /// proof. Only the settlement factories (NodFactory, GemFactory, IntexFactory)
 /// may call `consume`. An EOA pays with a note through the factory's
 /// `settle…WithPayNote` method. Any address may relay a `withdraw`.
+///
+/// A transfer locks a note to a recipient's public key, which is the note serial
+/// of a key the recipient holds. The recipient claims or declines it. After 30
+/// days the sender may reclaim it.
 interface IPayNote {
     /// @notice The pool holds no vault for this asset.
     error AssetVaultMissing(address asset);
@@ -69,6 +73,25 @@ interface IPayNote {
     /// @param recipient Receiver of the funds. Must not be zero or this pool.
     function withdraw(bytes calldata proof, address recipient) external;
 
+    /// @notice Lock part of one note to a recipient. Any address may relay the
+    /// proof.
+    /// @dev Accepts the active `outbe.paynote.transfer` combined proof. Nullifies
+    /// the note and appends a locked transfer note and, for a partial transfer,
+    /// the change note. Amounts and both parties remain private. No tokens move.
+    /// The recipient can resolve the locked note at once. The sender can
+    /// reclaim it from the proof's public `deadline` on, which must be at least
+    /// 30 days after the block timestamp.
+    function transfer(bytes calldata proof) external;
+
+    /// @notice Turn a locked transfer note into an ordinary note. Any address
+    /// may relay the proof.
+    /// @dev Accepts the active `outbe.paynote.claim` combined proof. The
+    /// recipient claims with a serial of their own, or declines with the
+    /// sender's refund serial. The sender reclaims once the deadline has
+    /// passed. The proof's public `not_before` must not be after the block
+    /// timestamp; a sender's proof holds only if the deadline is not after it.
+    function resolveTransfer(bytes calldata proof) external;
+
     /// @notice Maximum input count supported by the active merge circuit.
     function maxMergeInputs() external view returns (uint32 count);
 
@@ -114,6 +137,23 @@ interface IPayNote {
     /// @param nullifier The spent nullifier (indexed).
     /// @param amount Units paid out.
     event NoteWithdrawn(address indexed asset, address indexed recipient, bytes32 indexed nullifier, uint256 amount);
+
+    /// @notice A note was locked to a recipient. `NewNote` follows for the
+    /// locked note and for the change note, if there is one.
+    /// @param asset The note's bound ERC20, or zero for COEN (indexed).
+    /// @param lockedCommitment The locked transfer note (indexed).
+    /// @param nullifier The spent nullifier (indexed).
+    /// @param deadline Unix time from which the sender may reclaim the note.
+    event NoteTransferred(
+        address indexed asset, bytes32 indexed lockedCommitment, bytes32 indexed nullifier, uint64 deadline
+    );
+
+    /// @notice A locked transfer note became an ordinary note: claimed,
+    /// declined or reclaimed. `NewNote` follows for the output.
+    /// @param asset The note's bound ERC20, or zero for COEN (indexed).
+    /// @param outputCommitment The ordinary note created (indexed).
+    /// @param nullifier The nullifier of the locked note (indexed).
+    event TransferResolved(address indexed asset, bytes32 indexed outputCommitment, bytes32 indexed nullifier);
 
     /// @notice These canonical nullifiers were consumed to create one note.
     /// @dev Input commitments and all amounts remain private. NewNote supplies
