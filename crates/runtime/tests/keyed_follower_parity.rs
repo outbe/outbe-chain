@@ -1,5 +1,5 @@
 //! One shared genesis and four independently imported block heights.
-//! Height 1 runs OST3 bootstrap; heights 2–4 carry all five confidential domains.
+//! Height 1 runs OST3 bootstrap; heights 2–4 carry all four confidential domain tags.
 
 #![allow(unused_imports)]
 
@@ -77,10 +77,10 @@ use fixtures::{
 
 const HEIGHTS: u64 = 3;
 const FIRST_BLOCK: u64 = 1;
-const USER_TXS: usize = 4;
+const USER_TXS: usize = 3;
 const MINT_MINOR: u64 = 1_000_000;
 const BURN_MINOR: u64 = 1;
-const DOMAIN_TAGS: [u8; 5] = [1, 2, 5, 10, 21];
+const DOMAIN_TAGS: [u8; 4] = [1, 2, 10, 21];
 const OFFER: &[u8] = b"executor-nod-quote-group-signature-v1!";
 
 type Signed = Recovered<TransactionSigned>;
@@ -258,7 +258,6 @@ fn prepare(
         outbe_core_common::confidential_tee::PROMIS.state_info(),
         user_sender,
     );
-    let fidelity_sig = fidelity_signature(&user_signer, user_sender, chain);
     let signer = test_evm_signer();
     let user_tx = |nonce, to, input| sign_user(&user_signer, nonce, to, input);
     let user_txs = std::iter::once(Vec::new())
@@ -284,12 +283,7 @@ fn prepare(
                         (user_sender, chain, burn, op),
                     ),
                 ),
-                user_tx(
-                    base + 2,
-                    fidelity(),
-                    fidelity_call(user_sender, &fidelity_sig),
-                ),
-                user_tx(base + 3, nod_factory(), nod_call(nod_id, settlement_asset)),
+                user_tx(base + 2, nod_factory(), nod_call(nod_id, settlement_asset)),
             ]
         }))
         .collect();
@@ -411,7 +405,7 @@ fn write_keyed_lease(
         .unwrap();
 }
 
-fn assert_five_domain_witness(extra: &Bytes, begin_len: usize, block_number: u64) {
+fn assert_domain_witness(extra: &Bytes, begin_len: usize, block_number: u64) {
     let artifacts = decode_outbe_block_artifacts(extra)
         .unwrap_or_else(|error| panic!("block {block_number}: {error}"));
     let witness = artifacts
@@ -488,15 +482,6 @@ fn mine(
     data.into()
 }
 
-fn fidelity_call(account: Address, signature: &[u8; 65]) -> Bytes {
-    outbe_fidelity::precompile::IFidelity::getFidelityIndexCall {
-        account,
-        expiry: TEST_BLOCK_TIMESTAMP_BASE + 100_000,
-        signature: Bytes::copy_from_slice(signature),
-    }
-    .abi_encode()
-    .into()
-}
 fn nod_call(nod_id: U256, asset: Address) -> Bytes {
     outbe_nodfactory::precompile::INodFactory::quoteSettlementCall {
         nodId: nod_id,
@@ -511,28 +496,23 @@ fn gratis_factory() -> Address {
 fn promis_factory() -> Address {
     outbe_system_common::addresses::PROMIS_FACTORY_ADDRESS
 }
-fn fidelity() -> Address {
-    outbe_system_common::addresses::FIDELITY_ADDRESS
-}
 fn nod_factory() -> Address {
     outbe_system_common::addresses::NOD_FACTORY_ADDRESS
 }
-fn marker_accounts() -> [Address; 5] {
+fn marker_accounts() -> [Address; 4] {
     use outbe_system_common::addresses::{
-        EMISSION_ADDRESS, FIDELITY_ADDRESS, GRATIS_ADDRESS, PROMIS_ADDRESS, VAULT_ROUTER_ADDRESS,
+        EMISSION_ADDRESS, GRATIS_ADDRESS, PROMIS_ADDRESS, VAULT_ROUTER_ADDRESS,
     };
     [
         VAULT_ROUTER_ADDRESS,
         GRATIS_ADDRESS,
         PROMIS_ADDRESS,
-        FIDELITY_ADDRESS,
         EMISSION_ADDRESS,
     ]
 }
 
 fn uninstall_domain_standins() {
     outbe_gratis::enclave_client::test_enclave::uninstall();
-    outbe_fidelity::enclave_client::test_enclave::uninstall();
     outbe_nod::test_support::uninstall();
 }
 
@@ -642,20 +622,6 @@ fn seed_minted(
         },
     )
     .unwrap();
-}
-fn fidelity_signature(
-    signer: &outbe_primitives::signer::OutbeEvmSigner,
-    account: Address,
-    chain_id: B256,
-) -> [u8; 65] {
-    let message = outbe_fidelity::fidelity_query_auth_message(
-        chain_id,
-        account,
-        TEST_BLOCK_TIMESTAMP_BASE + 100_000,
-    );
-    signer
-        .sign_hash(&outbe_core_common::confidential_tee::eip191_hash(&message))
-        .unwrap()
 }
 fn resident_context(
     seed: u8,

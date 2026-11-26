@@ -7,7 +7,6 @@ fn confidential_creation_paths_use_real_in_process_crypto_and_validate_balances(
     for (scenario, emits_events) in [
         (ConfidentialScenario::promis(), true),
         (ConfidentialScenario::gratis(), false),
-        (ConfidentialScenario::gratis_with_fidelity(), false),
         (ConfidentialScenario::gratisfactory(), false),
     ] {
         let report = run_scenario(

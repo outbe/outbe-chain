@@ -7825,13 +7825,10 @@ name = "outbe-core-common"
 version = "0.1.0"
 dependencies = [
  "alloy-primitives",
- "ark-bn254",
- "ark-ff 0.6.0",
  "base64 0.22.1",
  "ed25519-dalek 2.2.0",
  "hex",
  "k256 0.13.4",
- "outbe-poseidon",
  "outbe-primitives",
  "outbe-system-common",
  "outbe-tee",
@@ -7870,7 +7867,6 @@ dependencies = [
  "outbe-ccaregistry",
  "outbe-core-common",
  "outbe-credis",
- "outbe-fidelity",
  "outbe-gratis",
  "outbe-oracle",
  "outbe-primitives",
@@ -8156,37 +8152,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "outbe-fidelity"
-version = "0.1.0"
-dependencies = [
- "alloy-primitives",
- "alloy-sol-types",
- "ed25519-dalek 2.2.0",
- "hex",
- "k256 0.13.4",
- "outbe-core-common",
- "outbe-fidelitymath",
- "outbe-macros",
- "outbe-primitives",
- "outbe-system-common",
- "outbe-tee",
- "postcard",
- "serde",
- "serde_json",
- "thiserror 2.0.21",
- "zeroize",
-]
-
-[[package]]
-name = "outbe-fidelitymath"
-version = "0.1.0"
-dependencies = [
- "alloy-primitives",
- "outbe-system-common",
- "thiserror 2.0.21",
-]
-
-[[package]]
 name = "outbe-gem"
 version = "0.1.0"
 dependencies = [
@@ -8259,7 +8224,6 @@ dependencies = [
  "ed25519-dalek 2.2.0",
  "hex",
  "outbe-core-common",
- "outbe-fidelity",
  "outbe-macros",
  "outbe-nod",
  "outbe-primitives",
@@ -8280,7 +8244,6 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "outbe-core-common",
- "outbe-fidelity",
  "outbe-gratis",
  "outbe-nod",
  "outbe-primitives",
@@ -8425,34 +8388,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "outbe-lysis"
-version = "0.1.0"
-dependencies = [
- "alloy-primitives",
- "hex",
- "num-bigint 0.4.8",
- "outbe-core-common",
- "outbe-primitives",
- "outbe-system-common",
- "serde",
- "serde_json",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "outbe-lysis-v1-reference"
-version = "0.1.0"
-dependencies = [
- "clap",
- "eyre",
- "num-bigint 0.4.8",
- "num-traits",
- "serde",
- "serde_json",
- "sha2 0.10.9",
-]
-
-[[package]]
 name = "outbe-macros"
 version = "0.1.0"
 dependencies = [
@@ -8476,7 +8411,6 @@ dependencies = [
  "outbe-core-common",
  "outbe-desis",
  "outbe-emission",
- "outbe-fidelity",
  "outbe-macros",
  "outbe-nod",
  "outbe-oracle",
@@ -8784,7 +8718,6 @@ dependencies = [
  "outbe-core-common",
  "outbe-credis",
  "outbe-credisfactory",
- "outbe-fidelity",
  "outbe-gem",
  "outbe-gemfactory",
  "outbe-gratis",
@@ -8984,7 +8917,6 @@ dependencies = [
  "outbe-engine",
  "outbe-evm",
  "outbe-execution",
- "outbe-fidelity",
  "outbe-gem",
  "outbe-gemfactory",
  "outbe-genesis-cli",

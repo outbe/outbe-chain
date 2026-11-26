@@ -35,7 +35,7 @@ pub fn effective_state(
 /// protocol units (1e6 per whole COEN). Asset payment units are quoted separately.
 ///
 /// The cost is derived rather than stored from the entry price and the load the
-/// Nod carries. Lysis mints the Nod from exactly this formula.
+/// Nod carries.
 pub use outbe_core_common::nod_rules::settlement_cost_minor;
 
 /// Timestamp by which a called group must be settled, or `0` while it is not

@@ -53,13 +53,10 @@ members = [
     "crates/core/intexfactory",
     "crates/core/desis",
     "crates/core/vaultrouter",
-    "crates/core/lysis",
     "crates/core/agentreward",
     "crates/core/ccaregistry",
     "crates/core/credis",
     "crates/core/credisfactory",
-    "crates/core/fidelity",
-    "crates/core/fidelitymath",
     "crates/core/metadosis",
     "crates/core/promislimit",
     "crates/core/worldwideday",
@@ -80,7 +77,6 @@ members = [
     "bin/outbe-hyperlane-validator",
     "bin/outbe-radicle",
     # testing
-    "testing/lysis-v1-reference",
     "testing/protocol-benchmarks",
     # zk
     "crates/zk/poseidon",
@@ -145,13 +141,10 @@ default-members = [
     "crates/core/intexfactory",
     "crates/core/desis",
     "crates/core/vaultrouter",
-    "crates/core/lysis",
     "crates/core/agentreward",
     "crates/core/ccaregistry",
     "crates/core/credis",
     "crates/core/credisfactory",
-    "crates/core/fidelity",
-    "crates/core/fidelitymath",
     "crates/core/metadosis",
     "crates/core/promislimit",
     "crates/core/worldwideday",
@@ -264,13 +257,10 @@ outbe-intex = { path = "crates/core/intex" }
 outbe-intexfactory = { path = "crates/core/intexfactory" }
 outbe-desis = { path = "crates/core/desis" }
 outbe-vaultrouter = { path = "crates/core/vaultrouter" }
-outbe-lysis = { path = "crates/core/lysis" }
 outbe-agentreward = { path = "crates/core/agentreward" }
 outbe-ccaregistry = { path = "crates/core/ccaregistry" }
 outbe-credis = { path = "crates/core/credis" }
 outbe-credisfactory = { path = "crates/core/credisfactory" }
-outbe-fidelity = { path = "crates/core/fidelity" }
-outbe-fidelitymath = { path = "crates/core/fidelitymath" }
 outbe-metadosis = { path = "crates/core/metadosis" }
 outbe-promislimit = { path = "crates/core/promislimit" }
 outbe-worldwideday = { path = "crates/core/worldwideday" }
@@ -373,8 +363,6 @@ ring = "0.17"
 zeroize = "1"
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 ed25519-dalek = { version = "2", features = ["rand_core", "zeroize"] }
-num-bigint = "0.4"
-num-traits = "0.2"
 
 # ZK / Poseidon
 outbe-poseidon = { path = "crates/zk/poseidon" }

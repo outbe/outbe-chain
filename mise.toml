@@ -205,7 +205,7 @@ run = "cargo llvm-cov nextest --workspace --html"
 
 [tasks.audit-mutants]
 description = "cargo mutants on consensus and economic crates (mutation kill-rate audit)"
-run = "cargo mutants --test-tool nextest -p outbe-consensus -p outbe-fidelitymath -p outbe-lysis -p outbe-fidelity -p outbe-metadosis -p outbe-emission -p outbe-staking -p outbe-cycle"
+run = "cargo mutants --test-tool nextest -p outbe-consensus -p outbe-metadosis -p outbe-emission -p outbe-staking -p outbe-cycle"
 
 [tasks.audit-bench]
 description = "cargo bench (criterion baseline; configure benches per crate)"

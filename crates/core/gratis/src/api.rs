@@ -6,7 +6,6 @@ use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
 pub use crate::protocol::ModifyAuth;
-pub use outbe_fidelity::{FidelityOpOutcome, FidelityOpSection};
 
 use crate::runtime;
 use crate::schema::Gratis;
@@ -37,7 +36,6 @@ pub fn pledged_total_supply(storage: StorageHandle<'_>) -> Result<U256> {
 // --- Owner-authorized mutations ---
 
 /// Mint `amount` gratis to `caller`.
-#[cfg(any(test, feature = "test-utils"))]
 pub fn mint(
     storage: StorageHandle<'_>,
     caller: Address,
@@ -45,19 +43,6 @@ pub fn mint(
     auth: ModifyAuth,
 ) -> Result<()> {
     runtime::mint(storage, caller, amount, auth)
-}
-
-/// Mint gratis AND apply a co-located fidelity cohort section in ONE enclave
-/// round-trip. Returns the fidelity outcome for the caller to persist via
-/// `outbe_fidelity::api::apply_fidelity_outcome`.
-pub fn mint_with_fidelity(
-    storage: StorageHandle<'_>,
-    caller: Address,
-    amount: U256,
-    auth: ModifyAuth,
-    fidelity: FidelityOpSection,
-) -> Result<FidelityOpOutcome> {
-    runtime::mint_with_fidelity(storage, caller, amount, auth, fidelity)
 }
 
 /// Burn `amount` gratis from `caller`.
@@ -68,18 +53,6 @@ pub fn burn(
     auth: ModifyAuth,
 ) -> Result<()> {
     runtime::burn(storage, caller, amount, auth)
-}
-
-/// Burn gratis AND apply a co-located fidelity cohort section in ONE enclave
-/// round-trip. Returns the fidelity outcome for the caller to persist.
-pub fn burn_with_fidelity(
-    storage: StorageHandle<'_>,
-    caller: Address,
-    amount: U256,
-    auth: ModifyAuth,
-    fidelity: FidelityOpSection,
-) -> Result<FidelityOpOutcome> {
-    runtime::burn_with_fidelity(storage, caller, amount, auth, fidelity)
 }
 
 /// Open the sealed pledge of `credis_reservation_id` and pledge `amount` from the main account
@@ -108,7 +81,6 @@ pub fn mint_encrypted_nod(
     storage: StorageHandle<'_>,
     nod: &outbe_core_common::nod_encryption::EncryptedNodV1,
     auth: ModifyAuth,
-    fidelity: FidelityOpSection,
-) -> Result<FidelityOpOutcome> {
-    runtime::mint_encrypted_nod(storage, nod, auth, fidelity)
+) -> Result<()> {
+    runtime::mint_encrypted_nod(storage, nod, auth)
 }

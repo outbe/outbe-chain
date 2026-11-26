@@ -37,7 +37,6 @@ fn the_end_block_reserve_holds_both_private_passes_at_their_full_budget() {
         new_pledged: vec![0x04; GRATIS_BLOB_LEN],
         event_amount: U256::MAX,
         next_op_nonce: u64::MAX,
-        fidelity: None,
         inputs_canonical_hash: B256::repeat_byte(0x05),
         attestation_tag: vec![0x06; 64],
         encrypted_event_amount: Vec::new(),

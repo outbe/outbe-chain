@@ -136,8 +136,7 @@ fn zero_reference_currency_is_rejected_at_issuance() {
 }
 
 /// The group key is derived, not supplied: a caller whose key disagrees with
-/// `(full day after issue, call price, currency)` is rejected, so the on-chain and Lysis derivations
-/// cannot drift apart silently.
+/// `(full day after issue, call price, currency)` is rejected.
 #[test]
 fn a_group_key_that_does_not_match_its_inputs_is_rejected() {
     let mut body = item(Address::repeat_byte(0x66), U256::from(5), EUR);

@@ -123,42 +123,6 @@ pub fn decrypt_promis_balance(
     decrypt_v2_balance(V2BalanceLedger::Promis, view_key, account, blob)
 }
 
-const FIDELITY_V2_DOMAIN: V2EnvelopeDomain<'static> = V2EnvelopeDomain {
-    scope: &[],
-    marker: b"FID2",
-    key_info: b"outbe/fidelity/cohort-key/v2",
-    nonce_info: b"outbe/fidelity/cohort-nonce/v2",
-};
-
-fn map_fidelity(error: TeeCryptoError) -> LocalCryptoError {
-    match error {
-        TeeCryptoError::InvalidEnvelope => LocalCryptoError::InvalidFidelityCohortEnvelope,
-        TeeCryptoError::HkdfExpand => LocalCryptoError::HkdfExpand(error),
-        TeeCryptoError::HkdfFill => LocalCryptoError::HkdfFill(error),
-        TeeCryptoError::AeadKey
-        | TeeCryptoError::DecryptionFailed
-        | TeeCryptoError::RngFailure
-        | TeeCryptoError::AeadSeal
-        | TeeCryptoError::InvalidPlaintextLength { .. } => {
-            LocalCryptoError::FidelityCohortDecryptionFailed(error)
-        }
-    }
-}
-
-/// Open a `FID2` Fidelity cohort record with the account view key.
-pub fn decrypt_fidelity_cohorts(
-    view_key: &[u8; 32],
-    account: Address,
-    blob: &[u8],
-) -> Result<Vec<u8>, LocalCryptoError> {
-    if blob.is_empty() {
-        return Ok(Vec::new());
-    }
-    let opened = tee_decrypt_v2_envelope(view_key, account, FIDELITY_V2_DOMAIN, blob)
-        .map_err(map_fidelity)?;
-    Ok(opened.as_slice().to_vec())
-}
-
 fn map_nod(error: TeeCryptoError) -> LocalCryptoError {
     match error {
         TeeCryptoError::InvalidEnvelope => LocalCryptoError::InvalidNodEncoding,

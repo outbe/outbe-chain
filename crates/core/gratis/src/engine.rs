@@ -43,9 +43,6 @@ pub(crate) enum GratisRejectReason {
     /// Amount or account was zero.
     #[error("amount and account must be nonzero")]
     AmountAndAccountMustBeNonzero,
-    /// Release or pledged-burn carried a Fidelity section.
-    #[error("collateral must not change Fidelity")]
-    CollateralMustNotChangeFidelity,
     /// Debit exceeded the blob, or a credit overflowed.
     #[error("insufficient balance or balance overflow")]
     InsufficientBalanceOrOverflow,
@@ -114,15 +111,6 @@ pub fn decrypt_pledged(
     cipher::read_amount(view_key, account, FIELD_PLEDGED, blob).map(|(_, amount)| amount)
 }
 
-/// Rejected result that keeps the caller's inputs hash.
-#[must_use]
-pub fn rejected_result(reason: String, inputs_canonical_hash: B256) -> GratisOpResult {
-    let mut result = empty_result();
-    result.status = GratisOpStatus::Rejected { reason };
-    result.inputs_canonical_hash = inputs_canonical_hash;
-    result
-}
-
 /// Apply one Gratis op. Business rejections are [`GratisOpStatus::Rejected`].
 #[must_use]
 pub fn apply_op(state_key: &StateKeyHandle, req: &GratisOpRequest) -> GratisOpResult {
@@ -143,7 +131,6 @@ fn empty_result() -> GratisOpResult {
         event_amount: U256::ZERO,
         encrypted_event_amount: Vec::new(),
         next_op_nonce: 0,
-        fidelity: None,
         inputs_canonical_hash: B256::ZERO,
         attestation_tag: Vec::new(),
         pledge_account: None,
@@ -250,10 +237,6 @@ fn apply_op_inner(
         if let Some(reason) = prepare_owner(state_key, req, &mut result)? {
             return Ok(rejected_reason(reason));
         }
-    } else if req.fidelity.is_some() {
-        return Ok(rejected_reason(
-            GratisRejectReason::CollateralMustNotChangeFidelity,
-        ));
     }
     let view = derive_view_key(state_key, req.account)?;
     let (balance, pledged) = field_moves(req.op);
@@ -364,14 +347,13 @@ fn opened_pledge_account(
 }
 
 /// An open names an amount and the seal only: the account, the blobs, the owner
-/// authorization and the Fidelity section come with the pledge that follows it.
+/// authorization come with the pledge that follows it.
 fn is_bare_open(req: &GratisOpRequest) -> bool {
     let carried = [
         !req.account.is_zero(),
         !req.current_balance.is_empty(),
         !req.current_pledged.is_empty(),
         req.modify_auth != empty_auth(0),
-        req.fidelity.is_some(),
     ];
     req.op == GratisOp::OpenSealedPledge && !req.amount.is_zero() && !carried.contains(&true)
 }

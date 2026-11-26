@@ -124,8 +124,8 @@ fn nominal_epoch_boundary_without_certified_outcome_keeps_activated_epoch() {
         run_begin_block_without_certified_boundary(&ctx);
 
         // (3) The scheduled height is not activation authority. Until the
-        // receipt-visible BoundaryOutcome executes, every consumer - including
-        // native Lysis - must continue to observe the old epoch and its snapshot.
+        // receipt-visible BoundaryOutcome executes, every consumer must continue
+        // to observe the old epoch and its snapshot.
         let vs_after = ValidatorSet::new(storage);
         let epoch_after = vs_after.epoch_snapshot().unwrap();
         assert_eq!(
