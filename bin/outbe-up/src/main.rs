@@ -4,9 +4,10 @@ use clap::Parser;
 use eyre::Result;
 
 mod cli;
-mod network;
-mod support;
-mod validator;
+mod disk;
+mod host;
+mod image;
+mod vm;
 
 #[tokio::main]
 async fn main() -> Result<()> {

@@ -392,7 +392,7 @@ fn retired_lifecycle_retains_secondary_admission_until_inactive_cleanup() {
             assert!(vs.is_consensus_participant(validator).unwrap());
             assert!(vs.get_validator(validator).unwrap().unwrap().has_bls_share);
 
-            vs.deactivate_validator(OWNER, validator).unwrap();
+            vs.deactivate_validator(validator).unwrap();
             let exiting_record = vs.get_validator(validator).unwrap().unwrap();
             assert_eq!(exiting_record.status, status::EXITING);
             assert!(exiting_record.has_bls_share);
