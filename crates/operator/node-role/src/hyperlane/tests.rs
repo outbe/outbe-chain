@@ -1,4 +1,7 @@
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::{
+    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+    time::Duration,
+};
 
 use alloy_primitives::address;
 
