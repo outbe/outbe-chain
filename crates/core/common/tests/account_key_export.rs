@@ -35,7 +35,7 @@ fn export_authorizes_only_the_exact_domain_account_and_recipient() {
     )
     .unwrap();
     assert_eq!(opened, [[9; 32], [10; 32]].concat());
-    for ledger in [Ledger::Promis, Ledger::Fidelity, Ledger::Nod] {
+    for ledger in [Ledger::Promis, Ledger::Nod] {
         assert!(domain_for(ledger)
             .export_sealed_account_keys(&keys, &signature, &recipient)
             .is_err());

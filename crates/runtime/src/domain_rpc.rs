@@ -23,7 +23,7 @@ pub struct GratisKeysSealed {
 #[rpc(server, namespace = "outbe")]
 pub trait OutbeDomainApi {
     /// Derive the account's confidential view + modify keys for `ledger` (`Gratis`,
-    /// `Promis`, `Fidelity`, or `Nod`) inside the enclave and return them
+    /// `Promis`, or `Nod`) inside the enclave and return them
     /// sealed to `ephemeralPubkey` (a client X25519 public key). This is off-chain key
     /// delivery. It never touches consensus state.
     #[method(name = "deriveKeys")]
@@ -314,12 +314,7 @@ mod tests {
             .message()
             .starts_with("signature recovery failed:"));
 
-        for ledger in [
-            Ledger::Gratis,
-            Ledger::Promis,
-            Ledger::Fidelity,
-            Ledger::Nod,
-        ] {
+        for ledger in [Ledger::Gratis, Ledger::Promis, Ledger::Nod] {
             let prehash = eip191_hash(&derive_account_keys_message(
                 ledger,
                 account,
@@ -380,7 +375,7 @@ mod tests {
             jsonrpsee::types::error::INTERNAL_ERROR_CODE
         );
 
-        for target_ledger in [Ledger::Promis, Ledger::Fidelity, Ledger::Nod] {
+        for target_ledger in [Ledger::Promis, Ledger::Nod] {
             let err = handler
                 .derive_keys_checked(
                     target_ledger,
@@ -396,18 +391,18 @@ mod tests {
                 .contains(&format!("does not control account {owner}")));
         }
 
-        let fidelity_prehash = eip191_hash(&derive_account_keys_message(
-            Ledger::Fidelity,
+        let promis_prehash = eip191_hash(&derive_account_keys_message(
+            Ledger::Promis,
             owner,
             ephemeral_pubkey,
         ));
-        let fidelity_sig = signer.sign_hash(&fidelity_prehash).expect("sign fidelity");
+        let promis_sig = signer.sign_hash(&promis_prehash).expect("sign promis");
         let cross_err = handler
             .derive_keys_checked(
                 Ledger::Nod,
                 owner,
                 ephemeral_pubkey,
-                Bytes::copy_from_slice(&fidelity_sig),
+                Bytes::copy_from_slice(&promis_sig),
             )
             .await
             .unwrap_err();
