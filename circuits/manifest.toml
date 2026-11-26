@@ -58,3 +58,17 @@ label = "outbe.paynote.claim"
 versions = [
   { version = "1.0.0", status = "active" },
 ]
+
+[[circuit]]
+module = "paynote_transfer"
+label = "outbe.paynote.transfer"
+versions = [
+  { version = "1.0.0", status = "active" },
+]
+
+[[circuit]]
+module = "paynote_claim"
+label = "outbe.paynote.claim"
+versions = [
+  { version = "1.0.0", status = "active" },
+]
