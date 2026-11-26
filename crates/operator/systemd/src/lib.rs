@@ -5,6 +5,8 @@ const TARGET_TEMPLATE: &str = include_str!("../templates/target.unit");
 const HOST_BIN_DIR: &str = "/opt/outbe-chain";
 const VM_BIN_DIR: &str = "/usr/local/bin";
 const VM_AGENT: &str = "/usr/local/bin/outbe-vm-agent";
+const SIDECAR_START_TIMEOUT_SECS: u64 = 150;
+const NODE_START_TIMEOUT_SECS: u64 = 0;
 
 /// One rendered systemd asset.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -27,6 +29,7 @@ struct ServiceSpec {
     service_directives: Vec<String>,
     sandbox_directives: Vec<String>,
     limit_nofile: u64,
+    timeout_start_sec: u64,
     wanted_by: &'static str,
 }
 
@@ -231,6 +234,7 @@ fn managed_units(profile: &ManagedProfile<'_>) -> Vec<UnitFile> {
             ]),
             sandbox_directives: lines(&["ReadWritePaths=/opt/outbe-chain/keys"]),
             limit_nofile: 65_535,
+            timeout_start_sec: SIDECAR_START_TIMEOUT_SECS,
             wanted_by: "outbe-validator.target",
         }),
         render_service(&managed_validator_spec(
@@ -253,6 +257,7 @@ fn managed_units(profile: &ManagedProfile<'_>) -> Vec<UnitFile> {
             ]),
             sandbox_directives: lines(&["ReadWritePaths=/opt/outbe-chain/state/feeder"]),
             limit_nofile: 65_535,
+            timeout_start_sec: SIDECAR_START_TIMEOUT_SECS,
             wanted_by: "outbe-validator.target",
         }),
         render_service(&ServiceSpec {
@@ -262,6 +267,7 @@ fn managed_units(profile: &ManagedProfile<'_>) -> Vec<UnitFile> {
             service_directives: hyperlane_directives,
             sandbox_directives: lines(&["ReadWritePaths=/opt/outbe-chain/state/hyperlane"]),
             limit_nofile: 65_535,
+            timeout_start_sec: SIDECAR_START_TIMEOUT_SECS,
             wanted_by: "outbe-validator.target",
         }),
         render_managed_target(profile),
@@ -331,6 +337,7 @@ pub fn founding_units(config: FoundingConfig<'_>) -> Vec<UnitFile> {
             ]),
             sandbox_directives: lines(&[&format!("ReadWritePaths={}", config.base_dir)]),
             limit_nofile: 65_535,
+            timeout_start_sec: SIDECAR_START_TIMEOUT_SECS,
             wanted_by: "outbe-validator.target",
         }),
         render_service(&ServiceSpec {
@@ -353,6 +360,7 @@ pub fn founding_units(config: FoundingConfig<'_>) -> Vec<UnitFile> {
             ]),
             sandbox_directives: lines(&[&format!("ReadWritePaths={}", config.base_dir)]),
             limit_nofile: 65_535,
+            timeout_start_sec: SIDECAR_START_TIMEOUT_SECS,
             wanted_by: "outbe-validator.target",
         }),
         render_target("Outbe validator stack"),
@@ -433,7 +441,10 @@ fn managed_validator_spec(
     directives.extend(lines(&[
         "  --radicle.control-socket /opt/outbe-chain/keys/radicle/node/outbe-control.sock \\",
         "  --radicle.status-address 127.0.0.1:8876",
-        &format!("ExecStartPost={} wait-rpc", profile.helper_prefix),
+        &format!(
+            "ExecStartPost={} wait-rpc --timeout 0",
+            profile.helper_prefix
+        ),
     ]));
 
     let mut unit_directives = lines(&[
@@ -455,6 +466,7 @@ fn managed_validator_spec(
             "ReadWritePaths=/opt/outbe-chain/keys /opt/outbe-chain/validator-0",
         ]),
         limit_nofile: 1_048_576,
+        timeout_start_sec: NODE_START_TIMEOUT_SECS,
         wanted_by: "outbe-validator.target",
     }
 }
@@ -472,7 +484,10 @@ fn managed_full_node_spec(profile: &ManagedProfile<'_>) -> ServiceSpec {
     directives.extend(lines(&[
         "  $OUTBE_CONSENSUS_EXTRA_ARGS \\",
         "  --upstream ${OUTBE_CERTIFIED_RPC}",
-        &format!("ExecStartPost={} wait-rpc", profile.helper_prefix),
+        &format!(
+            "ExecStartPost={} wait-rpc --timeout 0",
+            profile.helper_prefix
+        ),
     ]));
 
     let unit_directives = lines(&[
@@ -490,6 +505,7 @@ fn managed_full_node_spec(profile: &ManagedProfile<'_>) -> ServiceSpec {
         service_directives: directives,
         sandbox_directives: lines(&["ReadWritePaths=/opt/outbe-chain/validator-0"]),
         limit_nofile: 1_048_576,
+        timeout_start_sec: NODE_START_TIMEOUT_SECS,
         wanted_by: "outbe-validator.target",
     }
 }
@@ -565,6 +581,11 @@ fn founding_service(spec: &FoundingService<'_>) -> ServiceSpec {
         ]),
         sandbox_directives: lines(&[&format!("ReadWritePaths={}", spec.base_dir)]),
         limit_nofile: spec.limit_nofile,
+        timeout_start_sec: if spec.name == "outbe-validator.service" {
+            NODE_START_TIMEOUT_SECS
+        } else {
+            SIDECAR_START_TIMEOUT_SECS
+        },
         wanted_by: "outbe-validator.target",
     }
 }
@@ -578,6 +599,7 @@ fn render_service(spec: &ServiceSpec) -> UnitFile {
             ("ACCOUNT", "User=outbe\nGroup=outbe".to_owned()),
             ("SERVICE_DIRECTIVES", join(&spec.service_directives)),
             ("LIMIT_NOFILE", spec.limit_nofile.to_string()),
+            ("TIMEOUT_START_SEC", spec.timeout_start_sec.to_string()),
             ("SANDBOX_DIRECTIVES", join(&spec.sandbox_directives)),
             ("WANTED_BY", spec.wanted_by.to_owned()),
         ],

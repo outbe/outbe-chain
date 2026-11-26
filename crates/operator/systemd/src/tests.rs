@@ -6,7 +6,6 @@ const COMMON_POLICY: &[&str] = &[
     "RestartSec=5",
     "RestartSteps=5",
     "RestartMaxDelaySec=60",
-    "TimeoutStartSec=150",
     "TimeoutStopSec=90",
     "KillMode=mixed",
     "KillSignal=SIGTERM",
@@ -36,6 +35,19 @@ fn joining_and_founding_share_service_policy() {
             assert!(joining.contains(directive), "{name}: {directive}");
             assert!(founding.contains(directive), "{name}: {directive}");
         }
+        let expected_timeout = if name == "outbe-validator.service" {
+            "TimeoutStartSec=0"
+        } else {
+            "TimeoutStartSec=150"
+        };
+        assert!(
+            joining.contains(expected_timeout),
+            "{name}: {expected_timeout}"
+        );
+        assert!(
+            founding.contains(expected_timeout),
+            "{name}: {expected_timeout}"
+        );
     }
 }
 
@@ -289,13 +301,13 @@ fn joining_units_match_pinned_output() {
                 "  --upstream ${OUTBE_CERTIFIED_RPC} \\\n",
                 "  --radicle.control-socket /opt/outbe-chain/keys/radicle/node/outbe-control.sock \\\n",
                 "  --radicle.status-address 127.0.0.1:8876\n",
-                "ExecStartPost=/usr/local/bin/outbe-up internal wait-rpc\n",
+                "ExecStartPost=/usr/local/bin/outbe-up internal wait-rpc --timeout 0\n",
                 "Restart=always\n",
                 "RestartMode=direct\n",
                 "RestartSec=5\n",
                 "RestartSteps=5\n",
                 "RestartMaxDelaySec=60\n",
-                "TimeoutStartSec=150\n",
+                "TimeoutStartSec=0\n",
                 "TimeoutStopSec=90\n",
                 "KillMode=mixed\n",
                 "KillSignal=SIGTERM\n",
@@ -424,6 +436,26 @@ fn vm_units_share_service_policy_and_target() {
     assert!(!hyperlane.contains("Wants=outbe-validator.service"));
     let feeder = unit(&vm, "outbe-feeder.service");
     assert!(!feeder.contains("Wants=outbe-validator.service"));
+
+    for name in [
+        "outbe-validator.service",
+        "outbe-joining-validator.service",
+        "outbe-full-node.service",
+    ] {
+        let node = unit(&vm, name);
+        assert!(node.contains("TimeoutStartSec=0\n"), "{name}");
+        assert!(
+            node.contains("ExecStartPost=/usr/local/bin/outbe-vm-agent wait-rpc --timeout 0\n"),
+            "{name}"
+        );
+    }
+    for name in [
+        "outbe-radicle.service",
+        "outbe-feeder.service",
+        "outbe-hyperlane-validator.service",
+    ] {
+        assert!(unit(&vm, name).contains("TimeoutStartSec=150\n"), "{name}");
+    }
 
     let target = unit(&vm, "outbe-validator.target");
     assert!(target.contains("Requires=outbe-vm-boot.service"));
@@ -669,7 +701,9 @@ fn vm_joining_validator_args_match_bare_host_joining_flags_and_full_node_is_keyl
     assert!(!full_content.contains("outbe-radicle.service"));
     assert!(!full_content.contains("wait-validator-dependencies"));
     assert!(full_content.contains("ReadWritePaths=/opt/outbe-chain/validator-0\n"));
-    assert!(full_content.contains("ExecStartPost=/usr/local/bin/outbe-vm-agent wait-rpc\n"));
+    assert!(
+        full_content.contains("ExecStartPost=/usr/local/bin/outbe-vm-agent wait-rpc --timeout 0\n")
+    );
 }
 
 #[test]
