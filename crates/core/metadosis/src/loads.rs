@@ -7,9 +7,8 @@ use outbe_system_common::metadosis_bindings::MetadosisStorageExt;
 use outbe_system_common::time::WorldwideDay;
 
 use crate::{
-    constants::METADOSIS_FAILED_LOADS_ABOVE_LIMIT,
-    lifecycle::{complete_metadosis, fail_metadosis},
-    limits::{allocate_day_metadosis_limit, apply_desis_limit},
+    lifecycle::complete_metadosis,
+    limits::{allocate_day_metadosis_limit, apply_desis_limit, LimitSplit, LoadsSettlement},
     precompile::IMetadosis,
     schema::{EmissionDay, MetadosisContract},
 };
@@ -44,23 +43,42 @@ pub(crate) fn day_loads(storage: &StorageHandle<'_>, wwd: WorldwideDay) -> Resul
     })
 }
 
+/// Records the excess the day leaves, and announces it while some loads stay uncovered.
+pub(crate) fn carry_excess(
+    metadosis: &mut MetadosisContract<'_>,
+    day: u32,
+    before: U256,
+    settlement: &LoadsSettlement,
+) -> Result<()> {
+    if settlement.excess_minor != before {
+        outbe_emission::api::record_excess_nod_loads(
+            metadosis.storage.clone(),
+            settlement.excess_minor,
+        )?;
+    }
+    if settlement.excess_minor.is_zero() {
+        return Ok(());
+    }
+    metadosis.emit(IMetadosis::MetadosisLimitExceeded {
+        emissionDay: day,
+        excessMinor: settlement.excess_minor,
+    })
+}
+
 fn record_completion(
     metadosis: &mut MetadosisContract<'_>,
     emission_day: &EmissionDay,
     loads: &DayLoads,
+    settlement: &LoadsSettlement,
     desis_limit: U256,
 ) -> Result<()> {
-    let metadosis_limit = emission_day.metadosis_limit_minor();
-    let promis_limit_added = metadosis_limit
-        .checked_sub(loads.loads_minor)
-        .ok_or(outbe_emission::errors::EmissionError::AmountOverflow)?;
     let updated = outbe_emission::api::record_metadosis_completed(
         metadosis.storage.clone(),
         emission_day.day,
         outbe_emission::api::MetadosisCompletedAmounts {
             desis_limit,
-            nods: loads.loads_minor,
-            promis_limit_added,
+            nods: settlement.nods_minor,
+            promis_limit_added: settlement.promis_limit_add,
         },
     )?;
     complete_metadosis(metadosis, &updated)?;
@@ -78,19 +96,19 @@ pub(crate) fn execute(
     ctx.storage.require_metadosis_process_ready()?;
     let loads = day_loads(&ctx.storage, emission_day.wwd)?;
     let base_limit = emission_day.metadosis_limit_minor();
-    if loads.loads_minor > base_limit {
-        return fail_metadosis(
-            metadosis,
-            emission_day.day,
-            METADOSIS_FAILED_LOADS_ABOVE_LIMIT,
-        );
-    }
-    let split = allocate_day_metadosis_limit(
-        ctx.storage.clone(),
-        base_limit,
-        loads.loads_minor,
-        loads.nominal_minor,
-    )?;
+    let excess = outbe_emission::api::excess_nod_loads(ctx.storage.clone())?;
+    let settlement = LoadsSettlement::derive(base_limit, loads.loads_minor, excess)?;
+    let split = if settlement.excess_minor.is_zero() {
+        allocate_day_metadosis_limit(
+            ctx.storage.clone(),
+            base_limit - excess,
+            loads.loads_minor,
+            loads.nominal_minor,
+        )?
+    } else {
+        LimitSplit::uncovered(base_limit)
+    };
     let desis_limit = apply_desis_limit(ctx.storage.clone(), emission_day.day, &split)?;
-    record_completion(metadosis, emission_day, &loads, desis_limit)
+    carry_excess(metadosis, emission_day.day, excess, &settlement)?;
+    record_completion(metadosis, emission_day, &loads, &settlement, desis_limit)
 }

@@ -107,6 +107,18 @@ pub fn get_emission_day_record(
     EmissionContract::new(storage).emission_days.get(day)
 }
 
+/// The Nod loads that the Metadosis limits of past days did not cover.
+pub fn excess_nod_loads(storage: StorageHandle<'_>) -> Result<U256> {
+    EmissionContract::new(storage).excess_nod_loads_minor.read()
+}
+
+/// Records the Nod loads that the Metadosis limits so far did not cover.
+pub fn record_excess_nod_loads(storage: StorageHandle<'_>, amount: U256) -> Result<()> {
+    EmissionContract::new(storage)
+        .excess_nod_loads_minor
+        .write(amount)
+}
+
 /// Writes or creates an `EmissionDay` record directly.
 pub fn put_emission_day_record(storage: StorageHandle<'_>, record: &EmissionDay) -> Result<()> {
     let contract = EmissionContract::new(storage);

@@ -12,6 +12,7 @@ use outbe_worldwideday::WorldwideDayContract;
 
 use crate::{
     errors::{MetadosisCallerError, MetadosisStorageCorruptionError},
+    limits::LoadsSettlement,
     precompile::IMetadosis,
     schema::{EmissionDay, MetadosisContract},
 };
@@ -136,20 +137,28 @@ pub(crate) fn fail_metadosis(
 ) -> Result<()> {
     cancel_auction_of(metadosis, day)?;
     if let Some(pending) = metadosis.emission_days().get(day)? {
-        let loads_minor = match crate::loads::day_loads(&metadosis.storage, pending.wwd) {
-            Ok(loads) => loads.loads_minor,
-            // An unreadable day sum leaves the whole limit with the Nods: nothing goes back.
-            Err(err) if err.record_pass_failure() == PassFailure::Skip => U256::MAX,
+        let excess = outbe_emission::api::excess_nod_loads(metadosis.storage.clone())?;
+        let settlement = match crate::loads::day_loads(&metadosis.storage, pending.wwd) {
+            Ok(loads) => Some(LoadsSettlement::derive(
+                pending.metadosis_limit_minor(),
+                loads.loads_minor,
+                excess,
+            )?),
+            // Only corrupt sealed data fails the read; the whole limit stays with the Nods.
+            Err(err) if err.record_pass_failure() == PassFailure::Skip => None,
             Err(err) => return Err(err),
         };
         let (record, limit_minor) = outbe_emission::api::record_metadosis_failed(
             metadosis.storage.clone(),
             day,
-            loads_minor,
+            settlement.map_or(U256::MAX, |settlement| settlement.nods_minor),
         )?;
         if !limit_minor.is_zero() {
             PromisLimitContract::new(metadosis.storage.clone())
                 .add(outbe_promislimit::LimitSource::MetadosisLimit, limit_minor)?;
+        }
+        if let Some(settlement) = settlement {
+            crate::loads::carry_excess(metadosis, day, excess, &settlement)?;
         }
         if !outbe_agentreward::distribution::has_pending_accruals_for_day(
             &metadosis.storage,

@@ -58,6 +58,25 @@
   },
   {
     "type": "event",
+    "name": "MetadosisLimitExceeded",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "excessMinor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "MetadosisLimitSet",
     "inputs": [
       {

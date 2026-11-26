@@ -45,6 +45,40 @@ pub(crate) fn desis_limit(
     Some(nominal_total.checked_sub(nod_loads_minor)?.min(available))
 }
 
+/// What the Metadosis limit of a day covers of the day's loads and of the excess of past days.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct LoadsSettlement {
+    /// The part of the limit that covers loads.
+    pub nods_minor: U256,
+    pub promis_limit_add: U256,
+    /// The loads left uncovered after this day.
+    pub excess_minor: U256,
+}
+
+impl LoadsSettlement {
+    pub(crate) fn derive(limit: U256, loads_minor: U256, excess_minor: U256) -> Result<Self> {
+        let total = loads_minor.checked_add(excess_minor).ok_or(
+            MetadosisError::InvalidMetadosisLimitSplit {
+                day_limit: limit,
+                nod_loads_minor: loads_minor,
+            },
+        )?;
+        Ok(if total <= limit {
+            Self {
+                nods_minor: total,
+                promis_limit_add: limit - total,
+                excess_minor: U256::ZERO,
+            }
+        } else {
+            Self {
+                nods_minor: limit,
+                promis_limit_add: U256::ZERO,
+                excess_minor: total - limit,
+            }
+        })
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct LimitSplit {
     /// The day's own emission plus what it drew from the Promis Limit.
@@ -87,6 +121,16 @@ impl LimitSplit {
             desis_limit_minor,
             promis_limit_add,
         )
+    }
+
+    /// The split of a day whose limit goes whole to the loads: no Promis Limit add, no Desis.
+    pub(crate) const fn uncovered(base_limit: U256) -> Self {
+        Self {
+            day_limit: base_limit,
+            nod_loads_minor: base_limit,
+            desis_limit_minor: U256::ZERO,
+            promis_limit_add: U256::ZERO,
+        }
     }
 
     fn assemble(
@@ -234,6 +278,32 @@ mod tests {
                 );
             });
         }
+    }
+
+    #[test]
+    fn the_limit_covers_the_excess_with_the_loads_and_carries_the_rest() {
+        for (limit, loads, excess, nods, promis_limit_add, excess_after) in [
+            (100, 40, 0, 40, 60, 0),
+            (100, 40, 50, 90, 10, 0),
+            (100, 40, 60, 100, 0, 0),
+            (100, 120, 0, 100, 0, 20),
+            (100, 10, 150, 100, 0, 60),
+        ] {
+            assert_eq!(
+                LoadsSettlement::derive(
+                    U256::from(limit as u64),
+                    U256::from(loads as u64),
+                    U256::from(excess as u64),
+                )
+                .unwrap(),
+                LoadsSettlement {
+                    nods_minor: U256::from(nods as u64),
+                    promis_limit_add: U256::from(promis_limit_add as u64),
+                    excess_minor: U256::from(excess_after as u64),
+                }
+            );
+        }
+        assert!(LoadsSettlement::derive(U256::ONE, U256::MAX, U256::ONE).is_err());
     }
 
     #[test]
