@@ -27,8 +27,8 @@ fn main(
     assert(input_count >= MIN_MERGE_INPUTS & input_count <= MAX_MERGE_INPUTS);
     pool.validate();
     assert_eq(pool.to_field(), PAYNOTE_POOL_ADDRESS);
+    // A zero asset is native COEN.
     asset.validate();
-    assert(asset.to_field() != 0);
     assert(output_spend_key != 0);
     assert(output_commitment != 0);
 

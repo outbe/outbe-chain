@@ -574,14 +574,14 @@ fn full_width_u256_spend_round_trip() {
 fn the_merge_circuit_is_pinned() {
     use outbe_zk::paynote_merge::PaynoteMerge;
     assert_eq!(PaynoteMerge::LABEL, "outbe.paynote.merge");
-    assert_eq!(PaynoteMerge::VERSION, "1.1.0");
+    assert_eq!(PaynoteMerge::VERSION, "1.2.0");
     assert_eq!(
         PaynoteMerge::CIRCUIT_HASH,
-        alloy_primitives::hex!("ca97d3c1caffb3377304787e26791bea5ec5f46e1595d897caeb66d59a14b502")
+        alloy_primitives::hex!("f98705c0d09e11886d701704f7711956ad3d40026c8cf60b2706f2692d068006")
     );
     assert_eq!(
         PaynoteMerge::VK_HASH,
-        alloy_primitives::hex!("1d4914bd70dcb46009d6cc2ac64271f80f01a8e0711ce71c2f62766fdccaa24c")
+        alloy_primitives::hex!("818bf5dc6cb9f1f8f55186f2c5684ef804dcd571d7eefd205c1f25649d602abd")
     );
 }
 

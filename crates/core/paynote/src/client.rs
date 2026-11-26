@@ -87,8 +87,8 @@ pub fn merge_witness(
         field_from_b256(word).map_err(|_| invalid("spend key is not a canonical field"))
     };
     let word = |value: &Field| field_to_b256(value).map_err(|_| PayNoteError::Hash);
-    if !(2..=MAX_MERGE_INPUTS).contains(&inputs.len()) || asset.is_zero() {
-        return Err(invalid("merge requires 2..4 inputs and a nonzero asset"));
+    if !(2..=MAX_MERGE_INPUTS).contains(&inputs.len()) {
+        return Err(invalid("merge requires 2..4 inputs"));
     }
     if output_spend_key.is_zero() || inputs.iter().any(|(_, key)| *key == output_spend_key) {
         return Err(invalid("merge output key must be fresh and nonzero"));

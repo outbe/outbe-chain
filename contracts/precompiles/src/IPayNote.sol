@@ -31,8 +31,8 @@ interface IPayNote {
     /// @dev `noteSn` is the note serial number — a hiding commitment to the spend key,
     /// chosen off-chain as `P(NOTE_SN, [spendKey])`. It reveals nothing about the key.
     /// `asset == address(0)` deposits native COEN: `msg.value` must equal `amount`.
-    /// An ERC20 deposit must send no value. A native note can be withdrawn. It
-    /// cannot settle a factory payment or be merged yet.
+    /// An ERC20 deposit must send no value. A native note can be merged and
+    /// withdrawn. It cannot settle a factory payment.
     /// @param asset ERC20 to deposit, which must have a registered reserve vault,
     /// or `address(0)` for native COEN.
     /// @param amount Units to deposit. For an ERC20, the caller must approve

@@ -21,7 +21,10 @@ struct Fixture {
 }
 
 fn fixture(count: u32, amounts: [U256; MAX_MERGE_INPUTS]) -> Fixture {
-    let asset = EthAddress::from_field(123);
+    fixture_of(EthAddress::from_field(123), count, amounts)
+}
+
+fn fixture_of(asset: EthAddress, count: u32, amounts: [U256; MAX_MERGE_INPUTS]) -> Fixture {
     let mut leaves = [empty_leaf(31337); MAX_MERGE_INPUTS];
     let mut f = Fixture {
         chain_id: 31337,
@@ -183,11 +186,11 @@ fn wrong_asset() {
     f.asset = EthAddress::from_field(124);
     run(f);
 }
-#[test(should_fail)]
-fn zero_asset() {
-    let mut f = normal(3);
-    f.asset = EthAddress::from_field(0);
-    run(f);
+// A zero asset is native COEN and merges like any other asset.
+#[test]
+fn native_asset() {
+    let amounts = [U256::from(12), U256::from(8), U256::zero(), U256::zero()];
+    run(fixture_of(EthAddress::from_field(0), 2, amounts));
 }
 #[test(should_fail)]
 fn wrong_path() {

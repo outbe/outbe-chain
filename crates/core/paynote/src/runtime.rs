@@ -78,8 +78,7 @@ pub(crate) fn merge_pay_notes(storage: &StorageHandle<'_>, proof: &[u8]) -> Resu
     let count = usize::try_from(claim.input_count)
         .map_err(|_| PayNoteError::InvalidInput("merge input count exceeds usize".into()))?;
     let (active, padding) = claim.nullifiers.split_at(count);
-    if claim.asset.is_zero()
-        || claim.output_commitment.is_zero()
+    if claim.output_commitment.is_zero()
         || padding.iter().any(|word| !word.is_zero())
         || active
             .iter()
@@ -87,7 +86,7 @@ pub(crate) fn merge_pay_notes(storage: &StorageHandle<'_>, proof: &[u8]) -> Resu
             .any(|(i, word)| word.is_zero() || active[..i].contains(word))
     {
         return Err(PayNoteError::InvalidInput(
-            "merge has zero or duplicate inputs, output, asset, or nonzero padding".into(),
+            "merge has zero or duplicate inputs, zero output, or nonzero padding".into(),
         )
         .into());
     }
@@ -238,7 +237,7 @@ pub(crate) fn deposit(
     }
     // A spend routes the tokens into the vault of the asset. If the asset has
     // no vault, no spend can settle the note. Thus, reject the deposit.
-    // NB: native COEN has no vault. A native note can only be withdrawn.
+    // NB: native COEN has no vault. A native note can be merged and withdrawn.
     if !native && outbe_vaultrouter::api::asset_vaults_count(&storage, asset)?.is_zero() {
         return Err(PayNoteError::AssetVaultMissing.into());
     }

@@ -11,6 +11,7 @@
 //!   * a native COEN note (`asset == 0`) proves under the frozen circuit and
 //!     pays the recipient in native balance.
 //!   * a failed payout leaves the note spendable.
+//!   * native notes merge, and the merged note pays out more than either input.
 
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::{sol, SolCall};
@@ -18,7 +19,7 @@ use evm2::evm::{AccountInfo, CacheDB, EmptyDB};
 use outbe_evm::test_support::{install_code, runtime_code, seed_storage, EvmWorld};
 use outbe_paynote::api::withdraw_context;
 use outbe_paynote::precompile::IPayNote;
-use outbe_paynote::test_support::{change_note, note, spend_proof, Note};
+use outbe_paynote::test_support::{change_note, merge_proof, note, spend_proof, Note};
 use outbe_primitives::chain::CHAIN_ID;
 use outbe_primitives::storage::{SubCallInput, SubCallOutput, SubCallStatus};
 use outbe_system_common::addresses::PAYNOTE_ADDRESS;
@@ -106,11 +107,10 @@ fn succeeded(out: &SubCallOutput) -> bool {
     matches!(out.status, SubCallStatus::Success)
 }
 
-/// `ALICE` deposits a note of `NOTE_AMOUNT` in `asset`. Returns the note and a
-/// proof that pays `SPEND_AMOUNT` of it to `recipient`.
-fn deposit_and_prove(world: &mut EvmWorld, asset: Address, recipient: Address) -> (Note, Vec<u8>) {
+/// `ALICE` deposits a note of `NOTE_AMOUNT` in `asset` under spend key `key`.
+fn deposit(world: &mut EvmWorld, key: u64, asset: Address) -> Note {
     let amount = U256::from(NOTE_AMOUNT);
-    let paid = note(CHAIN_ID, 23, asset, amount);
+    let paid = note(CHAIN_ID, key, asset, amount);
     let deposit = IPayNote::depositCall {
         asset,
         amount,
@@ -118,6 +118,13 @@ fn deposit_and_prove(world: &mut EvmWorld, asset: Address, recipient: Address) -
     };
     let value = if asset.is_zero() { amount } else { U256::ZERO };
     assert!(succeeded(&call(world, ALICE, value, deposit.abi_encode())));
+    paid
+}
+
+/// `ALICE` deposits a note in `asset`. Returns the note and a proof that pays
+/// `SPEND_AMOUNT` of it to `recipient`.
+fn deposit_and_prove(world: &mut EvmWorld, asset: Address, recipient: Address) -> (Note, Vec<u8>) {
+    let paid = deposit(world, 23, asset);
 
     let mut tree = outbe_paynote::client::new_tree(CHAIN_ID).unwrap();
     tree.append(paid.commitment).unwrap();
@@ -237,4 +244,50 @@ fn a_native_withdrawal_pays_the_recipient_in_coen() {
 
     assert!(!succeeded(&withdraw(&mut world, &proof, BOB)));
     assert_eq!(native_balance(&mut world, BOB), spend);
+}
+
+#[test]
+fn merged_native_notes_withdraw_as_one_note() {
+    let mut world = world();
+    let amount = U256::from(NOTE_AMOUNT);
+    let inputs = [23, 24].map(|key| deposit(&mut world, key, Address::ZERO));
+    let mut tree = outbe_paynote::client::new_tree(CHAIN_ID).unwrap();
+    for input in &inputs {
+        tree.append(input.commitment).unwrap();
+    }
+
+    let merged = note(CHAIN_ID, 25, Address::ZERO, amount + amount);
+    let merge = IPayNote::mergePayNotesCall {
+        proof: merge_proof(CHAIN_ID, &tree, &inputs.each_ref(), &merged).into(),
+    };
+    let out = call(&mut world, RELAYER, U256::ZERO, merge.abi_encode());
+    assert!(
+        succeeded(&out),
+        "native merge must succeed, got {:?} returndata 0x{}",
+        out.status,
+        alloy_primitives::hex::encode(&out.returndata),
+    );
+    tree.append(merged.commitment).unwrap();
+    for input in &inputs {
+        assert!(is_spent(&mut world, input));
+    }
+    // A merge moves no funds.
+    assert_eq!(native_balance(&mut world, PAYNOTE_ADDRESS), amount + amount);
+
+    // More than either input held.
+    let spend = amount + U256::ONE;
+    let proof = spend_proof(
+        CHAIN_ID,
+        &tree,
+        2,
+        &merged,
+        withdraw_context(BOB).unwrap(),
+        spend,
+    );
+    assert!(succeeded(&withdraw(&mut world, &proof, BOB)));
+    assert_eq!(native_balance(&mut world, BOB), spend);
+    assert_eq!(
+        native_balance(&mut world, PAYNOTE_ADDRESS),
+        amount + amount - spend
+    );
 }
