@@ -492,8 +492,9 @@ fn joiner_synced_to_tip(status: &VmMemberStatus, tip: Option<u64>, max_lag: u64)
 fn joiner_base_healthy(status: &VmMemberStatus, tip: Option<u64>, max_lag: u64) -> bool {
     let running_ok = status.vmm_running && status.error.is_none();
     let tee_ok = joiner_tee_ready(status);
+    let feeder_ok = status.feeder_healthy == Some(true);
     let synced = joiner_synced_to_tip(status, tip, max_lag);
-    running_ok && tee_ok && synced
+    running_ok && tee_ok && feeder_ok && synced
 }
 
 async fn wait_for_joiner_synced(ctx: &JoinerPollCtx<'_>, progress: &mut Progress) -> Result<()> {

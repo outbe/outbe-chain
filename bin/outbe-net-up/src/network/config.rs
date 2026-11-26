@@ -35,6 +35,8 @@ pub const BASE_RETH_P2P_PORT: u16 = 30303;
 pub const BASE_CONSENSUS_P2P_PORT: u16 = 30400;
 pub const BASE_RETH_DISCV5_PORT: u16 = 31303;
 
+pub use super::feeder_config::FeederNetworkConfig;
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NetworkConfig {
@@ -45,6 +47,8 @@ pub struct NetworkConfig {
     pub certified_rpc: String,
     pub founders: Vec<Founder>,
     pub hyperlane: HyperlaneNetworkConfig,
+    #[serde(default, skip_serializing_if = "FeederNetworkConfig::is_empty")]
+    pub feeder: FeederNetworkConfig,
     #[serde(default)]
     pub topology: Topology,
     pub genesis: Genesis,
@@ -365,6 +369,7 @@ impl NetworkConfig {
         if let Some(vm) = &self.vm {
             self.validate_vm_defaults(vm)?;
         }
+        self.feeder.validate()?;
         self.validate_founders()?;
         self.validate_genesis()
     }
@@ -1466,5 +1471,68 @@ genesis:
                 "bare-host config must reject rpc_port={bad}"
             );
         }
+    }
+
+    #[test]
+    fn feeder_config_validates_rpc_endpoints_and_api_keys() {
+        let mut cfg = vm_config("testnet", Network::Testnet.chain_id());
+        // Both unquoted integer and quoted string chain IDs deserialize into BTreeMap<u64, String>.
+        let parsed: FeederNetworkConfig = serde_yaml_ng::from_str(
+            r#"
+rpc_endpoints:
+  1: "https://ethereum-rpc.example.invalid"
+  "97": "https://bsc-testnet-rpc.example.invalid"
+  11155111: "https://sepolia-rpc.example.invalid"
+api_keys:
+  pyth: "test-key"
+"#,
+        )
+        .unwrap();
+        assert_eq!(parsed.rpc_endpoints.len(), 3);
+        assert_eq!(
+            parsed.rpc_endpoints[&97],
+            "https://bsc-testnet-rpc.example.invalid"
+        );
+        cfg.feeder = parsed;
+        cfg.validate().unwrap();
+
+        // Reject chain_id = 0.
+        let mut zero_cid = cfg.clone();
+        zero_cid
+            .feeder
+            .rpc_endpoints
+            .insert(0, "https://zero.example.invalid".into());
+        assert!(zero_cid.validate().is_err());
+
+        // Reject non-HTTP URL and REPLACE_WITH_ placeholder URL.
+        for bad_url in [
+            "REPLACE_WITH_RPC_URL",
+            "https://REPLACE_WITH_RPC_URL.example.invalid",
+            "ws://ethereum-rpc.example.invalid",
+            "https://",
+            "https://rpc.example.invalid/has space",
+        ] {
+            let mut bad = cfg.clone();
+            bad.feeder.rpc_endpoints.insert(1, bad_url.into());
+            assert!(
+                bad.validate().is_err(),
+                "feeder.rpc_endpoints must reject `{bad_url}`"
+            );
+        }
+
+        // Reject unknown API-key provider and REPLACE_WITH_ key.
+        let mut bad_provider = cfg.clone();
+        bad_provider
+            .feeder
+            .api_keys
+            .insert("binance".into(), "secret".into());
+        assert!(bad_provider.validate().is_err());
+
+        let mut bad_key = cfg;
+        bad_key
+            .feeder
+            .api_keys
+            .insert("pyth".into(), "REPLACE_WITH_PYTH_API_KEY".into());
+        assert!(bad_key.validate().is_err());
     }
 }

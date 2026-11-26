@@ -48,7 +48,8 @@ fn validator_consensus_ready(status: &VmMemberStatus, required_peers: usize) -> 
         && consensus.has_threshold_shares
         && consensus.connected_peers >= required_peers as u64;
     let tee_ok = status.no_tee || consensus.resident_ready();
-    exec_ok && core_ready && tee_ok
+    let feeder_ok = status.feeder_healthy == Some(true);
+    exec_ok && core_ready && tee_ok && feeder_ok
 }
 
 /// Compute readiness baseline `B = max(finalized)` from the first sample where every member
@@ -159,8 +160,8 @@ pub(crate) fn render_vm_status(
         build.config.name, build.config.chain_id
     ));
     lines.push(format!(
-        "{:<14} {:<10} {:<16} {:<10} {:<10} {:<8} {:<6} {:<6} {:<12} DETAIL",
-        "MEMBER", "CLASS", "SERVICE_IP", "VMM", "MODE", "FINAL", "LAG", "VRF", "TEE"
+        "{:<14} {:<10} {:<16} {:<10} {:<10} {:<8} {:<6} {:<6} {:<12} {:<10} DETAIL",
+        "MEMBER", "CLASS", "SERVICE_IP", "VMM", "MODE", "FINAL", "LAG", "VRF", "TEE", "FEEDER"
     ));
     for (s, a) in statuses.iter().zip(&assessments) {
         lines.push(render_member_status_row(s, a));
@@ -193,10 +194,11 @@ fn render_member_status_row(s: &VmMemberStatus, a: &MemberLagAssessment) -> Stri
         opt_u64_or_dash(s.vrf_material_version)
     };
     let tee = format_member_tee(s);
+    let feeder = format_member_feeder(s);
     let detail = format_member_detail(s, a);
     format!(
-        "{:<14} {:<10} {:<16} {:<10} {:<10} {:<8} {:<6} {:<6} {:<12} {detail}",
-        s.name, class_str, s.service_ip, s.vmm_status, mode, finalized, lag, vrf, tee
+        "{:<14} {:<10} {:<16} {:<10} {:<10} {:<8} {:<6} {:<6} {:<12} {:<10} {detail}",
+        s.name, class_str, s.service_ip, s.vmm_status, mode, finalized, lag, vrf, tee, feeder
     )
 }
 
@@ -216,10 +218,22 @@ fn format_member_tee(s: &VmMemberStatus) -> String {
         .unwrap_or_else(|| "-".to_owned())
 }
 
+fn format_member_feeder(s: &VmMemberStatus) -> &'static str {
+    if s.role == MemberRole::FullNode {
+        return "n/a";
+    }
+    match s.feeder_healthy {
+        Some(true) => "ok",
+        Some(false) => "unhealthy",
+        None => "-",
+    }
+}
+
 fn format_member_detail(s: &VmMemberStatus, a: &MemberLagAssessment) -> String {
     let base = s
         .error
         .as_deref()
+        .or(s.feeder_error.as_deref())
         .or(s.classification_detail.as_deref())
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| {

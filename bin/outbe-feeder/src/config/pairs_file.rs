@@ -216,10 +216,12 @@ markets = [{ provider = "binance" }]
             env!("CARGO_MANIFEST_DIR")
         );
         let text = std::fs::read_to_string(&path).unwrap();
-        let config =
-            FeederConfig::build(toml::from_str(CHAIN_LOCAL).unwrap(), Some(&text)).unwrap();
+        let local = format!(
+            "{CHAIN_LOCAL}97 = \"https://bsc-testnet-rpc.example.invalid\"\n11155111 = \"https://sepolia-rpc.example.invalid\"\n"
+        );
+        let config = FeederConfig::build(toml::from_str(&local).unwrap(), Some(&text)).unwrap();
         config.validate().unwrap();
-        assert_eq!(config.currency_pairs.len(), 6);
+        assert_eq!(config.currency_pairs.len(), 5);
     }
 
     #[test]

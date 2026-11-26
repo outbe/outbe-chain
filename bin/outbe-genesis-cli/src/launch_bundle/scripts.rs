@@ -323,7 +323,7 @@ pub fn feeder_pairs_settings(config: &Value) -> Result<String, GenesisError> {
         return Ok(String::new());
     };
     let mut chain_ids = BTreeSet::new();
-    for section in ["onchain_providers", "dex_providers"] {
+    for section in ["onchain_providers", "dex_providers", "gas_providers"] {
         if let Some(entries) = table.get(section).and_then(Value::as_array) {
             for entry in entries {
                 if let Some(cid) = entry.get("chain_id").and_then(Value::as_i64) {

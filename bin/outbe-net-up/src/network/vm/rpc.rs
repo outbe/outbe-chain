@@ -10,6 +10,8 @@ use serde_json::{json, Value};
 use super::ensure_vm_deployment;
 use crate::network::remote::NetworkArtifacts;
 
+pub(crate) const FEEDER_HEALTH_PORT: u16 = 9002;
+
 #[derive(Clone, Copy)]
 pub(crate) struct VmRpcTarget<'a> {
     pub(crate) ssh: &'a Ssh,
@@ -160,6 +162,33 @@ pub(crate) async fn load_and_verify_vm_orchestration(
     ));
     verify_certified_rpc_chain_id(&build, &first_host, exec).await?;
     Ok(build)
+}
+
+/// Probe the guest `outbe-feeder` HTTP health endpoint on `http://<service_ip>:9002/health`
+/// over SSH ControlMaster. Succeeds only on HTTP 200 with JSON `{"status": "ok", ...}`.
+pub(crate) fn query_vm_feeder_health(
+    exec: &dyn HostExec,
+    ssh: &Ssh,
+    label: &str,
+    service_ip: Ipv4Addr,
+) -> Result<()> {
+    let url = format!("http://{service_ip}:{FEEDER_HEALTH_PORT}/health");
+    let cmd = format!(
+        "curl -fsS --connect-timeout 3 --max-time 5 {}",
+        shell_quote(&url)
+    );
+    let raw = exec.capture(ssh, label, &cmd).wrap_err_with(|| {
+        format!("feeder /health unreachable on {service_ip}:{FEEDER_HEALTH_PORT}")
+    })?;
+    let body: Value = serde_json::from_str(&raw).wrap_err_with(|| {
+        format!("parse feeder /health response from {service_ip}:{FEEDER_HEALTH_PORT}")
+    })?;
+    let status = body.get("status").and_then(Value::as_str).unwrap_or("");
+    ensure!(
+        status == "ok",
+        "feeder /health on {service_ip}:{FEEDER_HEALTH_PORT} reported status `{status}`"
+    );
+    Ok(())
 }
 
 /// Issue all 4 consensus/execution JSON-RPC queries in a single HTTP JSON-RPC batch request over

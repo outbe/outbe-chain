@@ -498,6 +498,9 @@ struct FakeHostState {
     fail_rpc_for_ip_after_update: Option<String>,
     drop_vm_update_response_once: Option<String>,
     rpc_dead_ips: BTreeSet<String>,
+    feeder_dead_ips: BTreeSet<String>,
+    feeder_unhealthy_ips: BTreeSet<String>,
+    feeder_urls_hit: Vec<String>,
     rpc_dynamic_epoch_len: Option<u64>,
     rpc_next_activation_override: Option<u64>,
     rpc_randomness_preparing_until_height: Option<u64>,
@@ -596,6 +599,21 @@ impl HostExec for FakeHostExec {
             let mut g = self.state.lock().unwrap();
             g.next_vm_seq += 1;
             return Ok(format!("/tmp/{prefix}.{:06}", g.next_vm_seq));
+        }
+        if command.contains("curl -fsS") && command.contains(":9002/health") {
+            let url = sh_tokens(command).last().cloned().unwrap_or_default();
+            let mut g = self.state.lock().unwrap();
+            g.feeder_urls_hit.push(url.clone());
+            if g.feeder_dead_ips.iter().any(|ip| url.contains(ip)) {
+                bail!("simulated dead feeder on {url}");
+            }
+            if g.feeder_unhealthy_ips.iter().any(|ip| url.contains(ip)) {
+                return Ok(
+                    json!({"status": "unhealthy", "health_reasons": ["no confirmed vote"]})
+                        .to_string(),
+                );
+            }
+            return Ok(json!({"status": "ok", "health_reasons": []}).to_string());
         }
         Ok(String::new())
     }
@@ -1938,6 +1956,8 @@ fn c2_readiness_requires_growth_common_vrf_and_respects_no_tee() {
             has_threshold_shares: Some(true),
             vrf_material_version: Some(vrf),
             tee_ready: if no_tee { None } else { Some(tee_ok) },
+            feeder_healthy: Some(true),
+            feeder_error: None,
             consensus: Some(consensus),
             boot_warning: None,
             error: None,
@@ -2170,7 +2190,15 @@ impl LocalShellExec {
 
 impl HostExec for LocalShellExec {
     fn capture(&self, _ssh: &Ssh, _label: &str, command: &str) -> Result<String> {
-        let out = self.shell_cmd(command).output()?;
+        let rewritten = if command.contains("curl -fsS") && command.contains(":9002/health") {
+            format!(
+                "curl -fsS --connect-timeout 3 --max-time 5 http://127.0.0.1:{}/health",
+                self.rpc_port
+            )
+        } else {
+            command.to_owned()
+        };
+        let out = self.shell_cmd(&rewritten).output()?;
         ensure!(
             out.status.success(),
             "LocalShellExec capture failed: {}",
@@ -2495,10 +2523,13 @@ fn spawn_fake_rpc_http_server() -> (u16, Arc<AtomicBool>, thread::JoinHandle<()>
                     let mut buf = [0u8; 4096];
                     let n = stream.read(&mut buf).unwrap_or(0);
                     let req_text = String::from_utf8_lossy(&buf[..n]);
+                    let req_line = req_text.lines().next().unwrap_or("");
                     let req_body = req_text
                         .split_once("\r\n\r\n")
                         .map_or("", |(_, b)| b.trim());
-                    let body = if req_body.starts_with('{') && req_body.contains("eth_chainId") {
+                    let body = if req_line.starts_with("GET /health ") {
+                        json!({"status": "ok", "health_reasons": []}).to_string()
+                    } else if req_body.starts_with('{') && req_body.contains("eth_chainId") {
                         json!({"jsonrpc": "2.0", "id": 1, "result": format!("0x{:x}", 424_242_u64)})
                             .to_string()
                     } else {
@@ -3175,7 +3206,10 @@ fn s4_boot_error_warning_vs_live_unhealthy() {
         fn run_quiet(&self, _ssh: &Ssh, _label: &str, _command: &str) -> Result<()> {
             unreachable!()
         }
-        fn capture(&self, _ssh: &Ssh, _label: &str, _command: &str) -> Result<String> {
+        fn capture(&self, _ssh: &Ssh, _label: &str, command: &str) -> Result<String> {
+            if command.contains(":9002/health") {
+                return Ok(json!({"status": "ok", "health_reasons": []}).to_string());
+            }
             unreachable!()
         }
         fn capture_raw(&self, _ssh: &Ssh, _label: &str, _command: &str) -> Result<String> {
@@ -4135,6 +4169,8 @@ async fn s7_f2_dkg_guard_time_based_ceremony_window_and_fail_closed() {
             has_threshold_shares: Some(true),
             vrf_material_version: Some(1),
             tee_ready: Some(true),
+            feeder_healthy: Some(true),
+            feeder_error: None,
             consensus: Some(ConsensusStatus {
                 randomness_status: rs.map(ToOwned::to_owned),
                 ..Default::default()
@@ -4352,6 +4388,8 @@ async fn s7_pre_stop_requires_every_validator_connected_peers_at_least_n_minus_1
         has_threshold_shares: Some(true),
         vrf_material_version: Some(1),
         tee_ready: Some(true),
+        feeder_healthy: Some(true),
+        feeder_error: None,
         consensus: peers.map(|p| ConsensusStatus {
             connected_peers: p,
             is_validator: true,
@@ -4674,6 +4712,8 @@ async fn s10_status_fails_when_validator_consensus_peers_below_n_minus_1_or_miss
         has_threshold_shares: Some(role != MemberRole::FullNode),
         vrf_material_version: Some(if role == MemberRole::FullNode { 0 } else { 1 }),
         tee_ready: Some(role != MemberRole::FullNode),
+        feeder_healthy: (role != MemberRole::FullNode).then_some(true),
+        feeder_error: None,
         consensus: peers.map(|p| ConsensusStatus {
             connected_peers: p,
             is_validator: role != MemberRole::FullNode,
@@ -4835,6 +4875,8 @@ fn s10_member_node_ready_requires_execution_peers_ge_1_and_consensus_peers_ge_n_
         has_threshold_shares: Some(true),
         vrf_material_version: Some(1),
         tee_ready: Some(true),
+        feeder_healthy: Some(true),
+        feeder_error: None,
         consensus: Some(ConsensusStatus {
             connected_peers: cons_peers,
             is_validator: true,
@@ -5407,5 +5449,262 @@ async fn update_refuses_legacy_env_schema_disks_before_touching_hosts() {
     assert!(
         fake.state.lock().unwrap().vm_update_calls.is_empty(),
         "must refuse before updating any VM"
+    );
+}
+
+#[tokio::test]
+async fn feeder_health_gates_status_start_and_add_validator_while_skipping_full_nodes() {
+    let dir = tempfile::tempdir().unwrap();
+    let fixture = build_test_vm_artifacts(dir.path(), "fdr", "~/.dstack-vmm", b"fake-outbe-up");
+    let fake = FakeHostExec::new();
+    let exec: Arc<dyn HostExec> = Arc::new(fake.clone());
+
+    deploy_with_exec(
+        &DeployOptions {
+            artifacts: &fixture.root,
+            image_source: ImageSource::Archive {
+                path: fixture.image_archive.clone(),
+                sha256: None,
+            },
+            ssh_key: None,
+            ssh_config: None,
+            no_tee: false,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .unwrap();
+
+    // 1. Dead feeder on validator-1 (`10.77.0.11`) blocks `network start` readiness.
+    fake.state
+        .lock()
+        .unwrap()
+        .feeder_dead_ips
+        .insert("10.77.0.11".to_owned());
+    let start_err = start_with_exec(
+        &StartOptions {
+            artifacts: &fixture.root,
+            ssh_key: None,
+            ssh_config: None,
+            timeout: Duration::from_millis(50),
+            max_lag: 20,
+            min_finalized_blocks: 10,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .expect_err("network start must not succeed while a validator feeder is dead");
+    let start_msg = format!("{start_err:#}");
+    assert!(
+        start_msg.contains("unhealthy") && start_msg.contains("10.77.0.11:9002"),
+        "{start_msg}"
+    );
+
+    // 2. `network status` (table & --json) fails non-zero when a validator feeder is dead.
+    for json_mode in [false, true] {
+        let err = status_with_exec(
+            &StatusOptions {
+                artifacts: &fixture.root,
+                ssh_key: None,
+                ssh_config: None,
+                watch: false,
+                max_lag: 20,
+                json: json_mode,
+            },
+            Arc::clone(&exec),
+        )
+        .await
+        .expect_err("network status must fail when a validator feeder is dead");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("validator-1") && msg.contains("feeder unhealthy"),
+            "json={json_mode}: {msg}"
+        );
+    }
+
+    // 3. HTTP 200 with `status != "ok"` on `:9002/health` also fails `network status`.
+    {
+        let mut g = fake.state.lock().unwrap();
+        g.feeder_dead_ips.clear();
+        g.feeder_unhealthy_ips.insert("10.77.0.12".to_owned());
+    }
+    let unhealthy_err = status_with_exec(
+        &StatusOptions {
+            artifacts: &fixture.root,
+            ssh_key: None,
+            ssh_config: None,
+            watch: false,
+            max_lag: 20,
+            json: false,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .expect_err("network status must fail when feeder /health reports status=unhealthy");
+    let unhealthy_msg = format!("{unhealthy_err:#}");
+    assert!(
+        unhealthy_msg.contains("validator-2") && unhealthy_msg.contains("status `unhealthy`"),
+        "{unhealthy_msg}"
+    );
+
+    // 4. Restore feeder health -> `network start` and `network status` pass.
+    {
+        let mut g = fake.state.lock().unwrap();
+        g.feeder_unhealthy_ips.clear();
+        g.rpc_poll_counter = 0;
+        g.feeder_urls_hit.clear();
+    }
+    start_with_exec(
+        &StartOptions {
+            artifacts: &fixture.root,
+            ssh_key: None,
+            ssh_config: None,
+            timeout: Duration::from_secs(30),
+            max_lag: 20,
+            min_finalized_blocks: 10,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .unwrap();
+    status_with_exec(
+        &StatusOptions {
+            artifacts: &fixture.root,
+            ssh_key: None,
+            ssh_config: None,
+            watch: false,
+            max_lag: 20,
+            json: true,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .unwrap();
+
+    // 5. Add a keyless full node whose IP is in `feeder_dead_ips`: full nodes must NEVER be probed
+    //    on `:9002/health` and must stay healthy in `network status`.
+    let full_ip = Ipv4Addr::new(10, 77, 0, 20);
+    {
+        let mut g = fake.state.lock().unwrap();
+        g.full_node_ips.insert(full_ip.to_string());
+        g.feeder_dead_ips.insert(full_ip.to_string());
+        g.feeder_urls_hit.clear();
+        g.rpc_height_schedule = vec![112, 113, 114];
+        g.rpc_poll_counter = 0;
+    }
+    add_full_node_with_exec(
+        &AddFullNodeOptions {
+            artifacts: &fixture.root,
+            name: "full-node-0",
+            host: "192.0.2.50",
+            user: Some("ubuntu"),
+            port: 22,
+            vmm_home: None,
+            bridge: None,
+            vm_ip: full_ip,
+            rpc_bind_ip: None,
+            advertise_ip: Some(full_ip),
+            rpc_port: 8545,
+            image_source: None,
+            vcpu: None,
+            memory_gib: None,
+            disk_gib: None,
+            no_tee: false,
+            ssh_key: None,
+            ssh_config: None,
+            timeout: Duration::from_secs(30),
+            max_lag: 20,
+            min_finalized_blocks: 1,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .unwrap();
+    status_with_exec(
+        &StatusOptions {
+            artifacts: &fixture.root,
+            ssh_key: None,
+            ssh_config: None,
+            watch: false,
+            max_lag: 20,
+            json: false,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .unwrap();
+    let urls = fake.state.lock().unwrap().feeder_urls_hit.clone();
+    assert!(
+        urls.iter().any(|u| u.contains("10.77.0.10:9002/health")),
+        "validator feeder /health must be probed: {urls:?}"
+    );
+    assert!(
+        !urls.iter().any(|u| u.contains("10.77.0.20:9002/health")),
+        "full-node must never be probed on :9002/health: {urls:?}"
+    );
+
+    // 6. Joining validator with dead feeder fails `add-validator` readiness.
+    let join_ip = Ipv4Addr::new(10, 77, 0, 21);
+    seed_pregenerated_member_keys(&fixture.root, "validator-joiner-0");
+    let joiner_addr = outbe_operator_node_role::validator_address(
+        &fixture
+            .root
+            .join("secrets/members/validator-joiner-0/evm-key.hex"),
+    )
+    .unwrap();
+    fake.state
+        .lock()
+        .unwrap()
+        .feeder_dead_ips
+        .insert(join_ip.to_string());
+    let join_driver = FakeJoinDriver {
+        inner: Mutex::new(FakeJoinDriverState {
+            min_stake: alloy_primitives::U256::from(10_000_000_000_000_000_000_u128),
+            joiner_addr,
+            balances: BTreeMap::new(),
+            record: outbe_operator_node_role::rpc::ValidatorRecord::default(),
+            oracle_delegate: alloy_primitives::Address::ZERO,
+            staked_symmetric: None,
+            confirm_ready_called: false,
+            funded_calls: Vec::new(),
+            funded_before_vm_start: false,
+            host_state: Arc::clone(&fake.state),
+            joiner_ip: join_ip.to_string(),
+            joiner_vm_name: "fdr-validator-joiner-0".to_owned(),
+        }),
+    };
+    let join_err = add_validator_with_exec(
+        &AddValidatorOptions {
+            artifacts: &fixture.root,
+            name: "validator-joiner-0",
+            host: "192.0.2.50",
+            user: Some("ubuntu"),
+            port: 22,
+            vmm_home: None,
+            bridge: None,
+            vm_ip: join_ip,
+            rpc_bind_ip: None,
+            advertise_ip: Ipv4Addr::new(192, 0, 2, 60),
+            rpc_port: 8545,
+            port_offset: 5,
+            image_source: None,
+            vcpu: None,
+            memory_gib: None,
+            disk_gib: None,
+            no_tee: false,
+            ssh_key: None,
+            ssh_config: None,
+            timeout: Duration::from_millis(50),
+            max_lag: 20,
+            min_finalized_blocks: 1,
+        },
+        Arc::clone(&exec),
+        &join_driver,
+    )
+    .await
+    .expect_err("add-validator must not succeed while joiner feeder is dead");
+    assert!(
+        format!("{join_err:#}").contains("timed out waiting for joining validator"),
+        "{join_err:#}"
     );
 }

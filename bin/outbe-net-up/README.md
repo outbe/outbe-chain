@@ -89,6 +89,11 @@ founders:
       port_offset: 1
 hyperlane:
   gasless: true
+feeder:
+  rpc_endpoints:
+    1: "https://ethereum-rpc.example.invalid"
+    97: "https://bsc-testnet-rpc.example.invalid"
+    11155111: "https://sepolia-rpc.example.invalid"
 topology:
   use_local_defaults: false
 genesis:
@@ -107,6 +112,7 @@ Configuration rules:
 - Set `vm.memory_gib` to at least `8` on active validator VMs to avoid OOM kills.
 - Optionally set per-founder `rpc_port` (default `8545`, written to `OUTBE_RPC_PORT`) or pass `--rpc-port` to `add-validator` / `add-full-node`; RPC ports must be in `1..=65535` and distinct from all other configurable ports and fixed service ports (`8551`, `8876`, `9000`, `9002`, `9003`, `9101`).
 - Set `topology.use_local_defaults: false` when founders advertise public IPs across hosts.
+- For non-devnet VM networks (such as `testnet`), configure `feeder.rpc_endpoints` in `network.yaml` for every external chain ID required by the active feeder profile (`1`, `97`, and `11155111` for `testnet/pairs.toml`), plus `feeder.api_keys.<provider>` if a profile uses an API-key provider. `network build` embeds these endpoints into every validator `feeder-public.toml` (both founders and `joining/operator-config.example.yaml` for `add-validator`) and refuses to build if any required chain ID is missing or any `REPLACE_WITH_` placeholder remains. Devnet (`network: devnet`) uses the self-contained `mock` provider and requires no external feeder RPCs.
 - When `genesis.base` is not set, `network build` defaults omitted epoch and DKG fields to `1200 / 300 / 300`.
 - `network build` refuses `dkg_prepare_window_blocks < 120` or `dkg_activation_grace_blocks < 120`. Shorter windows risk starving DKG `ACK_COLLECTION_GRACE` (30s) at ~4 blocks/s.
 
@@ -151,7 +157,7 @@ outbe-net-up network status --artifacts ./out/network --ssh-key ~/.ssh/id_ed2551
 outbe-net-up network status --artifacts ./out/network --ssh-key ~/.ssh/id_ed25519 --watch
 ```
 
-In one-shot and `--json` modes, `network status` exits non-zero if any member fails health checks. Failure conditions include a stopped or unreachable VM, lag above `--max-lag`, an orphan VM, missing `outbe_consensusStatus`, or validator `connectedPeers < n - 1`.
+In one-shot and `--json` modes, `network status` exits non-zero if any member fails health checks. Failure conditions include a stopped or unreachable VM, lag above `--max-lag`, an orphan VM, missing `outbe_consensusStatus`, validator `connectedPeers < n - 1`, or an unhealthy/unreachable validator `outbe-feeder` (`http://<vm_ip>:9002/health`, bound on `0.0.0.0:9002` inside validator VMs). `network start`, `network add-validator`, and `network update` enforce the same validator feeder health check in their readiness gates.
 
 ## Add a joining validator or full node
 

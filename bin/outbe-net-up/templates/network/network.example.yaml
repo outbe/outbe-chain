@@ -58,6 +58,18 @@ hyperlane:
         - "https://ethereum-sepolia-rpc.publicnode.com"
       reorg_period: 2
 
+# External EVM JSON-RPC endpoints used by `outbe-feeder` (`pairs.toml` onchain, DEX, and gas
+# providers). Required for non-devnet VM networks for every chain ID referenced by the active
+# feeder profile (replace `.example.invalid` with real endpoints before launching).
+feeder:
+  rpc_endpoints:
+    1: "https://ethereum-rpc.example.invalid"
+    97: "https://bsc-testnet-rpc.example.invalid"
+    11155111: "https://sepolia-rpc.example.invalid"
+  # Optional provider API keys (only needed if the active feeder profile uses `pyth` or `redstone`):
+  # api_keys:
+  #   pyth: "<your-pyth-api-key>"
+
 topology:
   # Enable only when consensus peers use private/RFC1918 addresses.
   use_local_defaults: true

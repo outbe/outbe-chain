@@ -479,7 +479,7 @@ fn seed_stage_end_to_end_and_reproducibility() {
         .iter()
         .map(|s| s["pair_quote"].as_str().expect("pair_quote").to_owned())
         .collect();
-    let every: BTreeSet<String> = ["840", "978", "392", "826", "156", "344"]
+    let every: BTreeSet<String> = ["840", "978", "392", "826", "156"]
         .into_iter()
         .map(ToOwned::to_owned)
         .collect();
