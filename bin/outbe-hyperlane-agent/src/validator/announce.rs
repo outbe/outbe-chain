@@ -30,7 +30,7 @@ const ANNOUNCE_MAX_DELAY: Duration = Duration::from_secs(900);
 /// Signs the announcement, stores it for `announcement.json`, and sends
 /// `announce` on the origin chain until `getAnnouncedStorageLocations`
 /// contains `location`. The key `H` pays the gas on that chain, also on
-/// Outbe: the ZeroFee policy waives the fee only for `submitCheckpoint`.
+/// Outbe: the ZeroFee policy waives the fee only for `submitReport`.
 pub async fn announce(
     origin: Origin,
     rpc_urls: Vec<String>,

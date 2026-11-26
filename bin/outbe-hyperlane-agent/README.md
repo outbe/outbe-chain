@@ -26,7 +26,7 @@ source and the changes.
   origin RPCs ──► sync + RPC vote ──► sign ──► MDBX store ──► :9000 S3 GET ──► relayers
                                                    │
                                                    ├──► announce (each origin chain)
-                                                   ├──► submitCheckpoint (Outbe)
+                                                   ├──► submitReport (Outbe)
                                                    └──► relayer role ──► process (destination chains)
 ```
 
@@ -44,8 +44,8 @@ source and the changes.
    bucket. The relayer reads them with its S3 client.
 6. **Announce.** The daemon announces the bucket on the `ValidatorAnnounce`
    of each origin chain, once.
-7. **Liveness.** The daemon sends the latest signed checkpoint of each domain
-   to the controller with `submitCheckpoint`. The controller jails validators
+7. **Liveness.** The daemon sends its root and its report of each domain to
+   the controller with `submitReport`. The controller jails validators
    that fall behind the quorum for `MAX_MISSES` liveness rounds in a row (see
    [`liveness.rs`](../../crates/system/hyperlanecontroller/src/liveness.rs)).
 8. **Relay.** The daemon delivers each message to its
@@ -56,7 +56,7 @@ source and the changes.
 | Address | Purpose | Binding |
 |---|---|---|
 | `V` | Validator, stake and TEE renewal | Existing validator identity. Set it as `validator_address`. |
-| `H` | Checkpoint signer, announce sender, `submitCheckpoint` sender, relayer `process` sender | `V` calls `ValidatorSet.setDelegate(2, H)`. Set it as `private_key`. |
+| `H` | Checkpoint signer, announce sender, `submitReport` sender, relayer `process` sender | `V` calls `ValidatorSet.setDelegate(2, H)`. Set it as `private_key`. |
 
 The price feeder uses its own key `P` (`ValidatorSet.setDelegate(1, P)`).
 Use three distinct addresses.
@@ -80,7 +80,7 @@ validator key remains accepted for Hyperlane calls.
 | Bucket name | The lowercase `0x` address of `H`. |
 | Gas for announce | `H` needs native gas on every origin chain, Outbe included. The announce is a normal transaction. |
 | Gas for the relayer | `H` pays for each `process` transaction on the destination chain. |
-| Gas for liveness | With `gasless = true`, `submitCheckpoint` on Outbe uses the ZeroFee policy and costs no gas. |
+| Gas for liveness | With `gasless = true`, `submitReport` on Outbe uses the ZeroFee policy and costs no gas. |
 | One process per `H` | Do not run a second process with `H`. Both processes would use the same nonces. |
 
 ## Quick start
@@ -105,11 +105,11 @@ matches the code. Unknown fields are errors.
 | Field | Default | Meaning |
 |---|---|---|
 | `[chain] rpc_endpoint` | required | Outbe JSON-RPC (HTTP). Discovery and liveness use it. |
-| `[chain] chain_id` | required | Outbe chain id for `submitCheckpoint` transactions. |
+| `[chain] chain_id` | required | Outbe chain id for `submitReport` transactions. |
 | `[account] private_key` | required | Hex key of `H`. It is plaintext: protect the file. |
 | `[account] validator_address` | required | Address of `V`. |
 | `[hyperlane] poll_interval_secs` | `30` | Interval of the controller poll and of the liveness loop. Must be > 0. |
-| `[hyperlane] gasless` | `false` | Send `submitCheckpoint` with zero priority fee (ZeroFee txpool policy). |
+| `[hyperlane] gasless` | `false` | Send `submitReport` with zero priority fee (ZeroFee txpool policy). |
 | `[health] enabled` | `true` | Start the health server. Without a `[health]` section, it starts. |
 | `[health] bind_address` | `0.0.0.0:9003` | Address of `/health` and `/status`. |
 | `[storage] db_path` | required | Directory of the MDBX store. Never the node database. |
@@ -203,9 +203,9 @@ While the daemon waits for the controller, `/health` returns 200.
 | `miss_count` | `missCount(V)` on the controller. |
 | `relayer.delivered` | `process` transactions of this relayer that a block included, since the start. |
 | `relayer.last_delivery` | Origin domain, leaf index, destination domain, transaction hash and Unix time of the last one, or `null`. |
-| `submitted`, `failed` | `submitCheckpoint` counters since the start. `submitted` counts only transactions with a successful receipt. A revert or no receipt is a failure. |
-| `last_submit_time` | Unix time of the last successful `submitCheckpoint` receipt. `0` before the first one. |
-| `last_submit_error` | The error of the last failed `submitCheckpoint`, or `null` after a success. |
+| `submitted`, `failed` | `submitReport` counters since the start. `submitted` counts only transactions with a successful receipt. A revert or no receipt is a failure. |
+| `last_submit_time` | Unix time of the last successful `submitReport` receipt. `0` before the first one. |
+| `last_submit_error` | The error of the last failed `submitReport`, or `null` after a success. |
 | `domains.<id>.leaves` | Stored leaf count. |
 | `domains.<id>.latest_signed_index` | Highest signed index. |
 | `domains.<id>.cursor` | Finalized origin block of the last stored leaf batch. It is `null` before the first leaf. It moves only when new leaves arrive, so it can stay behind the chain head while the domain has no messages. |
@@ -318,11 +318,11 @@ is jailed:
 |---|---|
 | Sync, sign, backfill | Continue. |
 | Port 9000, announce | Continue. |
-| `submitCheckpoint` | Skipped. The controller would reject it. |
+| `submitReport` | Skipped. The controller would reject it. |
 | Relayer | Sends no transaction. It deletes a message from its queue when another relayer delivers that message. |
 | `/status` | `"active": false`. This is not an error. |
 
-While `V` is active, the daemon sends one `submitCheckpoint` for each running
+While `V` is active, the daemon sends one `submitReport` for each running
 domain in each epoch. It sends the call 60 blocks before the end of the epoch.
 If the epoch is shorter than 120 blocks, it sends the call at half the epoch.
 A validator that is behind thus has the full epoch to sign the target index.
@@ -331,11 +331,13 @@ The daemon reads the start and the length of the epoch from the
 
 The call has these parts:
 
-- Liveness vote: the signed checkpoint at `targetIndex(domain)`. The
+- Liveness vote: the root of the checkpoint that the daemon signed at
+  `targetIndex(domain)`. The call does not have the signature: the other
+  validators read it from the storage of this daemon (see `notServing`). The
   controller compares the roots of all validators at the target index. A
   missing vote, or a root that differs from the root of the quorum, is a
   liveness miss. When there is no target, or the store does not have that
-  index yet, the call has the latest signed checkpoint.
+  index yet, the call has the root at the latest signed index.
 - Report: the latest signed index. The controller sets the next target from
   these indexes.
 - Report: `notServing`, the other active validators that do not serve their
@@ -356,7 +358,7 @@ The call has these parts:
   daemon gets the same result. An origin with a finality tag has no delivery
   check.
 
-The two lists hold 16 addresses together. A validator that a quorum names in
+The two lists hold 23 addresses together. A validator that a quorum names in
 a list gets a liveness miss. A validator that gave a report and did not name
 that validator gets a miss too. When a check did not run, the daemon tries
 again on the next poll. From 35 blocks before the end of the epoch it sends
@@ -432,7 +434,7 @@ When the first relayer works, the others send nothing.
 | Dropped | After 66 attempts (about two weeks) the row stays as dropped. `/status` counts it. Anyone can still deliver the message by hand. |
 | One transaction at a time | The relayer sends one `process` transaction for each chain and waits up to 90 seconds for the receipt. On one chain, the relayer, the liveness and the announce never read a nonce at the same time. |
 | Gas price | EIP-1559 fees. On a chain with no base fee or a zero base fee, a legacy transaction with the gas price of the node. |
-| Fee cap on Outbe | A delivery to Outbe has a fee cap of 10 base fees. It pays the base fee of its block, not the cap. A delivery that stays in the pool also stops every `submitCheckpoint` of `H` behind it, because `H` has one nonce sequence. ZeroFee removes the fee, not the place in that sequence. |
+| Fee cap on Outbe | A delivery to Outbe has a fee cap of 10 base fees. It pays the base fee of its block, not the cap. A delivery that stays in the pool also stops every `submitReport` of `H` behind it, because `H` has one nonce sequence. ZeroFee removes the fee, not the place in that sequence. |
 | Storage locations | Only `s3+http://` and `s3+https://` locations. Only status 200 is an object. No redirect, a 10 second timeout, a 50 KiB body. An ISM validator chooses its location: the relayer does not refuse a private address. |
 | Largest delivery | 3,000,000 gas. There is no gas payment check yet, so `H` pays each delivery, and `H` also pays the liveness transactions. |
 | ISM limits | At most 13 ISMs in a row. The validator set must have 1 to 50 validators and a threshold above 0. |

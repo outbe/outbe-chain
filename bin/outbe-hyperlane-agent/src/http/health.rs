@@ -38,7 +38,7 @@ struct State {
     active: Option<bool>,
     /// `H` is not the checkpoint signer that the controller accepts.
     signer_error: Option<String>,
-    /// The error of the last failed `submitCheckpoint`. A success clears it.
+    /// The error of the last failed `submitReport`. A success clears it.
     submit_error: Option<String>,
     domains: BTreeMap<u32, DomainHealth>,
     /// The last message that this relayer delivered.

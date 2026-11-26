@@ -54,7 +54,7 @@ const OUTBE_FEE_CAP_BASE_FEES: u128 = 10;
 ///
 /// On Outbe the cap is 10 base fees. A delivery that stays in the pool,
 /// because the base fee went above its cap, also stops every
-/// `submitCheckpoint` behind it: the key has one nonce sequence, and ZeroFee
+/// `submitReport` behind it: the key has one nonce sequence, and ZeroFee
 /// removes the fee of a transaction, not its place in that sequence. Missed
 /// checkpoints lead to a jail.
 fn fee_cap(estimate: u128, base_fee: u128, priority_fee: u128, outbe: bool) -> u128 {
@@ -84,7 +84,7 @@ pub struct Chain {
     /// `HyperlaneController.ismByDomain` of this domain: the only ISM whose
     /// messages the relayer delivers to this chain.
     pub ism: Address,
-    /// This chain is Outbe: the liveness sends `submitCheckpoint` here with
+    /// This chain is Outbe: the liveness sends `submitReport` here with
     /// the same key and the same nonce sequence.
     pub outbe: bool,
     /// The provider in use. It moves after an RPC error.

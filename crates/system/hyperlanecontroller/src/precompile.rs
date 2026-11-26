@@ -13,7 +13,7 @@ use outbe_primitives::storage::StorageHandle;
 
 use crate::errors::HyperlaneControllerError;
 use crate::schema::{validator_domain_key, HyperlaneControllerContract};
-use crate::{ControllerBootstrap, Report, SignedCheckpoint};
+use crate::{ControllerBootstrap, Report};
 
 /// No selector accepts native value. The owner holds the fee balance.
 pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];
@@ -65,20 +65,16 @@ pub fn dispatch(
                 applyApproved(c) => mutate_void(&storage, c, caller, |_, c| {
                     controller.apply_approved(c.proposalId, &c.payload)
                 }),
-                submitCheckpoint(c) => mutate_void(&storage, c, caller, |sender, c| {
-                    controller.submit_checkpoint(
+                submitReport(c) => mutate_void(&storage, c, caller, |sender, c| {
+                    controller.submit_report(
                         sender,
-                        &SignedCheckpoint {
-                            domain: c.domain,
-                            root: c.root,
-                            index: c.index,
-                            message_id: c.messageId,
-                            signature: &c.signature,
-                        },
+                        c.domain,
+                        c.index,
+                        c.root,
                         &Report {
-                            latest_index: c.report.latestIndex,
-                            not_serving: &c.report.notServing,
-                            not_delivered: &c.report.notDelivered,
+                            latest_index: c.latestIndex,
+                            not_serving: &c.notServing,
+                            not_delivered: &c.notDelivered,
                         },
                     )
                 }),

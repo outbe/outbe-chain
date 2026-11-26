@@ -84,7 +84,7 @@ pub struct ChainConfig {
 #[serde(deny_unknown_fields)]
 pub struct AccountConfig {
     /// Hex-encoded private key `H`: the checkpoint signer, the announce
-    /// sender and the `submitCheckpoint` sender. Its lowercase address is the
+    /// sender and the `submitReport` sender. Its lowercase address is the
     /// bucket name.
     pub private_key: String,
     /// Validator `V` that this daemon acts for.

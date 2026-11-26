@@ -260,10 +260,15 @@
   },
   {
     "type": "function",
-    "name": "submitCheckpoint",
+    "name": "submitReport",
     "inputs": [
       {
         "name": "domain",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "index",
         "type": "uint32",
         "internalType": "uint32"
       },
@@ -273,41 +278,19 @@
         "internalType": "bytes32"
       },
       {
-        "name": "index",
+        "name": "latestIndex",
         "type": "uint32",
         "internalType": "uint32"
       },
       {
-        "name": "messageId",
-        "type": "bytes32",
-        "internalType": "bytes32"
+        "name": "notServing",
+        "type": "address[]",
+        "internalType": "address[]"
       },
       {
-        "name": "signature",
-        "type": "bytes",
-        "internalType": "bytes"
-      },
-      {
-        "name": "report",
-        "type": "tuple",
-        "internalType": "struct IHyperlaneController.EpochReport",
-        "components": [
-          {
-            "name": "latestIndex",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "notServing",
-            "type": "address[]",
-            "internalType": "address[]"
-          },
-          {
-            "name": "notDelivered",
-            "type": "address[]",
-            "internalType": "address[]"
-          }
-        ]
+        "name": "notDelivered",
+        "type": "address[]",
+        "internalType": "address[]"
       }
     ],
     "outputs": [],
@@ -718,17 +701,6 @@
   },
   {
     "type": "error",
-    "name": "InvalidSignatureLength",
-    "inputs": [
-      {
-        "name": "length",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "InvalidThreshold",
     "inputs": [
       {
@@ -913,27 +885,6 @@
         "name": "length",
         "type": "uint64",
         "internalType": "uint64"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "SignerMismatch",
-    "inputs": [
-      {
-        "name": "validator",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "expected",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "recovered",
-        "type": "address",
-        "internalType": "address"
       }
     ]
   },

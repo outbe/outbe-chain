@@ -30,10 +30,10 @@ use crate::sync::finalized_block;
 // ponytail: one log read for each message; read block ranges if this is slow
 const MAX_DELIVERY_WALK: u32 = 256;
 
-/// The most addresses in the two lists of one report. A free
-/// `submitCheckpoint` has 1024 bytes of calldata at most (ZeroFee): the call
-/// with an empty report has 484 bytes, and each address adds 32 bytes.
-pub const MAX_REPORT_ADDRESSES: usize = 16;
+/// The most addresses in the two lists of one report. A free `submitReport`
+/// has 1024 bytes of calldata at most (ZeroFee): the call with empty lists
+/// has 260 bytes, and each address adds 32 bytes.
+pub const MAX_REPORT_ADDRESSES: usize = 23;
 
 /// One active validator.
 #[derive(Clone, Copy, Debug)]
@@ -246,6 +246,7 @@ pub fn fit_report(not_serving: &mut Vec<Address>, not_delivered: &mut Vec<Addres
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::abi::IHyperlaneController;
 
     #[test]
     fn only_another_validator_after_the_turn_is_a_missed_turn() {
@@ -287,13 +288,23 @@ mod tests {
     }
 
     #[test]
-    fn a_report_has_sixteen_addresses_at_most() {
+    fn a_report_has_the_most_addresses_that_fit() {
         let addresses = |n: u8| (0..n).map(Address::repeat_byte).collect::<Vec<_>>();
-        let (mut serving, mut delivered) = (addresses(10), addresses(10));
+        let (mut serving, mut delivered) = (addresses(15), addresses(15));
         fit_report(&mut serving, &mut delivered);
-        assert_eq!((serving.len(), delivered.len()), (10, 6));
-        let (mut serving, mut delivered) = (addresses(20), addresses(3));
+        assert_eq!((serving.len(), delivered.len()), (15, 8));
+        let (mut serving, mut delivered) = (addresses(30), addresses(3));
         fit_report(&mut serving, &mut delivered);
-        assert_eq!((serving.len(), delivered.len()), (16, 0));
+        assert_eq!((serving.len(), delivered.len()), (23, 0));
+        // The longest call fits in the free calldata of ZeroFee.
+        let call = IHyperlaneController::submitReportCall {
+            domain: 1,
+            index: 1,
+            root: B256::ZERO,
+            latestIndex: 1,
+            notServing: serving,
+            notDelivered: delivered,
+        };
+        assert!(call.abi_encode().len() <= 1024);
     }
 }

@@ -18,7 +18,7 @@ validator_address = "0x0000000000000000000000000000000000000000"
 [hyperlane]
 # Interval of the controller poll and of the liveness loop, in seconds.
 poll_interval_secs = 30
-# Send submitCheckpoint with zero priority fee (ZeroFee txpool policy).
+# Send submitReport with zero priority fee (ZeroFee txpool policy).
 gasless = true
 
 [health]

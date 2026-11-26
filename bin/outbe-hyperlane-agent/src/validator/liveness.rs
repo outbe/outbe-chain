@@ -1,6 +1,6 @@
 //! Hyperlane liveness: submits this validator's signed checkpoints of each
 //! running domain from the local store to the HyperlaneController precompile.
-//! Per domain it sends one `submitCheckpoint` in each epoch, near the end of
+//! Per domain it sends one `submitReport` in each epoch, near the end of
 //! the epoch: the checkpoint at the target index of the controller (the
 //! liveness vote) with the report of the validator.
 //!
@@ -44,7 +44,7 @@ const REPORT_BLOCKS_BEFORE_END: u64 = 60;
 /// old at the verdict. From this many blocks before the end of the epoch, the
 /// agent does not wait for a check of the other validators that did not run.
 const LAST_CHANCE_BLOCKS: u64 = 35;
-/// The longest wait for the receipt of `submitCheckpoint`.
+/// The longest wait for the receipt of `submitReport`.
 const RECEIPT_TIMEOUT: Duration = Duration::from_secs(60);
 
 pub struct Liveness {
@@ -214,8 +214,9 @@ impl Liveness {
         Ok(C::abi_decode_returns(&out)?)
     }
 
-    /// The controller accepts only signatures of `hyperlaneSigner(V)`, or of
-    /// `V` while it is zero. Returns an error text when `H` is another key.
+    /// The ISM and the other validators accept only signatures of
+    /// `hyperlaneSigner(V)`, or of `V` while it is zero. Returns an error
+    /// text when `H` is another key.
     async fn check_signer(&self, provider: &DynProvider) -> Result<Option<String>> {
         let out = self
             .call(
@@ -236,7 +237,7 @@ impl Liveness {
         };
         Ok((expected != self.signer).then(|| {
             format!(
-                "the controller accepts checkpoints of {} signed by {expected} (hyperlaneSigner), but private_key is {}",
+                "the checkpoints of {} must have the signature of {expected} (hyperlaneSigner), but private_key is {}",
                 self.validator, self.signer
             )
         }))
@@ -348,13 +349,15 @@ impl Liveness {
                 "the report names validators"
             );
         }
-        let report = IHyperlaneController::EpochReport {
+        let call = IHyperlaneController::submitReportCall {
+            domain,
+            index,
+            root: checkpoint.value.checkpoint.root,
             latestIndex: latest,
             notServing: not_serving.clone(),
             notDelivered: not_delivered.clone(),
         };
-        self.submit(provider, domain, index, &checkpoint, report)
-            .await?;
+        self.submit(provider, call).await?;
         self.health
             .set_report(domain, round, &not_serving, &not_delivered);
         Ok(())
@@ -405,25 +408,14 @@ impl Liveness {
         Ok((not_serving, not_delivered))
     }
 
-    /// Sends `submitCheckpoint` for the stored `checkpoint` at `index` and
-    /// records the result in the health state.
+    /// Sends `submitReport` and records the result in the health state.
     async fn submit(
         &self,
         provider: &DynProvider,
-        domain: u32,
-        index: u32,
-        checkpoint: &Signed<CheckpointWithMessageId>,
-        report: IHyperlaneController::EpochReport,
+        call: IHyperlaneController::submitReportCall,
     ) -> Result<()> {
-        let calldata = IHyperlaneController::submitCheckpointCall {
-            domain,
-            root: checkpoint.value.checkpoint.root,
-            index,
-            messageId: checkpoint.value.message_id,
-            signature: checkpoint.signature_bytes().to_vec().into(),
-            report,
-        }
-        .abi_encode();
+        let (domain, index) = (call.domain, call.index);
+        let calldata = call.abi_encode();
         match self.send(provider, &calldata).await {
             Ok(tx_hash) => {
                 self.health.record_success();

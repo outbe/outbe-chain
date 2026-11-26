@@ -1,8 +1,7 @@
 //! Liveness: validators prove that their Hyperlane agent keeps signing.
 
-use alloy_primitives::{eip191_hash_message, keccak256, Address, B256};
+use alloy_primitives::{keccak256, Address, B256};
 use outbe_primitives::error::Result;
-use outbe_primitives::tee_signatures::recover_signer;
 use outbe_validatorset::contract::ValidatorSet;
 
 use crate::errors::HyperlaneControllerError;
@@ -49,21 +48,6 @@ pub struct Report<'a> {
     pub not_delivered: &'a [Address],
 }
 
-/// A Hyperlane checkpoint and the validator signature over it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SignedCheckpoint<'a> {
-    /// Origin domain of the checkpoint.
-    pub domain: u32,
-    /// Merkle root of the origin mailbox tree.
-    pub root: B256,
-    /// Index of the latest message in the tree.
-    pub index: u32,
-    /// Identifier of the latest message.
-    pub message_id: B256,
-    /// Signature over [`checkpoint_digest`]. It must be 65 bytes.
-    pub signature: &'a [u8],
-}
-
 /// Reference index of one domain in a liveness round. It is `None` when too
 /// few settled submissions exist for that domain.
 type DomainReference = (u32, Option<u32>);
@@ -88,10 +72,10 @@ enum WindowStanding {
 }
 
 impl HyperlaneControllerContract<'_> {
-    /// Liveness proof for one domain. The validator or its Hyperlane delegate
-    /// submits a signed checkpoint.
-    /// The controller verifies the signature against the validator's
-    /// Hyperlane signer. Then it does one or both of these:
+    /// The report of a validator for one domain. The validator or its
+    /// Hyperlane delegate sends it. The controller does not verify `root`: a
+    /// root counts only when a quorum gives it. The call does one or both of
+    /// these:
     /// - The index equals the target index of the domain: the root becomes
     ///   the vote of the validator. A different root replaces an earlier vote.
     /// - The index, or the latest index of the report, is strictly newer
@@ -100,48 +84,27 @@ impl HyperlaneControllerContract<'_> {
     ///
     /// When neither applies, the call fails with `StaleIndex`. The first
     /// accepted call of the validator for the domain in a round also gives
-    /// its report: each name in the lists is one complaint about that validator. The controller
-    /// never accepts index 0: zero means "no target" and "no submission".
-    pub fn submit_checkpoint(
+    /// its lists: each name is one complaint about that validator. The
+    /// controller never accepts index 0: zero means "no target" and "no
+    /// submission".
+    pub fn submit_report(
         &mut self,
         caller: Address,
-        checkpoint: &SignedCheckpoint<'_>,
+        domain: u32,
+        index: u32,
+        root: B256,
         report: &Report<'_>,
     ) -> Result<()> {
         self.require_initialized()?;
         let validator = self.validator_of_sender(caller)?;
-        let domain = checkpoint.domain;
-        let hook = self.hook_by_domain.read(&domain)?;
-        if hook == Address::ZERO {
+        if self.hook_by_domain.read(&domain)? == Address::ZERO {
             return Err(HyperlaneControllerError::UnknownHook { domain }.into());
-        }
-        let signature: &[u8; 65] = checkpoint.signature.try_into().map_err(|_| {
-            HyperlaneControllerError::InvalidSignatureLength {
-                length: checkpoint.signature.len(),
-            }
-        })?;
-        let digest = checkpoint_digest(
-            domain,
-            hook,
-            checkpoint.root,
-            checkpoint.index,
-            checkpoint.message_id,
-        );
-        let recovered = recover_signer(&digest, signature)?;
-        let expected = self.hyperlane_signer(validator)?;
-        if recovered != expected {
-            return Err(HyperlaneControllerError::SignerMismatch {
-                validator,
-                expected,
-                recovered,
-            }
-            .into());
         }
         let named = report.not_serving.len() + report.not_delivered.len();
         if named > MAX_REPORT_ADDRESSES {
             return Err(HyperlaneControllerError::ReportTooLong { length: named }.into());
         }
-        self.record_submission(validator, domain, checkpoint.index, checkpoint.root, report)
+        self.record_submission(validator, domain, index, root, report)
     }
 
     /// The current liveness round. It starts at 1.
@@ -184,9 +147,9 @@ impl HyperlaneControllerContract<'_> {
         })
     }
 
-    /// Records a verified submission as a vote, as the latest index, or as
+    /// Records a submission as a vote, as the latest index, or as
     /// both. The first one of a round also records the report. See
-    /// [`Self::submit_checkpoint`].
+    /// [`Self::submit_report`].
     pub(crate) fn record_submission(
         &mut self,
         validator: Address,
@@ -547,30 +510,4 @@ impl HyperlaneControllerContract<'_> {
         self.emit(IHyperlaneController::LivenessJailed { validator })?;
         Ok(true)
     }
-}
-
-/// The EIP-191 digest a Hyperlane validator signs for a checkpoint
-/// (`hyperlane-core`'s `CheckpointWithMessageId::signing_hash`):
-/// `domain_hash = keccak(domain_be32 || hook_bytes32 || "HYPERLANE")`,
-/// `signing_hash = keccak(domain_hash || root || index_be32 || message_id)`,
-/// then `personal_sign` over the 32-byte signing hash.
-pub fn checkpoint_digest(
-    domain: u32,
-    hook: Address,
-    root: B256,
-    index: u32,
-    message_id: B256,
-) -> B256 {
-    let mut domain_input = Vec::with_capacity(4 + 32 + 9);
-    domain_input.extend_from_slice(&domain.to_be_bytes());
-    domain_input.extend_from_slice(hook.into_word().as_slice());
-    domain_input.extend_from_slice(b"HYPERLANE");
-    let domain_hash = keccak256(&domain_input);
-
-    let mut signing_input = Vec::with_capacity(32 + 32 + 4 + 32);
-    signing_input.extend_from_slice(domain_hash.as_slice());
-    signing_input.extend_from_slice(root.as_slice());
-    signing_input.extend_from_slice(&index.to_be_bytes());
-    signing_input.extend_from_slice(message_id.as_slice());
-    eip191_hash_message(keccak256(&signing_input))
 }

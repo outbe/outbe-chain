@@ -620,33 +620,20 @@ mod sync {
 mod liveness {
     use super::*;
     use crate::schema::validator_domain_key;
-    use crate::{checkpoint_digest, Report, GRACE_BLOCKS, MAX_MISSES};
-    use alloy_primitives::{b256, hex};
-    use outbe_primitives::tee_signatures::recover_signer;
+    use crate::{Report, GRACE_BLOCKS, MAX_MISSES};
+    use alloy_primitives::b256;
 
-    /// Real checkpoints signed on outbetestnet by validator 0x4fe927… for the
-    /// (since redeployed) MerkleTreeHook 0x6543cef9…, taken from its S3 bucket.
     const FIXTURE_HOOK: Address = address!("0x6543cef9bbe42d66b5b36ccaf9374de2b55f9cbc");
     const FIXTURE_VALIDATOR: Address = address!("0x4fe927ab711793954b3a29969ecd4a60d6d265d0");
     struct Checkpoint {
         root: B256,
         index: u32,
-        message_id: B256,
-        signature: [u8; 65],
-    }
-
-    fn signature(hex_str: &str) -> [u8; 65] {
-        hex::decode(hex_str).unwrap().try_into().unwrap()
     }
 
     fn checkpoint_0() -> Checkpoint {
         Checkpoint {
             root: b256!("0xb8f3591fc1f80eaecba71902c5a172bb89783f96eb34dacf4fec14ef5d8e4765"),
             index: 0,
-            message_id: b256!("0x6cf30153c1583380a6bab73348f2f33f7aa36a249f3ffe3868d4d0a8694c8c1f"),
-            signature: signature(
-                "1d728977b83ac16088ea0db249f9c4eac6b58818b42676964b238ac37228e48520858022b5e514ea711b3b2bd55be4381efeb8d7bb907c75525bd760decad2781b",
-            ),
         }
     }
 
@@ -654,25 +641,17 @@ mod liveness {
         Checkpoint {
             root: b256!("0x5cd1ceeff6f033960677157f13b472fcfb1617638dbdfb0ab0cde36cd94bf050"),
             index: 2,
-            message_id: b256!("0x3eae2775d2a39169fd82693c9883351a72761c9cdf4cddedaf95bf62e454250e"),
-            signature: signature(
-                "82079df9c6de4d2ab039216e3275cf803d245819150512e50dde105e2802f98976b8041d134256ef7df29fa8a8613a5c042af46c3468ab011410e19e6e1cb4931c",
-            ),
         }
     }
 
     fn submit_call(domain: u32, checkpoint: &Checkpoint, index: u32) -> Bytes {
-        IHyperlaneController::submitCheckpointCall {
+        IHyperlaneController::submitReportCall {
             domain,
-            root: checkpoint.root,
             index,
-            messageId: checkpoint.message_id,
-            signature: Bytes::copy_from_slice(&checkpoint.signature),
-            report: IHyperlaneController::EpochReport {
-                latestIndex: 0,
-                notServing: Vec::new(),
-                notDelivered: Vec::new(),
-            },
+            root: checkpoint.root,
+            latestIndex: 0,
+            notServing: Vec::new(),
+            notDelivered: Vec::new(),
         }
         .abi_encode()
         .into()
@@ -712,24 +691,7 @@ mod liveness {
     }
 
     #[test]
-    fn digest_recovers_the_agent_key_from_real_checkpoints() {
-        for checkpoint in [checkpoint_0(), checkpoint_2()] {
-            let digest = checkpoint_digest(
-                LOCAL,
-                FIXTURE_HOOK,
-                checkpoint.root,
-                checkpoint.index,
-                checkpoint.message_id,
-            );
-            assert_eq!(
-                recover_signer(&digest, &checkpoint.signature).unwrap(),
-                FIXTURE_VALIDATOR
-            );
-        }
-    }
-
-    #[test]
-    fn submit_accepts_own_signature_and_rejects_the_rest() {
+    fn submit_accepts_an_active_validator_and_rejects_the_rest() {
         let mut p = liveness_provider();
         p.set_block_number(100);
         p.clear_events(HYPERLANE_CONTROLLER_ADDRESS);
@@ -776,18 +738,6 @@ mod liveness {
             assert_eq!(
                 revert_selector(no_hook),
                 IHyperlaneController::UnknownHook::SELECTOR
-            );
-
-            let tampered = dispatch(
-                storage.clone(),
-                &submit_call(LOCAL, &two, 3),
-                FIXTURE_VALIDATOR,
-                U256::ZERO,
-            )
-            .unwrap_err();
-            assert_eq!(
-                revert_selector(tampered),
-                IHyperlaneController::SignerMismatch::SELECTOR
             );
 
             let older = dispatch(
@@ -844,7 +794,7 @@ mod liveness {
                     dispatch(storage.clone(), &checkpoint, hyperlane, U256::ZERO).unwrap_err()
                 ),
                 IHyperlaneController::NotActiveValidator::SELECTOR,
-                "checkpoint signer binding does not authorize a transaction sender"
+                "the checkpoint signer is not a transaction sender"
             );
 
             validators
@@ -864,20 +814,6 @@ mod liveness {
                     );
                 }
             }
-            assert_eq!(
-                revert_selector(
-                    dispatch(storage.clone(), &checkpoint, hyperlane, U256::ZERO).unwrap_err()
-                ),
-                IHyperlaneController::SignerMismatch::SELECTOR,
-                "an authorized sender still needs the registered checkpoint signature"
-            );
-
-            let reset_signer: Bytes = IHyperlaneController::setHyperlaneSignerCall {
-                signer: Address::ZERO,
-            }
-            .abi_encode()
-            .into();
-            dispatch(storage.clone(), &reset_signer, hyperlane, U256::ZERO).unwrap();
             dispatch(storage.clone(), &checkpoint, hyperlane, U256::ZERO).unwrap();
             let controller = HyperlaneControllerContract::new(storage);
             assert_eq!(
@@ -929,32 +865,20 @@ mod liveness {
                 .into();
             assert!(dispatch(storage.clone(), &set, stranger(), U256::ZERO).is_err());
             dispatch(storage.clone(), &set, FIXTURE_VALIDATOR, U256::ZERO).unwrap();
-            // The fixture is signed by the validator key, not v(9): rejected now.
-            let err = dispatch(
-                storage.clone(),
-                &submit_call(LOCAL, &checkpoint_2(), 2),
-                FIXTURE_VALIDATOR,
-                U256::ZERO,
-            )
-            .unwrap_err();
-            assert_eq!(
-                revert_selector(err),
-                IHyperlaneController::SignerMismatch::SELECTOR
-            );
-            // Reset to the validator address.
+            let signer = |storage: &StorageHandle| {
+                HyperlaneControllerContract::new(storage.clone())
+                    .hyperlane_signer(FIXTURE_VALIDATOR)
+                    .unwrap()
+            };
+            assert_eq!(signer(&storage), v(9));
+            // Zero resets to the validator address.
             let reset: Bytes = IHyperlaneController::setHyperlaneSignerCall {
                 signer: Address::ZERO,
             }
             .abi_encode()
             .into();
             dispatch(storage.clone(), &reset, FIXTURE_VALIDATOR, U256::ZERO).unwrap();
-            dispatch(
-                storage,
-                &submit_call(LOCAL, &checkpoint_2(), 2),
-                FIXTURE_VALIDATOR,
-                U256::ZERO,
-            )
-            .unwrap();
+            assert_eq!(signer(&storage), FIXTURE_VALIDATOR);
         });
     }
 
@@ -1102,17 +1026,7 @@ mod liveness {
                 not_delivered: &[],
             };
             let error = c
-                .submit_checkpoint(
-                    FIXTURE_VALIDATOR,
-                    &crate::SignedCheckpoint {
-                        domain: LOCAL,
-                        root: signed.root,
-                        index: signed.index,
-                        message_id: signed.message_id,
-                        signature: &signed.signature,
-                    },
-                    &long,
-                )
+                .submit_report(FIXTURE_VALIDATOR, LOCAL, signed.index, signed.root, &long)
                 .unwrap_err();
             assert_eq!(
                 revert_selector(error),
@@ -1560,9 +1474,7 @@ mod liveness {
 
         let mut provider = liveness_provider();
         provider.set_block_number(EPOCH_START);
-        StorageHandle::enter(&mut provider, |storage| {
-            start_epoch(storage, EPOCH_START)
-        });
+        StorageHandle::enter(&mut provider, |storage| start_epoch(storage, EPOCH_START));
         provider.fail_mutation_at(0);
         let err = StorageHandle::enter(&mut provider, |storage| {
             let ctx = BlockRuntimeContext::new(
