@@ -566,11 +566,11 @@ fn failed_terminal_dispatch_takes_the_allocation_fallback() {
             .unwrap();
         assert_eq!(
             record.state,
-            outbe_emission::schema::emission_day_state::COMPLETED
+            outbe_emission::schema::emission_day_state::PROCESSING
         );
         assert_eq!(
             record.metadosis_state,
-            outbe_emission::schema::metadosis_state::CANCELED
+            outbe_emission::schema::metadosis_state::PENDING
         );
         assert_eq!(U256::from(record.promis_limit), failed.emissionLimitMinor);
         assert_eq!(

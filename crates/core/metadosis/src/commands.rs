@@ -21,26 +21,13 @@ pub fn set_metadosis_limit(ctx: &BlockRuntimeContext<'_>, day: u32, amount: U256
     crate::limits::set_metadosis_limit(ctx, day, amount)
 }
 
-/// Marks Metadosis of `day` as `Failed` (returning its Metadosis limit to `PromisLimit`
-/// once and emitting `IMetadosis.MetadosisFailed(day, 1)`).
+/// Marks Metadosis of `day` as `Failed` (returning the part of its Metadosis limit that the
+/// loads do not take to `PromisLimit` once and emitting `IMetadosis.MetadosisFailed(day, 1)`).
 pub fn fail_metadosis(ctx: &BlockRuntimeContext<'_>, day: u32) -> Result<()> {
     let mut metadosis = crate::schema::MetadosisContract::new(ctx.storage.clone());
     crate::lifecycle::fail_metadosis(
         &mut metadosis,
         day,
         crate::constants::METADOSIS_FAILED_STEP_REVERTED,
-    )
-}
-
-/// Emits `IMetadosis.MetadosisCanceled(day, 1)` after daily emission limit allocation reverts.
-pub fn emit_canceled_after_failed_allocation(
-    ctx: &BlockRuntimeContext<'_>,
-    day: u32,
-) -> Result<()> {
-    crate::schema::MetadosisContract::new(ctx.storage.clone()).emit(
-        crate::precompile::IMetadosis::MetadosisCanceled {
-            emissionDay: day,
-            reason: crate::constants::METADOSIS_CANCELED_NO_LIMIT,
-        },
     )
 }

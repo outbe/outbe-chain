@@ -21,4 +21,6 @@ interface IMetadosis {
     event MetadosisCanceled(uint32 indexed emissionDay, uint8 reason);
 
     event MetadosisFailed(uint32 indexed emissionDay, uint8 reason);
+
+    event MetadosisLimitExceeded(uint32 indexed emissionDay, uint256 excessMinor);
 }
