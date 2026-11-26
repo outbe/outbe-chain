@@ -24,7 +24,9 @@ tracing.workspace = true
 [dev-dependencies]
 outbe-intexfactory = { path = ".", features = ["test-utils"] }
 outbe-intex = { workspace = true, features = ["test-utils"] }
-# The GemFactory route of an Intex series, refused after the forfeit.
+# Test only: units_in_transit calls the real GemFactory gate, which
+# refuses a forfeited Intex series (OIP-00416 item 7).
+# outbe-gemfactory does not depend on this crate, so no cycle occurs.
 outbe-gemfactory.workspace = true
 # Drive the confidential Promis mint path in tests via the in-process enclave.
 outbe-promis = { workspace = true, features = ["test-enclave"] }
