@@ -13,7 +13,7 @@ use outbe_primitives::{
 
 use crate::errors::NodFactoryError;
 
-/// Deletes the unsettled Nods of the forfeited groups. Returns the Nods deleted.
+/// Deletes the unsettled Nods of the closed groups. Returns the Nods deleted.
 pub fn forfeit_through(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = NodContract::new(ctx.storage.clone());
     let mut cleanup = NodForfeit::new(ctx);
@@ -42,7 +42,7 @@ impl<'a, 's> NodForfeit<'a, 's> {
     }
 }
 
-/// A forfeited group's members are its unsettled Nods.
+/// A closed group's members are its unsettled Nods.
 impl DeadlineHandler<B256> for NodForfeit<'_, '_> {
     type Member = U256;
 

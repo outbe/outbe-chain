@@ -372,7 +372,7 @@ outbe_core_common::impl_deadline_queue!(CloseQueue<B256> {
     cursor: close_cursor,
 });
 
-/// Forfeited groups whose Credis wait to be deleted.
+/// Closed groups whose Credis wait to be deleted.
 pub struct ForfeitQueue<'a, 'storage>(pub &'a CredisContract<'storage>);
 
 outbe_core_common::impl_deadline_queue!(ForfeitQueue<B256> {

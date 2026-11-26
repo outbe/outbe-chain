@@ -5,7 +5,7 @@
 //! A group is called, walking each currency's call-price trie, when the reference
 //! price exceeded its call price on at least its `call_threshold_seconds` of the
 //! trailing `call_window_seconds`. The call queues it on its deadline, and the daily pass
-//! forfeits the groups whose `call_notice_period_seconds` lapsed
+//! closes the groups whose `call_notice_period_seconds` lapsed
 //! (`close::close_through`).
 //!
 //! Issuance seals all four terms onto the group, and this scan reads them back
@@ -59,7 +59,7 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
 }
 
 /// This function runs the next coupled call and forfeit slice against its pinned observation day.
-/// The return value counts called groups, not forfeited groups.
+/// The return value counts called groups, not closed groups.
 pub fn run_call_pass(ctx: &BlockRuntimeContext) -> Result<u32> {
     call_pass::continue_day(ctx, &mut NodCallPass::new(ctx))
 }

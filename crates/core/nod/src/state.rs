@@ -482,7 +482,7 @@ fn open_load_error(group_key: B256, err: outbe_tee::TransportError) -> NodError 
     }
 }
 
-/// Forfeited groups whose unsettled Nods wait to be deleted.
+/// Closed groups whose unsettled Nods wait to be deleted.
 pub struct ForfeitQueue<'a, 'storage>(pub &'a NodContract<'storage>);
 
 outbe_core_common::impl_deadline_queue!(ForfeitQueue<B256> {

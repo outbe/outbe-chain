@@ -276,7 +276,7 @@ pub struct NodContract {
     pub group_unsettled_load_minor_ct:
         outbe_primitives::storage::dsl::Map<B256, outbe_primitives::storage::dsl::Bytes>,
 
-    // The queue orders forfeited groups by deadline day while their unsettled Nods await deletion.
+    // The queue orders closed groups by deadline day while their unsettled Nods await deletion.
     #[attribute(order = 90)]
     pub forfeit_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 91)]

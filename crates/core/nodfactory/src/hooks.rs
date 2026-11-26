@@ -3,7 +3,7 @@
 use outbe_primitives::block::{BlockRuntimeContext, ProtocolModule};
 use outbe_primitives::error::Result;
 
-/// Deletes the unsettled Nods of the forfeited groups.
+/// Deletes the unsettled Nods of the closed groups.
 pub use crate::forfeit::forfeit_through;
 
 pub struct NodFactoryModule;

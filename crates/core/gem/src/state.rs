@@ -412,7 +412,7 @@ outbe_core_common::impl_deadline_queue!(CloseQueue<B256> {
     cursor: close_cursor,
 });
 
-/// Forfeited groups whose unsettled gems wait to be deleted.
+/// Closed groups whose unsettled gems wait to be deleted.
 pub struct ForfeitQueue<'a, 'storage>(pub &'a GemContract<'storage>);
 
 outbe_core_common::impl_deadline_queue!(ForfeitQueue<B256> {

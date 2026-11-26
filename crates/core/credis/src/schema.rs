@@ -314,7 +314,7 @@ pub struct CredisContract {
     pub group_sub_series:
         outbe_primitives::storage::dsl::Map<B256, outbe_primitives::storage::dsl::List<B256>>,
 
-    // The queue orders forfeited groups by deadline day while their Credis await deletion.
+    // The queue orders closed groups by deadline day while their Credis await deletion.
     #[attribute(order = 43)]
     pub forfeit_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 44)]

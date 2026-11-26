@@ -48,7 +48,7 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
 }
 
 /// This function runs calls, group closes, and the forfeit pass that moves value in pinned-day order.
-/// The return value counts called groups, not forfeited groups or deleted members.
+/// The return value counts called groups, not closed groups or deleted members.
 pub fn run_call_pass(ctx: &BlockRuntimeContext) -> Result<u32> {
     call_pass::continue_day(ctx, &mut CredisCallPass::new(ctx))
 }

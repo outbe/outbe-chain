@@ -1024,7 +1024,7 @@ fn forfeiting_several_credis_in_one_block_skips_none() {
         assert_eq!(
             expire(&storage, lapsed),
             3,
-            "all three groups forfeited in one block"
+            "all three groups closed in one block"
         );
 
         for (id, group) in ids.iter().zip(&groups) {
@@ -1344,11 +1344,11 @@ fn the_daily_pass_finishes_only_after_atomic_pledge_burns_and_credits() {
 
 /// Runs one production block's pass, closes and forfeit pass, without a test-owned checkpoint.
 /// Oracle finalization must already cover the closed day before fault injection.
-fn forfeit_block(
+fn close_block(
     storage: &StorageHandle<'_>,
     timestamp: u64,
 ) -> outbe_primitives::error::Result<u32> {
-    forfeited_by(storage, timestamp, || {
+    closed_by(storage, timestamp, || {
         crate::call::run_call_pass(&block_at(storage, timestamp)).map(|_| ())
     })
 }
@@ -1379,7 +1379,7 @@ fn every_credis_forfeit_and_cleanup_mutation_rolls_back_then_retries_once() {
     });
     clean.fail_after_mutation_at(usize::MAX);
     StorageHandle::enter(&mut clean, |storage| {
-        assert_eq!(forfeit_block(&storage, lapsed).unwrap(), 1);
+        assert_eq!(close_block(&storage, lapsed).unwrap(), 1);
         assert_eq!(
             CredisContract::new(storage).call_sweep_day.read().unwrap(),
             0
@@ -1389,10 +1389,7 @@ fn every_credis_forfeit_and_cleanup_mutation_rolls_back_then_retries_once() {
     assert!(mutations > 0);
     StorageHandle::enter(&mut clean, |storage| {
         prepare_daily_pass(&storage, lapsed + CLOSED_DAY_DELAY).unwrap();
-        assert_eq!(
-            forfeit_block(&storage, lapsed + CLOSED_DAY_DELAY).unwrap(),
-            0
-        );
+        assert_eq!(close_block(&storage, lapsed + CLOSED_DAY_DELAY).unwrap(), 0);
     });
     let count = |provider: &outbe_primitives::storage::hashmap::HashMapStorageProvider| {
         let credis = provider.get_events(CREDIS_ADDRESS);
@@ -1514,7 +1511,7 @@ fn every_credis_forfeit_and_cleanup_mutation_rolls_back_then_retries_once() {
         let events_before = provider.events.clone();
         let ordered_before = provider.get_ordered_events().to_vec();
         provider.fail_after_mutation_at(operation);
-        let failed = StorageHandle::enter(&mut provider, |storage| forfeit_block(&storage, lapsed));
+        let failed = StorageHandle::enter(&mut provider, |storage| close_block(&storage, lapsed));
         assert!(
             failed.is_err(),
             "mutation {operation} unexpectedly succeeded"
@@ -1530,13 +1527,10 @@ fn every_credis_forfeit_and_cleanup_mutation_rolls_back_then_retries_once() {
 
         StorageHandle::enter(&mut provider, |storage| {
             assert_eq!(reserve(&storage), U256::ZERO);
-            assert_eq!(forfeit_block(&storage, lapsed).unwrap(), 1);
+            assert_eq!(close_block(&storage, lapsed).unwrap(), 1);
             assert_eq!(reserve(&storage), expected);
             prepare_daily_pass(&storage, lapsed + CLOSED_DAY_DELAY).unwrap();
-            assert_eq!(
-                forfeit_block(&storage, lapsed + CLOSED_DAY_DELAY).unwrap(),
-                0
-            );
+            assert_eq!(close_block(&storage, lapsed + CLOSED_DAY_DELAY).unwrap(), 0);
             assert_eq!(reserve(&storage), expected);
         });
         assert_eq!(
@@ -1554,7 +1548,7 @@ fn every_credis_forfeit_and_cleanup_mutation_rolls_back_then_retries_once() {
     let (mut next_day_provider, _) = lapsed_group_of_three();
     next_day_provider.fail_after_mutation_at(mutations - 1);
     let failed = StorageHandle::enter(&mut next_day_provider, |storage| {
-        forfeit_block(&storage, lapsed)
+        close_block(&storage, lapsed)
     });
     assert!(failed.is_err());
     next_day_provider.clear_mutation_failure();
@@ -1562,11 +1556,11 @@ fn every_credis_forfeit_and_cleanup_mutation_rolls_back_then_retries_once() {
     StorageHandle::enter(&mut next_day_provider, |storage| {
         assert_eq!(reserve(&storage), U256::ZERO);
         prepare_daily_pass(&storage, retry_next_day).unwrap();
-        assert_eq!(forfeit_block(&storage, retry_next_day).unwrap(), 1);
+        assert_eq!(close_block(&storage, retry_next_day).unwrap(), 1);
         assert_eq!(reserve(&storage), expected);
         prepare_daily_pass(&storage, retry_next_day + CLOSED_DAY_DELAY).unwrap();
         assert_eq!(
-            forfeit_block(&storage, retry_next_day + CLOSED_DAY_DELAY).unwrap(),
+            close_block(&storage, retry_next_day + CLOSED_DAY_DELAY).unwrap(),
             0
         );
     });

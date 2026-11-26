@@ -3,7 +3,7 @@
 use outbe_primitives::block::{BlockRuntimeContext, ProtocolModule};
 use outbe_primitives::error::Result;
 
-/// Deletes the unsettled gems of the forfeited groups.
+/// Deletes the unsettled gems of the closed groups.
 pub use crate::forfeit::forfeit_through;
 
 /// Deletes the positions of the expired days.

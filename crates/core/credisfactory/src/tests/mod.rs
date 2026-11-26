@@ -567,7 +567,7 @@ fn due_close_groups(
 
 /// Runs `pass` and returns the groups due by `timestamp` it closed: they left the close
 /// queue for the forfeit pass, which may have deleted their Credis already.
-pub fn forfeited_by(
+pub fn closed_by(
     storage: &StorageHandle<'_>,
     timestamp: u64,
     pass: impl FnOnce() -> outbe_primitives::error::Result<()>,
@@ -587,9 +587,9 @@ pub fn forfeited_by(
     Ok(forfeited)
 }
 
-/// The daily pass at `timestamp`. Returns the called groups it forfeited.
+/// The daily pass at `timestamp`. Returns the called groups it closed.
 pub fn expire(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
-    forfeited_by(storage, timestamp, || daily_pass(storage, timestamp)).unwrap()
+    closed_by(storage, timestamp, || daily_pass(storage, timestamp)).unwrap()
 }
 
 /// Calls the Credis's group at `now`, as the call scan does. Returns whether it moved.

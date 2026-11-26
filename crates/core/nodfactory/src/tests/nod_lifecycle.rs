@@ -235,14 +235,14 @@ fn scan(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
 
 /// The daily pass and its forfeit pass under one checkpoint, as the native transaction runs them.
 /// Returns the groups closed.
-fn forfeit_block(
+fn close_block(
     storage: &StorageHandle<'_>,
     timestamp: u64,
 ) -> outbe_primitives::error::Result<u32> {
     storage.with_checkpoint(|| {
-        let forfeited = close_pass(storage, timestamp)?;
+        let closed = close_pass(storage, timestamp)?;
         crate::forfeit::forfeit_through(&block_at(storage, timestamp))?;
-        Ok(forfeited)
+        Ok(closed)
     })
 }
 
@@ -1369,11 +1369,11 @@ fn a_forfeit_does_not_need_the_enclave() {
         let (group_key, _) = arm_lapsed(storage, &[(0x61, 5, false)]);
         let past = START + 30 * DAY + NOTICE + CLOSED_DAY_DELAY;
 
-        let forfeited = close_pass(storage, past);
+        let closed = close_pass(storage, past);
         outbe_nod::test_support::uninstall();
         let deleted = crate::forfeit::forfeit_through(&block_at(storage, past));
         outbe_nod::test_support::install();
-        assert_eq!(forfeited.unwrap(), 1);
+        assert_eq!(closed.unwrap(), 1);
         assert_eq!(deleted.unwrap(), 1);
         assert!(!is_queued(storage, group_key));
         assert_eq!(reserve(storage), U256::from(5u64));
@@ -1925,9 +1925,9 @@ fn forfeit_credits_distinct_unsettled_loads_and_ignores_settled_members() {
             .fold(U256::ZERO, |sum, load| sum + load);
         assert_eq!(unsettled, U256::from(34u64));
         let past = START + 30 * DAY + NOTICE + CLOSED_DAY_DELAY;
-        assert_eq!(forfeit_block(&storage, past).unwrap(), 1);
+        assert_eq!(close_block(&storage, past).unwrap(), 1);
         assert_eq!(reserve(&storage), unsettled);
-        assert_eq!(forfeit_block(&storage, past + CLOSED_DAY_DELAY).unwrap(), 0);
+        assert_eq!(close_block(&storage, past + CLOSED_DAY_DELAY).unwrap(), 0);
         assert_eq!(reserve(&storage), unsettled);
         assert_eq!(
             NodContract::new(storage.clone())
@@ -1966,7 +1966,7 @@ fn native_storage_out_of_gas_reverts_the_forfeit_transaction_then_retries_once()
     probe.enable_production_storage_gas_metering();
     probe.set_gas_limit(SYSTEM_TX_ARTIFACT_GAS_LIMIT);
     let full_pass_gas = StorageHandle::enter(&mut probe, |storage| {
-        assert_eq!(forfeit_block(&storage, past).unwrap(), 1);
+        assert_eq!(close_block(&storage, past).unwrap(), 1);
         storage.gas_used().unwrap()
     });
     assert!(full_pass_gas > 0);
@@ -1981,7 +1981,7 @@ fn native_storage_out_of_gas_reverts_the_forfeit_transaction_then_retries_once()
     let result = StorageHandle::enter(&mut provider, |storage| {
         // The native transaction owns the outer checkpoint. A hard storage
         // OOG must restore the credit and the deletions together with queue metadata.
-        forfeit_block(&storage, past)
+        close_block(&storage, past)
     });
     assert!(
         matches!(result, Err(PrecompileError::OutOfGas)),
@@ -1992,7 +1992,7 @@ fn native_storage_out_of_gas_reverts_the_forfeit_transaction_then_retries_once()
 
     provider.set_gas_limit(SYSTEM_TX_ARTIFACT_GAS_LIMIT);
     StorageHandle::enter(&mut provider, |storage| {
-        assert_eq!(forfeit_block(&storage, past).unwrap(), 1);
+        assert_eq!(close_block(&storage, past).unwrap(), 1);
         let nod = NodContract::new(storage.clone());
         assert_eq!(nod.group_nod_count.read(&group_key).unwrap(), 0);
         assert_eq!(reserve(&storage), U256::from(16u64));
@@ -2104,7 +2104,7 @@ fn every_nod_forfeit_mutation_rolls_back_then_retries_the_same_credit() {
     let past = START + 30 * DAY + NOTICE + CLOSED_DAY_DELAY;
     probe.fail_after_mutation_at(usize::MAX);
     StorageHandle::enter(&mut probe, |storage| {
-        forfeit_block(&storage, past).unwrap();
+        close_block(&storage, past).unwrap();
     });
     let mutation_count = probe.clear_mutation_failure();
     assert!(
@@ -2127,7 +2127,7 @@ fn every_nod_forfeit_mutation_rolls_back_then_retries_the_same_credit() {
         let ordered_before = provider.get_ordered_events().to_vec();
 
         provider.fail_after_mutation_at(operation);
-        let failed = StorageHandle::enter(&mut provider, |storage| forfeit_block(&storage, past));
+        let failed = StorageHandle::enter(&mut provider, |storage| close_block(&storage, past));
         assert!(
             failed.is_err(),
             "mutation {operation} unexpectedly succeeded"
@@ -2143,9 +2143,9 @@ fn every_nod_forfeit_mutation_rolls_back_then_retries_the_same_credit() {
 
         StorageHandle::enter(&mut provider, |storage| {
             assert_eq!(reserve(&storage), U256::ZERO);
-            assert_eq!(forfeit_block(&storage, past).unwrap(), 1);
+            assert_eq!(close_block(&storage, past).unwrap(), 1);
             assert_eq!(reserve(&storage), expected);
-            assert_eq!(forfeit_block(&storage, past + CLOSED_DAY_DELAY).unwrap(), 0);
+            assert_eq!(close_block(&storage, past + CLOSED_DAY_DELAY).unwrap(), 0);
             assert_eq!(reserve(&storage), expected);
             assert_eq!(
                 NodContract::new(storage.clone())

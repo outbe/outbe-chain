@@ -56,7 +56,7 @@ pub fn settlement_deadline(storage: &StorageHandle<'_>, group_key: B256) -> Resu
 pub use outbe_core_common::settlement::settlement_deadline_of;
 
 /// The Nod's state as of this block, as `getNod` reports it: an unsettled Nod of a
-/// forfeited group reads Forfeited.
+/// closed group reads Forfeited.
 pub fn state_of(storage: &StorageHandle<'_>, item: &NodItemState) -> Result<EffectiveState> {
     let nod = NodContract::new(storage.clone());
     if !item.is_settled && nod.group_is_closed.read(&item.group_key)? {
@@ -195,7 +195,7 @@ pub fn take_series_unsettled_load(
     nod.take_series_unsettled_load(group_key, sub_series, load)
 }
 
-/// Removes a loaded Nod item and decrements membership. A forfeited group closes with its
+/// Removes a loaded Nod item and decrements membership. A closed group is deleted with its
 /// last Nod; a group never called stays for [`close_empty_group`].
 pub fn remove_nod(
     storage: &StorageHandle<'_>,

@@ -326,7 +326,7 @@ pub struct GemContract {
     #[attribute(order = 42)]
     pub group_unsettled_load_minor: outbe_primitives::storage::dsl::Map<B256, U256>,
 
-    // --- This queue stores forfeited groups whose unsettled gems await deletion.
+    // --- This queue stores closed groups whose unsettled gems await deletion.
     // It schedules groups by day, like the close queue.
     #[attribute(order = 43)]
     pub forfeit_tree_root: outbe_primitives::storage::dsl::Value<U256>,

@@ -43,7 +43,7 @@ impl<'a, 's> CredisForfeit<'a, 's> {
     }
 }
 
-/// A forfeited group's members are its unsettled Credis.
+/// A closed group's members are its unsettled Credis.
 impl DeadlineHandler<B256> for CredisForfeit<'_, '_> {
     type Member = U256;
 

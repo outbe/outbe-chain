@@ -361,7 +361,7 @@ fn end_block_cursor_rejects_wrong_order_duplicate_or_mismatched_gas_limit() {
 #[test]
 fn end_block_order_executes_interleaved_factory_passes_and_gem_expire_through_before_intex_and_credis(
 ) {
-    use outbe_credis::{CredisContract, ForfeitQueue as CredisCleanupQueue};
+    use outbe_credis::{CredisContract, ForfeitQueue as CredisForfeitQueue};
     use outbe_gemfactory::{schema::GemFactoryPosition, GemFactoryContract};
     use outbe_intex::SeriesId;
     use outbe_intexfactory::IntexFactoryContract;
@@ -423,7 +423,7 @@ fn end_block_order_executes_interleaved_factory_passes_and_gem_expire_through_be
             credis.call_latest_day.write(expires_day).unwrap();
             credis.daily_phase.write(2).unwrap();
             outbe_core_common::deadline_queue::push(
-                &CredisCleanupQueue(&credis),
+                &CredisForfeitQueue(&credis),
                 stale_group,
                 expires_at,
             )

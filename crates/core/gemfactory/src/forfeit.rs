@@ -13,7 +13,7 @@ use outbe_primitives::{
 
 use crate::errors::GemFactoryError;
 
-/// Deletes the unsettled gems of the forfeited groups. Returns the gems deleted.
+/// Deletes the unsettled gems of the closed groups. Returns the gems deleted.
 pub fn forfeit_through(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = GemContract::new(ctx.storage.clone());
     let mut cleanup = GemForfeit::new(ctx);
@@ -42,7 +42,7 @@ impl<'a, 's> GemForfeit<'a, 's> {
     }
 }
 
-/// A forfeited group's members are its unsettled gems.
+/// A closed group's members are its unsettled gems.
 impl DeadlineHandler<B256> for GemForfeit<'_, '_> {
     type Member = U256;
 

@@ -168,7 +168,7 @@ fn a_settled_unit_still_mines_after_the_call_deadline_while_unpaid_units_are_clo
     outbe_promis::enclave_client::test_enclave::uninstall();
 }
 
-/// Once its group is forfeited, the settled units of a series still mine. Mining credits no
+/// Once its group is closed, the settled units of a series still mine. Mining credits no
 /// Promis Limit: the expiry already returned the unpaid units, and the last mined unit
 /// deletes the spent series.
 #[test]
