@@ -13,16 +13,17 @@
 //!   * a revert anywhere in that chain rolls the tree back atomically.
 //!   * the appended leaf is the runtime-derived commitment, readable through
 //!     the public view ABI.
+//!   * a native COEN deposit (`asset == 0`) moves `msg.value` into the pool.
 
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::{sol, SolCall};
-use evm2::evm::{CacheDB, EmptyDB};
+use evm2::evm::{AccountInfo, CacheDB, EmptyDB};
 use outbe_evm::test_support::{install_code, runtime_code, seed_storage, EvmWorld};
 use outbe_paynote::hash::{note_commitment, note_sn};
 use outbe_paynote::precompile::IPayNote;
 use outbe_paynote::Field;
 use outbe_primitives::chain::CHAIN_ID;
-use outbe_primitives::storage::{SubCallOutput, SubCallStatus};
+use outbe_primitives::storage::{SubCallInput, SubCallOutput, SubCallStatus};
 use outbe_system_common::addresses::PAYNOTE_ADDRESS;
 use outbe_vaultrouter::precompile::IVaultRouter::StablecoinSource;
 use outbe_vaultrouter::test_support::{register_source, register_vault};
@@ -44,6 +45,7 @@ const UNREGISTERED_ASSET: Address = Address::new([0x66; 20]);
 const TIMESTAMP: u64 = 1_700_000_000;
 const DEPOSIT_AMOUNT: u64 = 1_000;
 const SPEND_KEY: u64 = 17;
+const ALICE_COEN: u64 = 1_000_000;
 
 fn serial() -> Field {
     note_sn(Field::from(SPEND_KEY)).unwrap()
@@ -54,11 +56,18 @@ fn expected_commitment(asset: Address, amount: U256) -> B256 {
     field_to_b256(&note_commitment(CHAIN_ID, serial(), asset, amount).unwrap()).unwrap()
 }
 
-/// `ALICE` has both assets and approves the pool for both. `ASSET` has a
-/// vault. PayNote is a `PayNoteDeposit` source. A live deployment has the same
-/// setup.
+/// `ALICE` has both assets and approves the pool for both, and holds native
+/// COEN. `ASSET` has a vault. PayNote is a `PayNoteDeposit` source. A live
+/// deployment has the same setup.
 fn world() -> EvmWorld {
     let mut db = CacheDB::new(EmptyDB::default());
+    db.insert_account_info(
+        &ALICE,
+        AccountInfo {
+            balance: U256::from(ALICE_COEN),
+            ..Default::default()
+        },
+    );
     let code = runtime_code(include_str!(
         "../../../testing/fixtures/evm/FactorySettlement.hex"
     ));
@@ -93,12 +102,38 @@ fn world() -> EvmWorld {
 }
 
 fn deposit(world: &mut EvmWorld, asset: Address, amount: U256) -> SubCallOutput {
+    deposit_with_value(world, asset, amount, U256::ZERO)
+}
+
+fn deposit_with_value(
+    world: &mut EvmWorld,
+    asset: Address,
+    amount: U256,
+    value: U256,
+) -> SubCallOutput {
     let call = IPayNote::depositCall {
         asset,
         amount,
         noteSn: field_to_b256(&serial()).unwrap(),
     };
-    world.call(ALICE, PAYNOTE_ADDRESS, call.abi_encode().into(), false)
+    let input = SubCallInput {
+        target: PAYNOTE_ADDRESS,
+        value,
+        calldata: call.abi_encode().into(),
+        gas_limit: 5_000_000,
+        is_static: false,
+    };
+    world
+        .run(ALICE, input)
+        .expect("deposit must not fail fatally")
+}
+
+fn native_balance(world: &mut EvmWorld, account: Address) -> U256 {
+    world
+        .evm
+        .state_mut()
+        .account(&account)
+        .map_or(U256::ZERO, |account| account.balance())
 }
 
 fn leaf_count(world: &mut EvmWorld) -> u64 {
@@ -220,4 +255,41 @@ fn a_duplicate_leaf_reverts_but_a_differing_amount_under_the_same_serial_appends
             },
         ));
     }
+}
+
+#[test]
+fn native_deposit_moves_value_into_the_pool_and_appends_the_commitment() {
+    let mut world = world();
+    let amount = U256::from(DEPOSIT_AMOUNT);
+
+    // A mismatched value reverts and the route refunds it.
+    assert_reverted(&deposit_with_value(
+        &mut world,
+        Address::ZERO,
+        amount,
+        amount - U256::ONE,
+    ));
+    assert_eq!(native_balance(&mut world, ALICE), U256::from(ALICE_COEN));
+    assert_pristine(&mut world);
+
+    let out = deposit_with_value(&mut world, Address::ZERO, amount, amount);
+    assert!(
+        matches!(out.status, SubCallStatus::Success),
+        "native deposit must succeed, got {:?} returndata 0x{}",
+        out.status,
+        alloy_primitives::hex::encode(&out.returndata),
+    );
+    assert_eq!(
+        native_balance(&mut world, ALICE),
+        U256::from(ALICE_COEN) - amount
+    );
+    assert_eq!(native_balance(&mut world, PAYNOTE_ADDRESS), amount);
+    assert_eq!(leaf_count(&mut world), 1);
+    assert!(world.view(
+        ALICE,
+        PAYNOTE_ADDRESS,
+        IPayNote::hasCommitmentCall {
+            commitment: expected_commitment(Address::ZERO, amount),
+        },
+    ));
 }

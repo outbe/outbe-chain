@@ -6,7 +6,10 @@
 
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolCall, SolInterface};
-use outbe_primitives::dispatch::{dispatch_call, mutate, mutate_void, reject_value, view};
+use outbe_primitives::dispatch::{
+    dispatch_call, mutate, mutate_void, mutate_void_payable, reject_value_unless_payable, view,
+    PayableCallContext,
+};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 use outbe_system_common::addresses::{
@@ -17,10 +20,10 @@ use crate::errors::PayNoteError;
 use crate::runtime;
 use crate::schema::PayNoteContract;
 
-/// Selectors on the PayNote precompile that accept native value: none.
-/// `deposit` moves ERC20, not native COEN, so the route table binds this
-/// address to `ValuePolicy::Reject`.
-pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];
+/// Selectors on the PayNote precompile that accept native value. `deposit`
+/// takes native COEN when `asset == address(0)`. The route table binds this
+/// address to `ValuePolicy::Payable`.
+pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[IPayNote::depositCall::SELECTOR];
 
 /// Base gas for `deposit`: chain-ID absorption, the in-memory depth-32 zero
 /// ladder, commitment derivation, one depth-32 append, and the ERC20 +
@@ -56,13 +59,27 @@ pub fn dispatch(
     caller: Address,
     value: U256,
 ) -> Result<Bytes> {
-    reject_value(&value)?;
+    reject_value_unless_payable(data, PAYABLE_SELECTORS, &value)?;
     dispatch_call(data, IPayNote::IPayNoteCalls::abi_decode, |call| {
         use IPayNote::IPayNoteCalls::*;
         match call {
-            deposit(c) => mutate_void(&storage, c, caller, |caller, c| {
-                runtime::deposit(storage.clone(), caller, c.asset, c.amount, c.noteSn)
-            }),
+            deposit(c) => mutate_void_payable(
+                &storage,
+                c,
+                PayableCallContext {
+                    selectors: PAYABLE_SELECTORS,
+                    sender: caller,
+                    value,
+                },
+                |caller, c, value| {
+                    runtime::deposit(
+                        storage.clone(),
+                        caller,
+                        (c.asset, c.amount, value),
+                        c.noteSn,
+                    )
+                },
+            ),
             mergePayNotes(c) => mutate_void(&storage, c, caller, |_, c| {
                 runtime::merge_pay_notes(&storage, &c.proof)
             }),
