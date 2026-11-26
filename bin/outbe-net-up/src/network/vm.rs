@@ -1572,12 +1572,13 @@ pub(crate) async fn status_with_exec(
             .await?;
     let assessments = assess_members_lag(&statuses, options.max_lag);
 
+    let required_peers = desired_members
+        .iter()
+        .filter(|m| m.role != MemberRole::FullNode)
+        .count()
+        .saturating_sub(1);
+
     if options.json {
-        let required_peers = desired_members
-            .iter()
-            .filter(|m| m.role != MemberRole::FullNode)
-            .count()
-            .saturating_sub(1);
         let healthy_count = statuses
             .iter()
             .zip(&assessments)
@@ -1607,7 +1608,7 @@ pub(crate) async fn status_with_exec(
             orphans: &orphans,
         };
         println!("{}", serde_json::to_string_pretty(&payload)?);
-        return check_unhealthy_members(&statuses, &assessments, &orphans);
+        return check_unhealthy_members(&statuses, &assessments, &orphans, required_peers);
     }
 
     if !options.watch {
@@ -1617,7 +1618,7 @@ pub(crate) async fn status_with_exec(
             "\n{}",
             render_vm_status(&build, &statuses, &orphans, options.max_lag)
         );
-        return check_unhealthy_members(&statuses, &assessments, &orphans);
+        return check_unhealthy_members(&statuses, &assessments, &orphans, required_peers);
     }
 
     let mut progress = Progress::new();
@@ -1655,6 +1656,7 @@ fn check_unhealthy_members(
     statuses: &[VmMemberStatus],
     assessments: &[MemberLagAssessment],
     orphans: &[OrphanVmStatus],
+    required_peers: usize,
 ) -> Result<()> {
     let mut unhealthy = Vec::new();
     for (status, assessment) in statuses.iter().zip(assessments) {
@@ -1662,6 +1664,16 @@ fn check_unhealthy_members(
             unhealthy.push(format!("{}: {:?}", status.name, status.classification));
         } else if !status.vmm_running || status.error.is_some() || status.finalized.is_none() {
             unhealthy.push(format!("{}: unreachable/not-running", status.name));
+        } else if status.role != MemberRole::FullNode && status.consensus.is_none() {
+            unhealthy.push(format!("{}: missing outbe_consensusStatus", status.name));
+        } else if status.role != MemberRole::FullNode
+            && status.consensus_peers.unwrap_or(0) < required_peers as u64
+        {
+            unhealthy.push(format!(
+                "{}: consensus connectedPeers={} (expected >= n-1={required_peers})",
+                status.name,
+                status.consensus_peers.unwrap_or(0)
+            ));
         } else if assessment.lagging {
             unhealthy.push(format!(
                 "{}: {}",

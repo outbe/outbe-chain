@@ -1,20 +1,22 @@
 # Outbe VM Deployment
 
-This directory holds the dstack patches and manifest used to build reproducible Outbe validator VM images.
-The guest image contains the measured binaries, runtime libraries, and static systemd units.
-Each validator's keys, genesis, configuration, CRS, and chain state live on an unmeasured ext4 data disk mounted at `/opt/outbe-chain` with `noexec,nosuid,nodev`.
+This directory holds the dstack patches and manifest used to build reproducible Outbe guest OS images.
+
+The measured guest image contains the node binaries (`outbe-chain`, `outbe-radicle`, `outbe-feeder`, `outbe-hyperlane-validator`), the minimal in-guest runtime agent (`outbe-vm-agent`), pinned runtime libraries, and static systemd units. It does not ship `outbe-up`, SSH clients, or VMM orchestration code.
+
+Each VM stores its keys (validators only), genesis, CRS, `validator.env`, configuration files, and chain state on an unmeasured ext4 data disk mounted at `/opt/outbe-chain` with `noexec,nosuid,nodev`.
 
 ## Prerequisites
 
 - Clean git checkout on a Linux `x86_64` build machine.
 - Docker with BuildKit (`docker buildx`) for reproducible software and guest image builds.
-- `sfdisk` (`util-linux >= 2.26`), `mke2fs`, and `debugfs` (`e2fsprogs >= 1.47`) in `PATH` for `outbe-up vm disk`.
-- Target VMM host(s) running `dstack-vmm` (with `<vmm_home>/run/vmm.sock`), `qemu-img`, and `dnsmasq` on the configured bridge (default `obr0`).
+- `sfdisk` (`util-linux >= 2.26`), `mke2fs`, and `debugfs` (`e2fsprogs >= 1.47`) in `PATH` for `outbe-up disk prepare`.
+- Target VMM hosts running `dstack-vmm` (with `<vmm_home>/run/vmm.sock`), `qemu-img`, and a configured bridge (default `obr0`) with outbound NAT egress.
 - Intel TDX VMM hosts must run a working Quote Generation Service (QGS). Even with `key_provider: none`, dstack guest boot requests an attestation quote.
 
-## 1. Build the Software Bundle
+## 1. Build the software bundle
 
-Build the deterministic software bundle from the current clean commit (uses the vendored CRS in `release/crs/bn254_g1.dat`; no network CRS download):
+Build the deterministic software bundle from a clean commit (uses the vendored CRS in `release/crs/bn254_g1.dat`):
 
 ```bash
 nice -n 19 ionice -c3 cargo xtask release build --output ./out/software
@@ -22,7 +24,7 @@ nice -n 19 ionice -c3 cargo xtask release build --output ./out/software
 
 This writes `outbe-software-bundle-v1-<commit>.tar.zst` into `./out/software`.
 
-## 2. Build the Guest VM Images
+## 2. Build the guest VM images
 
 Build the `dev` and `prod` dstack guest images from the verified software bundle:
 
@@ -34,13 +36,16 @@ nice -n 19 ionice -c3 cargo xtask release vm-image \
   --jobs 4
 ```
 
-Options:
-- Add `--check` to run two isolated builds and verify byte-for-byte reproducibility across all requested flavors (see [Reproducibility](#reproducibility)).
-- Pass `--dstack-repo <path>` to clone from a local dstack mirror instead of GitHub.
-- Pass `--runtime-libs-dir <dir>` for offline builds; by default `xtask` builds the `toolchain` target of `Dockerfile.project-toolchain` with `--load`, extracts the three pinned LLVM 18 runtime libraries (`libc++.so.1`, `libc++abi.so.1`, `libunwind.so.1`), and verifies their SHA-256 digests.
-- Pass `--toolchain-image <tag>`, `--mkosi-image <tag>`, and `--cpuset-cpus <set>` (e.g. `0-3`) when sharing a Docker daemon or isolated `BUILDX_BUILDER` worker.
+You can also run `outbe-up image build` with the same inputs to build and optionally `--publish` into `<vmm_home>/image/`.
 
-This writes the built flavor directories under `./out/vm-image/out/` and `./out/vm-image/vm-image-manifest.json` (recording `source_commit`, `software_bundle_sha256`, `dstack_rev`, `overlay_commit`, `reproducible`, patch hashes, runtime library hashes, and per-flavor `os_image_hash`).
+Options:
+
+- Add `--check` to run two isolated builds and verify byte-for-byte reproducibility across all requested flavors.
+- Pass `--dstack-repo <path>` to clone from a local dstack mirror instead of GitHub.
+- Pass `--runtime-libs-dir <dir>` for offline builds. By default, `xtask` extracts the three pinned LLVM 18 runtime libraries (`libc++.so.1`, `libc++abi.so.1`, `libunwind.so.1`) from `Dockerfile.project-toolchain` and verifies their SHA-256 digests.
+- Pass `--toolchain-image <tag>`, `--mkosi-image <tag>`, and `--cpuset-cpus <set>` when sharing a Docker daemon.
+
+This writes the flavor image trees under `./out/vm-image/out/`, the deterministic archives `outbe-vm-image-v1-<flavor>-<hash16>.tar.zst`, and `./out/vm-image/vm-image-manifest.json`.
 
 ## Reproducibility
 
@@ -57,11 +62,11 @@ nice -n 19 ionice -c3 cargo xtask release vm-image \
   --check
 ```
 
-With `--check`, `xtask` clones the assembled dstack overlay commit into two separate `--no-hardlinks` working trees and runs two independent cold (`--no-cache`) container builds into `./out/vm-image/a` and `./out/vm-image/b` (each with its own `.workspace` and output tree). It then compares `digest.txt` and the SHA-256 of every file and symlink target inside each requested flavor's image directory byte for byte. On a mismatch, it fails and lists every differing flavor and file without creating `./out/vm-image/out`. On a match, it promotes `./out/vm-image/a/out` to `./out/vm-image/out` and sets `"reproducible": true` in `vm-image-manifest.json`.
+With `--check`, `xtask` runs two cold (`--no-cache`) isolated container builds into `./out/vm-image/a` and `./out/vm-image/b`. It compares `digest.txt`, every file SHA-256, and every symlink target byte for byte. On mismatch, it fails without creating `./out/vm-image/out`. On match, it promotes `./out/vm-image/a/out` to `./out/vm-image/out` and sets `"reproducible": true` in `vm-image-manifest.json`.
 
-## 3. Extract the Matching `outbe-up` CLI
+## 3. Extract matching CLIs
 
-The software bundle, the guest VM image, and the `outbe-up` CLI must come from the same commit. Extract `bin/outbe-up` from the software bundle you built in Step 1 and verify its SHA-256 against `software-manifest.json` inside the bundle:
+The software bundle, the guest VM image, `outbe-up`, and `outbe-net-up` should come from the same commit. Extract `bin/outbe-up` from the software bundle and verify its SHA-256 against `software-manifest.json`:
 
 ```bash
 mkdir -p ./out/cli
@@ -71,181 +76,33 @@ sha256sum ./out/cli/bin/outbe-up
 grep -A2 '"bin/outbe-up"' ./out/cli/software-manifest.json
 ```
 
-Use `./out/cli/bin/outbe-up` for every deployment command below.
+## 4. Guest boot and static networking
 
-## 4. Build Network Artifacts and VM Data Trees
+Every guest runs `outbe-vm-agent vm-boot` before starting node services:
 
-Create a `network.yaml` for `devnet` or `testnet` with a top-level `vm:` section (`vmm_host`, optional `vmm_home`, `bridge`, `dhcp_hosts_file`, `dhcp_leases_file`, `dhcp_pid_file`) and per-founder `vm.bridge_ip` entries (see `bin/outbe-up/templates/network/network.example.yaml`).
-VM deployment is rejected on `mainnet`, and `prod` flavor rejects `authorized_keys`.
+1. Verifies `/opt/outbe-chain` mount flags (`noexec,nosuid,nodev`), ownership, and `OUTBE_NODE_ROLE` in `validator.env`.
+2. Reads static IPv4 settings (`OUTBE_RPC_BIND_IP`, `OUTBE_VM_PREFIX`, `OUTBE_VM_GATEWAY`, `OUTBE_VM_DNS`) from `validator.env`.
+3. Writes `/run/systemd/network/20-wired.network.d/80-outbe-static.conf` and reloads `systemd-networkd`.
+4. Starts the role's systemd units (`founder`, `joining-validator`, or `full-node`).
 
-Generate genesis, validator keys, and per-founder VM data trees (`vm/validator-0..3`):
+Guests do not depend on DHCP or `dnsmasq` reservations for their service IPs. Pick static bridge IPs outside the host DHCP pool and verify them with `outbe-up host check`.
 
-```bash
-./out/cli/bin/outbe-up network build \
-  --software-bundle ./out/software/outbe-software-bundle-v1-<commit>.tar.zst \
-  --config ./network.yaml \
-  --output ./out/network
-```
+## 5. Deploy and operate VMs
 
-## 5. Build Founder Data Disks (Optional Pre-Build)
+- **Single-host VM operator:** follow [bin/outbe-up/README.md](../../bin/outbe-up/README.md) (`host check`, `image fetch/import`, `disk prepare`, `vm create/start/stop/update/status/logs/remove`).
+- **Multi-host founding network (dev team):** follow [bin/outbe-net-up/README.md](../../bin/outbe-net-up/README.md) (`network build/deploy/start/status/add-validator/add-full-node/update/stop/remove`).
 
-`outbe-up vm create` can build founder disks on demand, or you can pre-build deterministic sparse GPT + ext4 data disks (no root privileges or loop mounts required) and pass `--disks-dir ./out/disks`:
+## Dev-flavor guest SSH
 
-```bash
-for i in 0 1 2 3; do
-  ./out/cli/bin/outbe-up vm disk \
-    --artifacts ./out/network \
-    --founder "$i" \
-    --output "./out/disks/validator-${i}.img"
-done
-```
+- The `dev` flavor includes `sshd` for emergency host-side debugging. The `prod` flavor omits `sshd`.
+- Normal operation and diagnostics never require SSH into guest VMs. Use `outbe-up vm status`, `outbe-up vm logs`, and host-local JSON-RPC at `http://<bridge-ip>:8545`.
+- If you set `vm.authorized_keys` on a `dev` VM, `outbe-net-up` places it at `/opt/outbe-chain/dev/authorized_keys`. The `prod` flavor rejects `authorized_keys`.
 
-Each image contains one GPT partition labelled `dstack-data` with an ext4 filesystem holding `outbe-chain/` (owned by `0:0`, no executable files).
+## Known limitations
 
-## 6. Create VMs and Apply DHCP Reservations
-
-Create stopped founder VMs on the configured VMM host(s), upload the digest-qualified guest image (`outbe-vm-<flavor>-<hash16>`) atomically, stream each sparse disk compressed over SSH with raw SHA-256 verification before `qemu-img convert` + `resize` into `<vmm_home>/vm/<VM-ID>/hda.img`, and record VM IDs and assigned MACs in `./out/network/vm-state.json`:
-
-```bash
-./out/cli/bin/outbe-up vm create \
-  --artifacts ./out/network \
-  --image-dir ./out/vm-image/out/dev/dstack-dev-0.6.3 \
-  --disks-dir ./out/disks \
-  --ssh-key ~/.ssh/id_ed25519
-```
-
-`vm create` never mutates host network configuration silently. It checks the host's `dhcp_hosts_file` and `dhcp_leases_file` read-only, refuses any occupied IP or active lease conflict before creating VMs or uploading disks, and writes `./out/network/dnsmasq-reservations.txt`.
-
-Apply only this network's managed `mac,ip,10m` block (preserving foreign entries and refusing occupied bridge IPs) and reload dnsmasq:
-
-```bash
-./out/cli/bin/outbe-up vm host-reserve \
-  --artifacts ./out/network \
-  --ssh-key ~/.ssh/id_ed25519
-```
-
-Pass `--create` if the configured `dhcp_hosts_file` does not exist yet.
-
-### `--ssh-config` Scope
-
-Pass `--ssh-config /dev/null` (forwarded to `ssh -F`) when the local system SSH config overrides port or proxy settings for VMM hosts. `--ssh-config` is supported only on commands that open SSH connections:
-- `outbe-up vm create`
-- `outbe-up vm host-reserve`
-- `outbe-up vm host-release`
-- `outbe-up vm host-nat`
-- `outbe-up vm start`
-- `outbe-up vm stop`
-- `outbe-up vm remove`
-- `outbe-up vm status`
-- `outbe-up network prepare`
-- `outbe-up network start`
-- `outbe-up network status`
-
-Local commands (`outbe-up network build`, `outbe-up vm disk`, and `outbe-up validator *`) do not accept `--ssh-config`.
-
-## 7. Start, Inspect, Stop, and Remove VMs
-
-Start all recorded founder VMs concurrently, wait for finalized consensus via SSH-exec JSON-RPC (`ssh <vmm_host> curl http://<bridge_ip>:8545`, no published ports or SSH port forwarding required), run Hyperlane on-chain setup, and verify consensus health:
-
-```bash
-./out/cli/bin/outbe-up vm start \
-  --artifacts ./out/network \
-  --ssh-key ~/.ssh/id_ed25519 \
-  --timeout 600 \
-  --max-lag 20
-```
-
-`vm start` succeeds only when every founder is running on the expected chain ID with all required peers, reports `hyperlane_registered == true`, trails the highest finalized block by at most `--max-lag` blocks (default `20`), and matches the majority `vrfMaterialVersion`.
-
-Inspect VMM status, finalized height and lag, execution peers, Hyperlane registration, and consensus telemetry (`vrf=<vrfMaterialVersion>`, peers, shares, TEE readiness):
-
-```bash
-# One-shot check for scripts and automation (exits 0 when all founders are healthy, non-zero otherwise):
-./out/cli/bin/outbe-up vm status \
-  --artifacts ./out/network \
-  --ssh-key ~/.ssh/id_ed25519 \
-  --max-lag 20
-
-# Continuous watch view:
-./out/cli/bin/outbe-up vm status \
-  --artifacts ./out/network \
-  --ssh-key ~/.ssh/id_ed25519 \
-  --max-lag 20 \
-  --watch
-```
-
-In one-shot mode (without `--watch`), `vm status` exits `0` only if every founder is running, reachable with a finalized block, within `--max-lag` (default `20`) of the highest founder, and on the majority `vrfMaterialVersion`. Any stopped, unreachable, or `[LAGGING: ...]` founder causes a non-zero exit code.
-
-### Stopping, Single-Founder Restarts, and Removal
-
-`vm stop` and `vm start` act on all founders recorded in `./out/network/vm-state.json`; there is no single-founder selector yet. Do not edit `vm-state.json` to target one VM. To gracefully restart a single founder, run the VMM CLI on that founder's VMM host with its VM ID from `vm-state.json`:
-
-```bash
-dstack stop <vm-id>
-# Confirm `dstack info <vm-id>` shows Status: stopped before starting again.
-dstack start <vm-id>
-```
-
-To stop or remove all VMs in the network (guest OS images stay intact; `vm remove` polls until asynchronous VMM removal finishes within `--timeout`, default `120` seconds, before deleting `vm-state.json`):
-
-```bash
-./out/cli/bin/outbe-up vm stop --artifacts ./out/network --ssh-key ~/.ssh/id_ed25519
-./out/cli/bin/outbe-up vm remove --artifacts ./out/network --ssh-key ~/.ssh/id_ed25519 --release-reservations
-# Or release reservations separately after removal:
-./out/cli/bin/outbe-up vm host-release --artifacts ./out/network --ssh-key ~/.ssh/id_ed25519
-```
-
-`vm remove --release-reservations` and `vm host-release` strip only this network's managed block from `dhcp_hosts_file` and reload dnsmasq. They do not delete active leases from `dhcp_leases_file`. Existing leases stay active until expiry (`10m` for networks created by this version; leases created by earlier versions without a duration may be infinite). Re-creating a network on the same IPs before those leases expire fails `vm create`'s preflight before any mutation. Wait for lease expiry or choose other free bridge IPs; do not hand-edit `dhcp_leases_file`.
-
-## Outbound Internet for VMs
-
-VMs on the host bridge (`obr0`) have no outbound internet route unless the VMM host forwards and masquerades their subnet. Configure host-side NAT masquerade on every distinct `vmm_host` in the network:
-
-```bash
-# Preview preflight checks, rendered nftables ruleset, and planned commands without changing the host:
-./out/cli/bin/outbe-up vm host-nat \
-  --artifacts ./out/network \
-  --ssh-key ~/.ssh/id_ed25519 \
-  --dry-run
-
-# Apply NAT masquerade and persist it across reboots:
-./out/cli/bin/outbe-up vm host-nat \
-  --artifacts ./out/network \
-  --ssh-key ~/.ssh/id_ed25519
-```
-
-Pass `--uplink <iface>` to override the detected IPv4 default-route interface.
-
-What `vm host-nat` does on each VMM host:
-- Runs a read-only preflight first using `nft -j list ruleset` (JSON): verifies the bridge interface and IPv4 subnet contain all founder `bridge_ip` addresses, detects the uplink interface, checks runtime and persistent `net.ipv4.ip_forward`, and inspects existing nftables tables.
-- If a foreign table already masquerades or SNATs the bridge subnet towards the uplink and `net.ipv4.ip_forward` is `1`, prints `egress already provided by <family> <table> <chain>` and exits `0` without changing the host (pass `--force` to install `ip outbe_up_nat` anyway).
-- Classifies every foreign `ip`/`inet` `forward` base chain as either `pure-accept` (`policy accept` with no `drop`/`reject`/`jump`/`goto`/`vmap` rules) or `blocks-or-unknown`. When any foreign forward chain is `blocks-or-unknown`, preflight refuses to apply because the verdict cannot be decided statically; pass `--force` only after confirming the foreign chain permits bridge forwarding, then verify egress from a guest.
-- Atomically loads a single owned nftables table (`ip outbe_up_nat`) via `nft -f -` with `postrouting` masquerade for `<bridge>` -> `<uplink>` and `forward` accept rules for `<bridge>` -> `<uplink>` and established/related return traffic. It never touches `outbe_host_fw` or any other foreign table.
-- Persists the ruleset to `/etc/outbe-up/nat.nft` and enables `outbe-up-nat.service` (`After=network-online.target`). Writes `/etc/sysctl.d/90-outbe-up-nat.conf` (`net.ipv4.ip_forward = 1`) whenever no persistent sysctl configuration already sets `1` (even if runtime `ip_forward` is already `1`), and sets runtime `net.ipv4.ip_forward=1` if it was `0`. All managed files carry `# managed by outbe-up vm host-nat`; unmanaged files at those paths are never overwritten.
-
-To remove managed host NAT artifacts:
-
-```bash
-./out/cli/bin/outbe-up vm host-nat \
-  --artifacts ./out/network \
-  --ssh-key ~/.ssh/id_ed25519 \
-  --remove
-```
-
-`--remove` deletes `table ip outbe_up_nat` and removes `/etc/outbe-up/nat.nft`, `outbe-up-nat.service`, and `/etc/sysctl.d/90-outbe-up-nat.conf` only when they carry the `# managed by outbe-up vm host-nat` marker. Runtime `net.ipv4.ip_forward` is left unchanged so other host workloads are not disrupted.
-
-## 8. Dev-Flavor Guest SSH Access
-
-- The `dev` flavor enables `sshd` with default `StrictModes yes` and `PermitRootLogin prohibit-password`. The `prod` flavor contains no `sshd` configuration or SSH service preset.
-- Guest VMs are reachable only from the VMM host over their bridge IPs (no published host SSH ports).
-- The public key configured in `vm.authorized_keys` is the guest login key (separate from the VMM host `--ssh-key`) and is placed at `/opt/outbe-chain/dev/authorized_keys` on the data disk.
-- Some VMM hosts reject SSH TCP forwarding (`ProxyJump`). Run diagnostic SSH directly from the VMM host. If you copy a temporary diagnostic private key to the VMM host, keep it mode `0600` in a `0700` directory and delete it when done.
-- The `dev` guest generates a new SSH host key on every boot. After an intentional reboot, remove only that restarted VM's old entry from your `known_hosts` file instead of disabling host key checking globally.
-
-## Known Limitations
-
-- **Hyperlane validator on devnet**: `outbe-hyperlane-validator` runs and registers on chain, but remains idle on devnet because genesis has no external controller (an outbound internet route is available after running `outbe-up vm host-nat`, while the devnet controller remains unset).
-- **Force-stop during pending DKG**: force-stopping or power-cutting a validator can lose its pending DKG snapshot (tracked as a node defect; use graceful `dstack stop` and wait for `stopped` before restarting).
-- **TEE resident key location**: the validator's TEE resident key is stored on the unmeasured ext4 data disk under `/opt/outbe-chain`.
-- **`/dstack/persistent` mount flags**: `/opt/outbe-chain` is bind-mounted `noexec,nosuid,nodev`, while `/dstack/persistent` itself remains mounted `exec` (and `noexec` does not block script interpreters).
-- **`prod` flavor validation**: the `prod` flavor image is built and verified byte-for-byte reproducible, but has not been booted on hardware with production attestation policy or encrypted storage.
+- **Hyperlane on VM roles:** `outbe-hyperlane-validator.service` is not started by `outbe-vm-agent` on VM roles yet.
+- **Forced stop during pending DKG:** force-stopping or power-cutting a validator can lose its pending DKG snapshot. Always use graceful `outbe-up vm stop`, `outbe-up vm update`, or `outbe-net-up network update` (never `--force`).
+- **Guest memory:** allocate at least `8` GiB of RAM per validator VM (`memory_gib: 8`) to avoid guest OOM kills.
+- **TEE resident key:** in devnet/testnet VMs without sealed storage, the resident TEE key lives in memory and re-registers on reboot. DKG shares persist under `/opt/outbe-chain`.
+- **`/dstack/persistent` mount flags:** `/opt/outbe-chain` is bind-mounted `noexec,nosuid,nodev`, while `/dstack/persistent` remains mounted `exec`.
+- **`prod` flavor validation:** the `prod` flavor image builds reproducibly, but has not booted on hardware with production attestation policy or encrypted storage.

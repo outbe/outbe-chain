@@ -3238,7 +3238,7 @@ fn s4_boot_error_warning_vs_live_unhealthy() {
     assert!(member_node_ready(&status_ok, build.config.chain_id, 4));
     let assessments_ok = assess_members_lag(std::slice::from_ref(&status_ok), 20);
     assert!(
-        check_unhealthy_members(std::slice::from_ref(&status_ok), &assessments_ok, &[],).is_ok()
+        check_unhealthy_members(std::slice::from_ref(&status_ok), &assessments_ok, &[], 4,).is_ok()
     );
     let rendered = render_vm_status(&build, std::slice::from_ref(&status_ok), &[], 20);
     assert!(
@@ -3276,6 +3276,7 @@ fn s4_boot_error_warning_vs_live_unhealthy() {
         std::slice::from_ref(&status_rpc_dead),
         &assessments_dead,
         &[],
+        4,
     )
     .is_err());
 
@@ -4587,5 +4588,170 @@ async fn s7_pre_stop_missed_votes_fails_closed_and_retries_across_epoch_boundary
     );
     for vm in g.vms.values() {
         assert_eq!(vm.os_image_hash, v2_image_hash);
+    }
+}
+
+#[tokio::test]
+async fn s10_status_fails_when_validator_consensus_peers_below_n_minus_1_or_missing() {
+    let mk_member = |name: &str, role: MemberRole, peers: Option<u64>| VmMemberStatus {
+        name: name.to_owned(),
+        role,
+        vm_name: format!("s10-{name}"),
+        vm_id: format!("id-{name}"),
+        host: "192.0.2.50".to_owned(),
+        classification: VmClassKind::Ours,
+        classification_detail: None,
+        service_ip: Ipv4Addr::new(10, 77, 0, 10),
+        dhcp_ip: None,
+        mac: "52:54:00:00:00:01".to_owned(),
+        vmm_status: "running".to_owned(),
+        vmm_running: true,
+        no_tee: false,
+        chain_id: Some(424_242),
+        finalized: Some(500),
+        finalized_hash: Some("0xabc".to_owned()),
+        execution_peers: Some(3),
+        consensus_mode: Some(if role == MemberRole::FullNode {
+            "follower".to_owned()
+        } else {
+            "signer".to_owned()
+        }),
+        consensus_peers: peers,
+        has_threshold_shares: Some(role != MemberRole::FullNode),
+        vrf_material_version: Some(if role == MemberRole::FullNode { 0 } else { 1 }),
+        tee_ready: Some(role != MemberRole::FullNode),
+        consensus: peers.map(|p| ConsensusStatus {
+            connected_peers: p,
+            is_validator: role != MemberRole::FullNode,
+            mode: if role == MemberRole::FullNode {
+                "follower".to_owned()
+            } else {
+                "signer".to_owned()
+            },
+            has_threshold_shares: role != MemberRole::FullNode,
+            randomness_status: Some("healthy".to_owned()),
+            ..Default::default()
+        }),
+        boot_warning: None,
+        error: None,
+    };
+    let ok_assess = || MemberLagAssessment {
+        lag: Some(0),
+        lagging: false,
+        reasons: Vec::new(),
+    };
+
+    // 1. Missing `outbe_consensusStatus` on a validator -> unhealthy (Err).
+    let missing_err = check_unhealthy_members(
+        &[mk_member("validator-0", MemberRole::Founder, None)],
+        &[ok_assess()],
+        &[],
+        3,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        missing_err.contains("validator-0")
+            && missing_err.contains("missing outbe_consensusStatus"),
+        "{missing_err}"
+    );
+
+    // 2. Validator reporting `connectedPeers < n - 1` (0 or 2 in a 4-validator network) -> unhealthy.
+    for low in [0u64, 2u64] {
+        let low_err = check_unhealthy_members(
+            &[
+                mk_member("validator-0", MemberRole::Founder, Some(3)),
+                mk_member("validator-1", MemberRole::Founder, Some(low)),
+            ],
+            &[ok_assess(), ok_assess()],
+            &[],
+            3,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            low_err.contains("validator-1")
+                && low_err.contains(&format!("connectedPeers={low}"))
+                && low_err.contains("n-1=3"),
+            "{low_err}"
+        );
+    }
+
+    // 3. Validators with `connectedPeers >= n - 1` (3 or 4) + full-node with 0 -> healthy (Ok).
+    check_unhealthy_members(
+        &[
+            mk_member("validator-0", MemberRole::Founder, Some(3)),
+            mk_member("validator-1", MemberRole::Founder, Some(4)),
+            mk_member("full-node-0", MemberRole::FullNode, Some(0)),
+        ],
+        &[ok_assess(), ok_assess(), ok_assess()],
+        &[],
+        3,
+    )
+    .unwrap();
+
+    // 4. End-to-end `status_with_exec` (table & --json) returns Err when validator-2 drops to 2 peers.
+    let dir = tempfile::tempdir().unwrap();
+    let fixture = build_test_vm_artifacts(dir.path(), "s10st", "~/.dstack-vmm", b"fake-outbe-up");
+    let fake = FakeHostExec::new();
+    let exec: Arc<dyn HostExec> = Arc::new(fake.clone());
+
+    deploy_with_exec(
+        &DeployOptions {
+            artifacts: &fixture.root,
+            image_source: ImageSource::Archive {
+                path: fixture.image_archive.clone(),
+                sha256: None,
+            },
+            ssh_key: None,
+            ssh_config: None,
+            no_tee: false,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .unwrap();
+    start_with_exec(
+        &StartOptions {
+            artifacts: &fixture.root,
+            ssh_key: None,
+            ssh_config: None,
+            timeout: Duration::from_secs(30),
+            max_lag: 20,
+            min_finalized_blocks: 10,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .unwrap();
+
+    // Degrade validator-2 (`10.77.0.12`) to `connectedPeers = 2` (< n-1 = 3).
+    fake.state
+        .lock()
+        .unwrap()
+        .rpc_connected_peers_override
+        .insert("10.77.0.12".to_owned(), 2);
+
+    for json_mode in [false, true] {
+        let err = status_with_exec(
+            &StatusOptions {
+                artifacts: &fixture.root,
+                ssh_key: None,
+                ssh_config: None,
+                watch: false,
+                max_lag: 20,
+                json: json_mode,
+            },
+            Arc::clone(&exec),
+        )
+        .await
+        .expect_err("network status must fail when validator connectedPeers < n-1");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("validator-2")
+                && msg.contains("connectedPeers=2")
+                && msg.contains("n-1=3"),
+            "json={json_mode}: {msg}"
+        );
     }
 }
