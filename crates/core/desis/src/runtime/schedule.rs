@@ -207,7 +207,7 @@ fn pending_cancel(
     }
     let promis_load_minor = u128::try_from(contract.config_promis_load_minor.read(&emission_day)?)
         .map_err(|_| DesisError::InvalidEmissionDay(emission_day))?;
-    brief_cancel_reason(contract, emission_day, promis_load_minor)
+    desis_limit_cancel_reason(contract, emission_day, promis_load_minor)
 }
 
 /// Cancel a day before its result. A started day sends the cancel to every chain it started on.
@@ -357,14 +357,14 @@ fn start_auction(
         issuance_end: ts32(issuance_end)?,
     };
 
-    let brief = brief_cancel_reason(contract, emission_day, config.promis_load_minor)?;
+    let limit_cancel = desis_limit_cancel_reason(contract, emission_day, config.promis_load_minor)?;
     let unpriced = config.reference_prices.is_empty();
     let late = commit_end.saturating_sub(now) < MIN_COMMIT_WINDOW_SECONDS;
     let no_targets = outbe_intexfactory::targets::auction_target_chains(storage)?.is_empty();
     let reason = [
-        brief.filter(|reason| *reason == CANCELED_NO_LIMIT),
+        limit_cancel.filter(|reason| *reason == CANCELED_NO_LIMIT),
         unpriced.then_some(CANCELED_UNPRICED),
-        brief,
+        limit_cancel,
         late.then_some(CANCELED_LATE_START),
         no_targets.then_some(CANCELED_NO_TARGETS),
     ]

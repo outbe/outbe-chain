@@ -64,7 +64,7 @@ pub fn mine_gratis(
             GRATIS_FACTORY_ADDRESS,
             IGratisFactory::GratisMinedFromCoen {
                 account,
-                gratisMinor: gratis_minor,
+                amountMinor: gratis_minor,
             }
             .encode_log_data(),
         )

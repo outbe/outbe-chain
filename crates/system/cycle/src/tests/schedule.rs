@@ -125,7 +125,7 @@ fn dispatch_propagates_schedule_overflow_instead_of_skipping_the_task() {
     assert!(storage
         .get_events(outbe_system_common::addresses::CYCLE_ADDRESS)
         .iter()
-        .all(|log| crate::ICycle::CycleTaskFailed::decode_log_data(log).is_err()));
+        .all(|log| crate::ICycle::CycleTaskCompleted::decode_log_data(log).is_err()));
 }
 
 #[test]

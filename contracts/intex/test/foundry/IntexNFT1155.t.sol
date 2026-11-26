@@ -3,7 +3,7 @@ pragma solidity 0.8.30;
 
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
-import {CreateSeriesLib} from "./helpers/CreateSeriesLib.sol";
+import {OpenSeriesLib} from "./helpers/OpenSeriesLib.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {IIntexFactory} from "@precompiles/IIntexFactory.sol";
 import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
@@ -11,7 +11,7 @@ import {IERC1155Receiver} from "@openzeppelin/contracts/token/ERC1155/IERC1155Re
 import {Test, Vm} from "forge-std/Test.sol";
 
 /// @dev ERC1155 receiver that, during the `onERC1155Received` callback, snapshots
-///      `totalSupply(tokenId)` against `balanceOf(self, tokenId)`. After the mint
+///      `totalSupply(intexId)` against `balanceOf(self, intexId)`. After the mint
 ///      returns, the test asserts that the two were equal mid-callback. This holds iff
 ///      the contract writes `totalSupply` before `_mint` (the read-only-reentrancy guarantee).
 contract MidCallbackSnapshotReceiver is IERC1155Receiver {
@@ -62,9 +62,9 @@ contract IntexNFT1155Test is Test {
     bytes14 constant SERIES_ID_2 = "20250102-USD-U";
     uint32 constant SERIES_ID_3_DAY = 20250103;
     bytes14 constant SERIES_ID_3 = "20250103-USD-U";
-    uint256 constant TOKEN_ID_1 = uint256(keccak256(abi.encodePacked(SERIES_ID_1)));
-    uint256 constant TOKEN_ID_2 = uint256(keccak256(abi.encodePacked(SERIES_ID_2)));
-    uint256 constant TOKEN_ID_3 = uint256(keccak256(abi.encodePacked(SERIES_ID_3)));
+    uint256 constant INTEX_ID_1 = uint256(keccak256(abi.encodePacked(SERIES_ID_1)));
+    uint256 constant INTEX_ID_2 = uint256(keccak256(abi.encodePacked(SERIES_ID_2)));
+    uint256 constant INTEX_ID_3 = uint256(keccak256(abi.encodePacked(SERIES_ID_3)));
 
     uint32 constant ISSUED_UNITS = 10_000;
 
@@ -73,9 +73,9 @@ contract IntexNFT1155Test is Test {
     }
 
     /// @dev Create a series with the standard parameters and a given call period.
-    function _createSeries(uint32 emissionDay, uint32 callPeriod) internal {
+    function _openSeries(uint32 emissionDay, uint32 callPeriod) internal {
         vm.prank(bridger);
-        nft.createSeries(CreateSeriesLib.params(emissionDay, ISSUED_UNITS, callPeriod));
+        nft.openSeries(OpenSeriesLib.params(emissionDay, ISSUED_UNITS, callPeriod));
     }
 
     function test_InitialState() public view {
@@ -84,12 +84,12 @@ contract IntexNFT1155Test is Test {
         assertTrue(nft.hasRole(nft.BRIDGE_ROLE(), bridger));
     }
 
-    function test_CreateSeries() public {
+    function test_OpenSeries() public {
         uint32 callPeriod = uint32(30 days);
         vm.prank(bridger);
-        nft.createSeries(CreateSeriesLib.params(SERIES_ID_1_DAY, ISSUED_UNITS, callPeriod));
+        nft.openSeries(OpenSeriesLib.params(SERIES_ID_1_DAY, ISSUED_UNITS, callPeriod));
 
-        IIntexNFT1155.SeriesData memory data = nft.readData(SERIES_ID_1);
+        IIntexNFT1155.SeriesData memory data = nft.getIntexSeries(SERIES_ID_1);
         assertEq(uint8(data.state), uint8(IIntexNFT1155.IntexState.Issued));
         assertEq(data.issuedAt, block.timestamp);
         assertEq(data.calledAt, 0);
@@ -100,34 +100,34 @@ contract IntexNFT1155Test is Test {
         assertEq(data.callTrigger.callNoticePeriod, callPeriod);
     }
 
-    function test_ReadTokenData_ReadsTheSeriesByItsTokenId() public {
-        _createSeries(SERIES_ID_1_DAY, 0);
+    function test_GetIntex_ReadsTheSeriesByItsIntexId() public {
+        _openSeries(SERIES_ID_1_DAY, 0);
 
-        IIntexNFT1155.SeriesData memory byId = nft.readTokenData(TOKEN_ID_1);
+        IIntexNFT1155.SeriesData memory byId = nft.getIntex(INTEX_ID_1);
         assertEq(byId.seriesId, SERIES_ID_1);
-        assertEq(keccak256(abi.encode(byId)), keccak256(abi.encode(nft.readData(SERIES_ID_1))));
+        assertEq(keccak256(abi.encode(byId)), keccak256(abi.encode(nft.getIntexSeries(SERIES_ID_1))));
 
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.NonexistentToken.selector, TOKEN_ID_1 + 1));
-        nft.readTokenData(TOKEN_ID_1 + 1);
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.IntexNotFound.selector, INTEX_ID_1 + 1));
+        nft.getIntex(INTEX_ID_1 + 1);
     }
 
-    function test_OnlyBridgeCanCreateSeries() public {
+    function test_OnlyRouterCanOpenSeries() public {
         vm.prank(user);
         vm.expectRevert();
-        nft.createSeries(CreateSeriesLib.params(SERIES_ID_1_DAY, ISSUED_UNITS, 0));
+        nft.openSeries(OpenSeriesLib.params(SERIES_ID_1_DAY, ISSUED_UNITS, 0));
     }
 
-    function test_CreateSeriesDuplicate() public {
-        _createSeries(SERIES_ID_1_DAY, 0);
+    function test_OpenSeriesDuplicate() public {
+        _openSeries(SERIES_ID_1_DAY, 0);
 
         vm.prank(bridger);
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.TokenAlreadyExists.selector, TOKEN_ID_1));
-        nft.createSeries(CreateSeriesLib.params(SERIES_ID_1_DAY, ISSUED_UNITS, 0));
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.IntexAlreadyExists.selector, INTEX_ID_1));
+        nft.openSeries(OpenSeriesLib.params(SERIES_ID_1_DAY, ISSUED_UNITS, 0));
     }
 
-    function test_CreateSeries_RecordsEmissionDay() public {
-        _createSeries(SERIES_ID_1_DAY, 0);
-        _createSeries(SERIES_ID_2_DAY, 0);
+    function test_OpenSeries_RecordsEmissionDay() public {
+        _openSeries(SERIES_ID_1_DAY, 0);
+        _openSeries(SERIES_ID_2_DAY, 0);
 
         assertEq(nft.emissionDayOf(SERIES_ID_1), SERIES_ID_1_DAY);
         bytes14[] memory ids = nft.seriesIdsByEmissionDay(SERIES_ID_1_DAY);
@@ -136,13 +136,13 @@ contract IntexNFT1155Test is Test {
         assertEq(nft.seriesIdsByEmissionDay(SERIES_ID_2_DAY)[0], SERIES_ID_2);
     }
 
-    function test_CreateSeries_IndexesTheDayCurrencyPair() public {
-        IIntexNFT1155.CreateSeriesParams memory lira = CreateSeriesLib.params(SERIES_ID_1_DAY, ISSUED_UNITS, 0);
+    function test_OpenSeries_IndexesTheDayCurrencyPair() public {
+        IIntexNFT1155.OpenSeriesParams memory lira = OpenSeriesLib.params(SERIES_ID_1_DAY, ISSUED_UNITS, 0);
         lira.seriesId = "20250505-TRY-U";
         lira.issuanceCurrency = 949;
         vm.startPrank(bridger);
-        nft.createSeries(CreateSeriesLib.params(SERIES_ID_1_DAY, ISSUED_UNITS, 0));
-        nft.createSeries(lira);
+        nft.openSeries(OpenSeriesLib.params(SERIES_ID_1_DAY, ISSUED_UNITS, 0));
+        nft.openSeries(lira);
         vm.stopPrank();
 
         assertEq(nft.seriesIdOf(SERIES_ID_1_DAY, 840, 840), SERIES_ID_1);
@@ -154,13 +154,13 @@ contract IntexNFT1155Test is Test {
     /// @dev The contract stores the day verbatim and does not infer it from `seriesId`. The test
     ///      proves this with distinct values, so that a future composite seriesId (many series per
     ///      day) records the real day. Fails if provenance reads `params.seriesId`.
-    function test_CreateSeries_StoresRealDay_DistinctFromSeriesId() public {
+    function test_OpenSeries_StoresRealDay_DistinctFromSeriesId() public {
         bytes14 seriesId = "20250505-TRY-U";
         uint32 emissionDay = 20260101;
-        IIntexNFT1155.CreateSeriesParams memory p = CreateSeriesLib.params(emissionDay, ISSUED_UNITS, 0);
+        IIntexNFT1155.OpenSeriesParams memory p = OpenSeriesLib.params(emissionDay, ISSUED_UNITS, 0);
         p.seriesId = seriesId; // the id's own day differs from the provenance day
         vm.prank(bridger);
-        nft.createSeries(p);
+        nft.openSeries(p);
 
         assertEq(nft.emissionDayOf(seriesId), emissionDay, "day stored verbatim");
         bytes14[] memory ids = nft.seriesIdsByEmissionDay(emissionDay);
@@ -172,16 +172,16 @@ contract IntexNFT1155Test is Test {
     function test_Issue() public {
         uint256 quantity = 10;
 
-        _createSeries(SERIES_ID_1_DAY, 0);
+        _openSeries(SERIES_ID_1_DAY, 0);
         vm.prank(bridger);
         nft.issueIntex(user, quantity, SERIES_ID_1);
 
-        assertEq(nft.balanceOf(user, TOKEN_ID_1), quantity);
-        assertEq(nft.readData(SERIES_ID_1).totalSupply, quantity);
+        assertEq(nft.balanceOf(user, INTEX_ID_1), quantity);
+        assertEq(nft.getIntexSeries(SERIES_ID_1).totalSupply, quantity);
     }
 
     function test_OnlyBridgeCanIssue() public {
-        _createSeries(SERIES_ID_1_DAY, 0);
+        _openSeries(SERIES_ID_1_DAY, 0);
 
         vm.prank(user);
         vm.expectRevert();
@@ -189,7 +189,7 @@ contract IntexNFT1155Test is Test {
     }
 
     function test_IssueToZeroAddress() public {
-        _createSeries(SERIES_ID_1_DAY, 0);
+        _openSeries(SERIES_ID_1_DAY, 0);
 
         vm.prank(bridger);
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.ZeroAddress.selector, "to", address(0)));
@@ -198,12 +198,12 @@ contract IntexNFT1155Test is Test {
 
     function test_IssueNonexistentSeries() public {
         vm.prank(bridger);
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.NonexistentToken.selector, TOKEN_ID_1));
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.IntexNotFound.selector, INTEX_ID_1));
         nft.issueIntex(user, 10, SERIES_ID_1);
     }
 
     function test_IssueUnitsTooLarge() public {
-        _createSeries(SERIES_ID_1_DAY, 0);
+        _openSeries(SERIES_ID_1_DAY, 0);
 
         uint256 tooLarge = uint256(type(uint16).max) + 1;
         vm.prank(bridger);
@@ -211,15 +211,15 @@ contract IntexNFT1155Test is Test {
         nft.issueIntex(user, tooLarge, SERIES_ID_1);
     }
 
-    function test_MarkCalled() public {
+    function test_CallSeries() public {
         uint32 customCallPeriod = uint32(14 days);
         uint32 calledAt = uint32(block.timestamp);
 
-        _createSeries(SERIES_ID_1_DAY, customCallPeriod);
+        _openSeries(SERIES_ID_1_DAY, customCallPeriod);
         vm.prank(bridger);
-        nft.markCalled(SERIES_ID_1, uint32(block.timestamp));
+        nft.callSeries(SERIES_ID_1, uint32(block.timestamp));
 
-        IIntexNFT1155.SeriesData memory data = nft.readData(SERIES_ID_1);
+        IIntexNFT1155.SeriesData memory data = nft.getIntexSeries(SERIES_ID_1);
         assertEq(uint8(data.state), uint8(IIntexNFT1155.IntexState.Called));
         assertEq(data.calledAt, calledAt);
         assertEq(data.callTrigger.callNoticePeriod, customCallPeriod);
@@ -229,37 +229,37 @@ contract IntexNFT1155Test is Test {
     function test_TimesPastUint32MaxKeepTheirValue() public {
         vm.warp(uint256(type(uint32).max) + 1 days);
         uint32 period = uint32(14 days);
-        _createSeries(SERIES_ID_1_DAY, period);
+        _openSeries(SERIES_ID_1_DAY, period);
         uint64 calledAt = uint64(block.timestamp);
 
         vm.expectEmit(true, false, false, true);
         emit IIntexNFT1155.IntexSeriesCalled(SERIES_ID_1, 840, 840, calledAt, calledAt + period);
         vm.prank(bridger);
-        nft.markCalled(SERIES_ID_1, calledAt);
+        nft.callSeries(SERIES_ID_1, calledAt);
 
-        IIntexNFT1155.SeriesData memory data = nft.readData(SERIES_ID_1);
+        IIntexNFT1155.SeriesData memory data = nft.getIntexSeries(SERIES_ID_1);
         assertEq(data.issuedAt, calledAt);
         assertEq(data.calledAt, calledAt);
     }
 
-    function test_OnlyBridgeCanMarkCalled() public {
-        _createSeries(SERIES_ID_1_DAY, 0);
+    function test_OnlyRouterCanCallSeries() public {
+        _openSeries(SERIES_ID_1_DAY, 0);
 
         vm.prank(user);
         vm.expectRevert();
-        nft.markCalled(SERIES_ID_1, uint32(block.timestamp));
+        nft.callSeries(SERIES_ID_1, uint32(block.timestamp));
     }
 
-    function test_MarkCalledNonexistentToken() public {
+    function test_CallSeriesIntexNotFound() public {
         vm.prank(bridger);
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.NonexistentToken.selector, TOKEN_ID_1));
-        nft.markCalled(SERIES_ID_1, uint32(block.timestamp));
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.IntexNotFound.selector, INTEX_ID_1));
+        nft.callSeries(SERIES_ID_1, uint32(block.timestamp));
     }
 
-    function test_MarkCalledInvalidState() public {
-        _createSeries(SERIES_ID_1_DAY, 0);
+    function test_CallSeriesInvalidState() public {
+        _openSeries(SERIES_ID_1_DAY, 0);
         vm.startPrank(bridger);
-        nft.markCalled(SERIES_ID_1, uint32(block.timestamp));
+        nft.callSeries(SERIES_ID_1, uint32(block.timestamp));
         // Re-calling on an already Called series names Issued as the only state it could be called from.
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -268,42 +268,42 @@ contract IntexNFT1155Test is Test {
                 uint8(IIntexNFT1155.IntexState.Called)
             )
         );
-        nft.markCalled(SERIES_ID_1, uint32(block.timestamp));
+        nft.callSeries(SERIES_ID_1, uint32(block.timestamp));
         vm.stopPrank();
     }
 
-    function test_CrosschainBurnNonexistentToken() public {
+    function test_CrosschainBurnIntexNotFound() public {
         vm.prank(bridger);
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.NonexistentToken.selector, TOKEN_ID_1));
-        nft.crosschainBurn(user, user, TOKEN_ID_1, 5);
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.IntexNotFound.selector, INTEX_ID_1));
+        nft.crosschainBurn(user, user, INTEX_ID_1, 5);
     }
 
     function test_CrosschainBurnAndMint_AllowedInIssuedState() public {
-        _createSeries(SERIES_ID_1_DAY, 0);
+        _openSeries(SERIES_ID_1_DAY, 0);
         vm.startPrank(bridger);
         nft.issueIntex(user, 10, SERIES_ID_1);
 
         // Voluntary bridging is open while the series is tradable (Issued): burn out...
-        nft.crosschainBurn(user, user, TOKEN_ID_1, 4);
-        assertEq(nft.balanceOf(user, TOKEN_ID_1), 6);
+        nft.crosschainBurn(user, user, INTEX_ID_1, 4);
+        assertEq(nft.balanceOf(user, INTEX_ID_1), 6);
 
         // ...and mint in (the destination side of the same hop).
-        nft.crosschainMint(user2, TOKEN_ID_1, 4);
-        assertEq(nft.balanceOf(user2, TOKEN_ID_1), 4);
+        nft.crosschainMint(user2, INTEX_ID_1, 4);
+        assertEq(nft.balanceOf(user2, INTEX_ID_1), 4);
         vm.stopPrank();
     }
 
     function test_CrosschainBurn_AllowedInIssuedAndCalled_ForSystemRelayer() public {
-        _createSeries(SERIES_ID_1_DAY, 0);
+        _openSeries(SERIES_ID_1_DAY, 0);
         vm.startPrank(bridger);
         nft.issueIntex(user, 10, SERIES_ID_1);
 
-        nft.crosschainBurn(user, user, TOKEN_ID_1, 3);
-        assertEq(nft.balanceOf(user, TOKEN_ID_1), 7);
+        nft.crosschainBurn(user, user, INTEX_ID_1, 3);
+        assertEq(nft.balanceOf(user, INTEX_ID_1), 7);
 
-        nft.markCalled(SERIES_ID_1, uint32(block.timestamp));
-        nft.crosschainBurn(user, user, TOKEN_ID_1, 2);
-        assertEq(nft.balanceOf(user, TOKEN_ID_1), 5);
+        nft.callSeries(SERIES_ID_1, uint32(block.timestamp));
+        nft.crosschainBurn(user, user, INTEX_ID_1, 2);
+        assertEq(nft.balanceOf(user, INTEX_ID_1), 5);
         vm.stopPrank();
     }
 
@@ -312,16 +312,16 @@ contract IntexNFT1155Test is Test {
         bytes32 routerRole = nft.ROUTER_ROLE();
         vm.prank(admin);
         nft.grantRole(routerRole, router);
-        _createSeries(SERIES_ID_1_DAY, 0);
+        _openSeries(SERIES_ID_1_DAY, 0);
         vm.prank(bridger);
         nft.issueIntex(user, 10, SERIES_ID_1);
         bytes32 role = nft.BRIDGE_ROLE();
 
         vm.startPrank(router);
         vm.expectRevert(abi.encodeWithSignature("AccessControlUnauthorizedAccount(address,bytes32)", router, role));
-        nft.crosschainBurn(user, user, TOKEN_ID_1, 1);
+        nft.crosschainBurn(user, user, INTEX_ID_1, 1);
         vm.expectRevert(abi.encodeWithSignature("AccessControlUnauthorizedAccount(address,bytes32)", router, role));
-        nft.crosschainMint(user, TOKEN_ID_1, 1);
+        nft.crosschainMint(user, INTEX_ID_1, 1);
         vm.stopPrank();
     }
 
@@ -330,14 +330,14 @@ contract IntexNFT1155Test is Test {
         bytes32 bridgeRole = nft.BRIDGE_ROLE();
         vm.prank(admin);
         nft.grantRole(bridgeRole, bridge);
-        _createSeries(SERIES_ID_1_DAY, 0);
+        _openSeries(SERIES_ID_1_DAY, 0);
         bytes32 role = nft.ROUTER_ROLE();
 
         vm.startPrank(bridge);
         vm.expectRevert(abi.encodeWithSignature("AccessControlUnauthorizedAccount(address,bytes32)", bridge, role));
-        nft.createSeries(CreateSeriesLib.params(SERIES_ID_2_DAY, ISSUED_UNITS, 0));
+        nft.openSeries(OpenSeriesLib.params(SERIES_ID_2_DAY, ISSUED_UNITS, 0));
         vm.expectRevert(abi.encodeWithSignature("AccessControlUnauthorizedAccount(address,bytes32)", bridge, role));
-        nft.markCalled(SERIES_ID_1, uint64(block.timestamp));
+        nft.callSeries(SERIES_ID_1, uint64(block.timestamp));
         vm.stopPrank();
     }
 
@@ -348,76 +348,76 @@ contract IntexNFT1155Test is Test {
         nft.grantRole(nft.BRIDGE_ROLE(), plainRelayer);
         vm.stopPrank();
 
-        _createSeries(SERIES_ID_1_DAY, 0);
+        _openSeries(SERIES_ID_1_DAY, 0);
         vm.startPrank(bridger);
         nft.issueIntex(user, 10, SERIES_ID_1);
-        nft.markCalled(SERIES_ID_1, uint32(block.timestamp));
+        nft.callSeries(SERIES_ID_1, uint32(block.timestamp));
         vm.stopPrank();
 
         vm.prank(plainRelayer);
-        nft.crosschainBurn(user, user2, TOKEN_ID_1, 1);
-        assertEq(nft.balanceOf(user, TOKEN_ID_1), 9, "burned on the source, bound for another holder");
+        nft.crosschainBurn(user, user2, INTEX_ID_1, 1);
+        assertEq(nft.balanceOf(user, INTEX_ID_1), 9, "burned on the source, bound for another holder");
     }
 
-    function test_ReadData() public {
+    function test_GetIntexSeries() public {
         vm.prank(bridger);
-        nft.createSeries(CreateSeriesLib.params(SERIES_ID_1_DAY, ISSUED_UNITS, 0));
+        nft.openSeries(OpenSeriesLib.params(SERIES_ID_1_DAY, ISSUED_UNITS, 0));
 
-        IIntexNFT1155.SeriesData memory data = nft.readData(SERIES_ID_1);
+        IIntexNFT1155.SeriesData memory data = nft.getIntexSeries(SERIES_ID_1);
         assertEq(uint8(data.state), uint8(IIntexNFT1155.IntexState.Issued));
     }
 
-    function test_ReadDataNonexistentToken() public {
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.NonexistentToken.selector, TOKEN_ID_1));
-        nft.readData(SERIES_ID_1);
+    function test_GetIntexSeriesIntexNotFound() public {
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.IntexNotFound.selector, INTEX_ID_1));
+        nft.getIntexSeries(SERIES_ID_1);
     }
 
     function test_TransferRestrictions() public {
-        _createSeries(SERIES_ID_1_DAY, 0);
+        _openSeries(SERIES_ID_1_DAY, 0);
         vm.prank(bridger);
         nft.issueIntex(user, 10, SERIES_ID_1);
 
         // Token should be transferable in Issued state.
         vm.prank(user);
-        nft.safeTransferFrom(user, user2, TOKEN_ID_1, 5, "");
-        assertEq(nft.balanceOf(user, TOKEN_ID_1), 5);
-        assertEq(nft.balanceOf(user2, TOKEN_ID_1), 5);
+        nft.safeTransferFrom(user, user2, INTEX_ID_1, 5, "");
+        assertEq(nft.balanceOf(user, INTEX_ID_1), 5);
+        assertEq(nft.balanceOf(user2, INTEX_ID_1), 5);
 
         // Transfer back to user for next test.
         vm.prank(user2);
-        nft.safeTransferFrom(user2, user, TOKEN_ID_1, 5, "");
+        nft.safeTransferFrom(user2, user, INTEX_ID_1, 5, "");
 
         vm.prank(user);
-        nft.safeTransferFrom(user, user2, TOKEN_ID_1, 2, "");
-        assertEq(nft.balanceOf(user2, TOKEN_ID_1), 2);
+        nft.safeTransferFrom(user, user2, INTEX_ID_1, 2, "");
+        assertEq(nft.balanceOf(user2, INTEX_ID_1), 2);
 
-        // Mark as called. With no notice period the deadline is the call itself.
+        // Call the series. With no notice period the deadline is the call itself.
         uint32 deadline = uint32(block.timestamp);
         vm.prank(bridger);
-        nft.markCalled(SERIES_ID_1, deadline);
+        nft.callSeries(SERIES_ID_1, deadline);
 
         // A Called series still transfers until its settlement deadline.
         vm.prank(user);
-        nft.safeTransferFrom(user, user2, TOKEN_ID_1, 3, "");
-        assertEq(nft.balanceOf(user2, TOKEN_ID_1), 5);
+        nft.safeTransferFrom(user, user2, INTEX_ID_1, 3, "");
+        assertEq(nft.balanceOf(user2, INTEX_ID_1), 5);
 
         // Past the deadline the units stay put, transit margin or not.
         vm.warp(block.timestamp + 1);
         vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.TransferAfterDeadline.selector, TOKEN_ID_1, deadline));
-        nft.safeTransferFrom(user, user2, TOKEN_ID_1, 1, "");
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.TransferAfterDeadline.selector, INTEX_ID_1, deadline));
+        nft.safeTransferFrom(user, user2, INTEX_ID_1, 1, "");
     }
 
     function test_TransferRestrictionsIssued() public {
-        _createSeries(SERIES_ID_1_DAY, 0);
+        _openSeries(SERIES_ID_1_DAY, 0);
         vm.prank(bridger);
         nft.issueIntex(user, 10, SERIES_ID_1);
 
         // Token should be transferable in Issued state.
         vm.prank(user);
-        nft.safeTransferFrom(user, user2, TOKEN_ID_1, 5, "");
-        assertEq(nft.balanceOf(user, TOKEN_ID_1), 5);
-        assertEq(nft.balanceOf(user2, TOKEN_ID_1), 5);
+        nft.safeTransferFrom(user, user2, INTEX_ID_1, 5, "");
+        assertEq(nft.balanceOf(user, INTEX_ID_1), 5);
+        assertEq(nft.balanceOf(user2, INTEX_ID_1), 5);
     }
 
     function test_Events() public {
@@ -427,12 +427,12 @@ contract IntexNFT1155Test is Test {
 
         vm.startPrank(bridger);
         vm.expectEmit();
-        emit IIntexNFT1155.MetadataUpdate(TOKEN_ID_1);
-        nft.createSeries(CreateSeriesLib.params(SERIES_ID_1_DAY, ISSUED_UNITS, customCallPeriod));
+        emit IIntexNFT1155.MetadataUpdate(INTEX_ID_1);
+        nft.openSeries(OpenSeriesLib.params(SERIES_ID_1_DAY, ISSUED_UNITS, customCallPeriod));
 
         bytes memory expectedPayload = abi.encode(uint256(100_000 * 1e6) * quantity);
         vm.expectEmit(true, true, true, true);
-        emit IIntexNFT1155.IntexIssued(TOKEN_ID_1, user, SERIES_ID_1, 840, 840, uint32(quantity), expectedPayload);
+        emit IIntexNFT1155.IntexIssued(INTEX_ID_1, user, SERIES_ID_1, 840, 840, uint32(quantity), expectedPayload);
         vm.recordLogs();
         nft.issueIntex(user, quantity, SERIES_ID_1);
         Vm.Log[] memory logs = vm.getRecordedLogs();
@@ -459,29 +459,29 @@ contract IntexNFT1155Test is Test {
 
         vm.expectEmit(true, false, false, true);
         emit IIntexNFT1155.IntexSeriesCalled(SERIES_ID_1, 840, 840, uint64(block.timestamp), settlementDeadline);
-        nft.markCalled(SERIES_ID_1, uint64(block.timestamp));
+        nft.callSeries(SERIES_ID_1, uint64(block.timestamp));
         vm.stopPrank();
     }
 
-    function test_IssuedTokenId_IsTheSeriesId() public view {
-        assertEq(nft.issuedTokenId(SERIES_ID_1), uint256(keccak256(abi.encodePacked(SERIES_ID_1))));
+    function test_IssuedIntexId_IsTheSeriesId() public view {
+        assertEq(nft.issuedIntexId(SERIES_ID_1), uint256(keccak256(abi.encodePacked(SERIES_ID_1))));
     }
 
     function test_BatchTransferRestrictions() public {
-        _createSeries(SERIES_ID_1_DAY, 0);
-        _createSeries(SERIES_ID_2_DAY, 0);
+        _openSeries(SERIES_ID_1_DAY, 0);
+        _openSeries(SERIES_ID_2_DAY, 0);
         vm.startPrank(bridger);
         nft.issueIntex(user, 10, SERIES_ID_1);
         nft.issueIntex(user, 10, SERIES_ID_2);
 
-        // Mark one as called. With no notice period the deadline is the call itself.
+        // Call one series. With no notice period the deadline is the call itself.
         uint32 deadline = uint32(block.timestamp);
-        nft.markCalled(SERIES_ID_1, deadline);
+        nft.callSeries(SERIES_ID_1, deadline);
         vm.stopPrank();
 
         uint256[] memory ids = new uint256[](2);
-        ids[0] = TOKEN_ID_1;
-        ids[1] = TOKEN_ID_2;
+        ids[0] = INTEX_ID_1;
+        ids[1] = INTEX_ID_2;
 
         uint256[] memory amounts = new uint256[](2);
         amounts[0] = 5;
@@ -490,14 +490,14 @@ contract IntexNFT1155Test is Test {
         // A batch containing a series past its settlement deadline reverts atomically.
         vm.warp(block.timestamp + 1);
         vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.TransferAfterDeadline.selector, TOKEN_ID_1, deadline));
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.TransferAfterDeadline.selector, INTEX_ID_1, deadline));
         nft.safeBatchTransferFrom(user, user2, ids, amounts, "");
 
         // The uncalled series still transfers on its own.
         vm.prank(user);
-        nft.safeTransferFrom(user, user2, TOKEN_ID_2, 5, "");
-        assertEq(nft.balanceOf(user2, TOKEN_ID_1), 0);
-        assertEq(nft.balanceOf(user2, TOKEN_ID_2), 5);
+        nft.safeTransferFrom(user, user2, INTEX_ID_2, 5, "");
+        assertEq(nft.balanceOf(user2, INTEX_ID_1), 0);
+        assertEq(nft.balanceOf(user2, INTEX_ID_2), 5);
     }
 
     // --- Tests for CrosschainBurn/CrosschainMint ---
@@ -505,104 +505,104 @@ contract IntexNFT1155Test is Test {
         uint256 quantity = 10;
         uint256 burnAmount = 5;
 
-        _createSeries(SERIES_ID_1_DAY, 0);
+        _openSeries(SERIES_ID_1_DAY, 0);
         vm.startPrank(bridger);
         nft.issueIntex(user, quantity, SERIES_ID_1);
-        nft.crosschainBurn(user, user, TOKEN_ID_1, burnAmount);
+        nft.crosschainBurn(user, user, INTEX_ID_1, burnAmount);
         vm.stopPrank();
 
-        assertEq(nft.balanceOf(user, TOKEN_ID_1), quantity - burnAmount);
+        assertEq(nft.balanceOf(user, INTEX_ID_1), quantity - burnAmount);
     }
 
     function test_CrosschainBurnInCalledState() public {
         uint256 quantity = 10;
         uint256 burnAmount = 5;
 
-        _createSeries(SERIES_ID_1_DAY, 0);
+        _openSeries(SERIES_ID_1_DAY, 0);
         vm.startPrank(bridger);
         nft.issueIntex(user, quantity, SERIES_ID_1);
-        nft.markCalled(SERIES_ID_1, uint32(block.timestamp));
-        nft.crosschainBurn(user, user, TOKEN_ID_1, burnAmount);
+        nft.callSeries(SERIES_ID_1, uint32(block.timestamp));
+        nft.crosschainBurn(user, user, INTEX_ID_1, burnAmount);
         vm.stopPrank();
 
-        assertEq(nft.balanceOf(user, TOKEN_ID_1), quantity - burnAmount);
+        assertEq(nft.balanceOf(user, INTEX_ID_1), quantity - burnAmount);
     }
 
     function test_OnlyBridgeCanCrosschainBurn() public {
-        _createSeries(SERIES_ID_1_DAY, 0);
+        _openSeries(SERIES_ID_1_DAY, 0);
         vm.prank(bridger);
         nft.issueIntex(user, 10, SERIES_ID_1);
 
         vm.prank(user);
         vm.expectRevert();
-        nft.crosschainBurn(user, user, TOKEN_ID_1, 5);
+        nft.crosschainBurn(user, user, INTEX_ID_1, 5);
     }
 
     function test_CrosschainMint() public {
         uint256 mintAmount = 10;
 
-        _createSeries(SERIES_ID_1_DAY, 0);
+        _openSeries(SERIES_ID_1_DAY, 0);
         vm.startPrank(bridger);
-        nft.crosschainMint(user, TOKEN_ID_1, mintAmount);
+        nft.crosschainMint(user, INTEX_ID_1, mintAmount);
         vm.stopPrank();
 
-        assertEq(nft.balanceOf(user, TOKEN_ID_1), mintAmount);
+        assertEq(nft.balanceOf(user, INTEX_ID_1), mintAmount);
     }
 
     function test_CrosschainMintInCalledState() public {
         uint256 mintAmount = 10;
 
-        _createSeries(SERIES_ID_1_DAY, 0);
+        _openSeries(SERIES_ID_1_DAY, 0);
         vm.startPrank(bridger);
-        nft.markCalled(SERIES_ID_1, uint32(block.timestamp));
-        nft.crosschainMint(user, TOKEN_ID_1, mintAmount);
+        nft.callSeries(SERIES_ID_1, uint32(block.timestamp));
+        nft.crosschainMint(user, INTEX_ID_1, mintAmount);
         vm.stopPrank();
 
-        assertEq(nft.balanceOf(user, TOKEN_ID_1), mintAmount);
+        assertEq(nft.balanceOf(user, INTEX_ID_1), mintAmount);
     }
 
     function _callWithNotice() internal returns (uint32 deadline, uint32 closeAt) {
         uint32 callPeriod = uint32(14 days);
-        _createSeries(SERIES_ID_1_DAY, callPeriod);
+        _openSeries(SERIES_ID_1_DAY, callPeriod);
         vm.startPrank(bridger);
         nft.issueIntex(user, 10, SERIES_ID_1);
         uint32 calledAt = uint32(block.timestamp);
-        nft.markCalled(SERIES_ID_1, calledAt);
+        nft.callSeries(SERIES_ID_1, calledAt);
         vm.stopPrank();
         deadline = calledAt + callPeriod;
-        closeAt = deadline + nft.readData(SERIES_ID_1).callTrigger.transitMargin;
+        closeAt = deadline + nft.getIntexSeries(SERIES_ID_1).callTrigger.transitMargin;
     }
 
     function test_CrosschainBurn_AllowedAtDeadline() public {
         (uint32 deadline,) = _callWithNotice();
         vm.warp(deadline);
         vm.prank(bridger);
-        nft.crosschainBurn(user, user, TOKEN_ID_1, 5);
-        assertEq(nft.balanceOf(user, TOKEN_ID_1), 5);
+        nft.crosschainBurn(user, user, INTEX_ID_1, 5);
+        assertEq(nft.balanceOf(user, INTEX_ID_1), 5);
     }
 
     function test_CrosschainBurn_RevertsAfterDeadline() public {
         (uint32 deadline,) = _callWithNotice();
         vm.warp(uint256(deadline) + 1);
         vm.prank(bridger);
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.BridgeAfterDeadline.selector, TOKEN_ID_1, deadline));
-        nft.crosschainBurn(user, user, TOKEN_ID_1, 5);
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.BridgeAfterDeadline.selector, INTEX_ID_1, deadline));
+        nft.crosschainBurn(user, user, INTEX_ID_1, 5);
     }
 
     function test_CrosschainMint_LandsUntilTransitClose() public {
         (, uint32 closeAt) = _callWithNotice();
         vm.warp(closeAt);
         vm.prank(bridger);
-        nft.crosschainMint(user, TOKEN_ID_1, 5);
-        assertEq(nft.balanceOf(user, TOKEN_ID_1), 15);
+        nft.crosschainMint(user, INTEX_ID_1, 5);
+        assertEq(nft.balanceOf(user, INTEX_ID_1), 15);
     }
 
     function test_CrosschainMint_RevertsAfterTransitClose() public {
         (, uint32 closeAt) = _callWithNotice();
         vm.warp(uint256(closeAt) + 1);
         vm.prank(bridger);
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.BridgeAfterDeadline.selector, TOKEN_ID_1, closeAt));
-        nft.crosschainMint(user, TOKEN_ID_1, 10);
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.BridgeAfterDeadline.selector, INTEX_ID_1, closeAt));
+        nft.crosschainMint(user, INTEX_ID_1, 10);
     }
 
     function test_Issue_AllowedOnCalledSeriesUntilTransitClose() public {
@@ -610,51 +610,51 @@ contract IntexNFT1155Test is Test {
         vm.warp(closeAt);
         vm.prank(bridger);
         nft.issueIntex(user, 10, SERIES_ID_1);
-        assertEq(nft.balanceOf(user, TOKEN_ID_1), 20);
+        assertEq(nft.balanceOf(user, INTEX_ID_1), 20);
     }
 
     function test_Issue_RevertsAfterTransitClose() public {
         (, uint32 closeAt) = _callWithNotice();
         vm.warp(uint256(closeAt) + 1);
         vm.prank(bridger);
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.IssueAfterDeadline.selector, TOKEN_ID_1, closeAt));
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.IssueAfterDeadline.selector, INTEX_ID_1, closeAt));
         nft.issueIntex(user, 10, SERIES_ID_1);
     }
 
     /// @dev A notice period near `type(uint32).max` pushes the deadline past uint32. Nothing may
     ///      overflow.
     function test_Deadline_BeyondUint32_DoesNotOverflow() public {
-        _createSeries(SERIES_ID_1_DAY, type(uint32).max);
+        _openSeries(SERIES_ID_1_DAY, type(uint32).max);
         vm.startPrank(bridger);
         nft.issueIntex(user, 10, SERIES_ID_1);
-        nft.markCalled(SERIES_ID_1, uint32(block.timestamp));
+        nft.callSeries(SERIES_ID_1, uint32(block.timestamp));
         nft.issueIntex(user, 10, SERIES_ID_1);
-        nft.crosschainBurn(user, user, TOKEN_ID_1, 5);
-        nft.crosschainMint(user, TOKEN_ID_1, 5);
+        nft.crosschainBurn(user, user, INTEX_ID_1, 5);
+        nft.crosschainMint(user, INTEX_ID_1, 5);
         vm.stopPrank();
 
-        assertEq(nft.balanceOf(user, TOKEN_ID_1), 20);
+        assertEq(nft.balanceOf(user, INTEX_ID_1), 20);
     }
 
     function test_OnlyBridgeCanCrosschainMint() public {
-        _createSeries(SERIES_ID_1_DAY, 0);
+        _openSeries(SERIES_ID_1_DAY, 0);
 
         vm.prank(user);
         vm.expectRevert();
-        nft.crosschainMint(user, TOKEN_ID_1, 10);
+        nft.crosschainMint(user, INTEX_ID_1, 10);
     }
 
     function test_CrosschainMintRevertsNonexistentSeries() public {
         vm.prank(bridger);
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.NonexistentToken.selector, TOKEN_ID_1));
-        nft.crosschainMint(user, TOKEN_ID_1, 10);
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.IntexNotFound.selector, INTEX_ID_1));
+        nft.crosschainMint(user, INTEX_ID_1, 10);
     }
 
     // --- the series and item events of the token ---
 
     function test_intex_token_opens_a_series_with_the_factory_shape() public {
         assertEq(IIntexNFT1155.IntexSeriesOpened.selector, IIntexFactory.IntexSeriesOpened.selector, "one shape");
-        IIntexNFT1155.CreateSeriesParams memory p = CreateSeriesLib.params(SERIES_ID_1_DAY, ISSUED_UNITS, 7 days);
+        IIntexNFT1155.OpenSeriesParams memory p = OpenSeriesLib.params(SERIES_ID_1_DAY, ISSUED_UNITS, 7 days);
         p.callTrigger.callWindow = 28 days;
         p.callTrigger.callThreshold = 21 days;
 
@@ -663,7 +663,7 @@ contract IntexNFT1155Test is Test {
             SERIES_ID_1, 840, 840, 1e6, 200, 28 days, 21 days, 7 days, 1 hours, ISSUED_UNITS, 100_000 * 1e6
         );
         vm.prank(bridger);
-        nft.createSeries(p);
+        nft.openSeries(p);
     }
 
     function test_intex_issued_has_units_before_payload() public {
@@ -672,7 +672,7 @@ contract IntexNFT1155Test is Test {
             keccak256("IntexIssued(uint256,address,bytes14,uint16,uint16,uint32,bytes)"),
             "units come before the payload"
         );
-        _createSeries(SERIES_ID_1_DAY, 0);
+        _openSeries(SERIES_ID_1_DAY, 0);
         vm.recordLogs();
         vm.prank(bridger);
         nft.issueIntex(user, 3, SERIES_ID_1);
@@ -688,30 +688,30 @@ contract IntexNFT1155Test is Test {
     }
 
     function test_intex_units_sent_to_the_gem_factory_end_with_their_event() public {
-        _createSeries(SERIES_ID_1_DAY, 0);
+        _openSeries(SERIES_ID_1_DAY, 0);
         vm.prank(bridger);
         nft.issueIntex(user, 10, SERIES_ID_1);
         _grantBurnerRole(address(this));
         uint256 gemFactoryPositionId = 0xabc;
 
         vm.expectEmit(true, true, true, true, address(nft));
-        emit IERC1155.TransferSingle(address(this), user, address(0), TOKEN_ID_1, 4);
+        emit IERC1155.TransferSingle(address(this), user, address(0), INTEX_ID_1, 4);
         vm.expectEmit(true, true, true, true, address(nft));
-        emit IIntexNFT1155.IntexSentToGemFactory(TOKEN_ID_1, user, gemFactoryPositionId, 4);
+        emit IIntexNFT1155.IntexSentToGemFactory(INTEX_ID_1, user, gemFactoryPositionId, 4);
         nft.sendIntexToGemFactory(user, SERIES_ID_1, 4, gemFactoryPositionId);
 
-        assertEq(nft.balanceOf(user, TOKEN_ID_1), 6);
-        assertEq(nft.totalSupply(TOKEN_ID_1), 6);
+        assertEq(nft.balanceOf(user, INTEX_ID_1), 6);
+        assertEq(nft.totalSupply(INTEX_ID_1), 6);
     }
 
     function test_SendIntexToGemFactory_OnlyBurner() public {
-        _createSeries(SERIES_ID_1_DAY, 0);
+        _openSeries(SERIES_ID_1_DAY, 0);
         vm.expectRevert();
         nft.sendIntexToGemFactory(user, SERIES_ID_1, 1, 1);
     }
 
     function test_BurnIntex_EmitsNoGemFactoryEvent() public {
-        _createSeries(SERIES_ID_1_DAY, 0);
+        _openSeries(SERIES_ID_1_DAY, 0);
         vm.prank(bridger);
         nft.issueIntex(user, 2, SERIES_ID_1);
         _grantBurnerRole(address(this));
@@ -733,26 +733,26 @@ contract IntexNFT1155Test is Test {
     }
 
     function test_BurnIntex_TransferredUnitsBurnFromTheirNewOwner() public {
-        _createSeries(SERIES_ID_1_DAY, 0);
+        _openSeries(SERIES_ID_1_DAY, 0);
         vm.prank(bridger);
         nft.issueIntex(user, 10, SERIES_ID_1);
         vm.prank(user);
-        nft.safeTransferFrom(user, user2, TOKEN_ID_1, 4, "");
+        nft.safeTransferFrom(user, user2, INTEX_ID_1, 4, "");
         _grantBurnerRole(address(this));
 
         nft.burnIntex(user2, SERIES_ID_1, 3);
 
-        assertEq(nft.balanceOf(user2, TOKEN_ID_1), 1);
-        assertEq(nft.balanceOf(user, TOKEN_ID_1), 6, "the sender's units are untouched");
+        assertEq(nft.balanceOf(user2, INTEX_ID_1), 1);
+        assertEq(nft.balanceOf(user, INTEX_ID_1), 6, "the sender's units are untouched");
 
         // The new owner cannot burn more than it holds by drawing on the sender's units.
         vm.expectRevert();
         nft.burnIntex(user2, SERIES_ID_1, 2);
-        assertEq(nft.balanceOf(user, TOKEN_ID_1), 6);
+        assertEq(nft.balanceOf(user, INTEX_ID_1), 6);
     }
 
     function test_BurnIntex_RevertsOnZeroHolder() public {
-        _createSeries(SERIES_ID_1_DAY, 0);
+        _openSeries(SERIES_ID_1_DAY, 0);
         _grantBurnerRole(address(this));
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.ZeroAddress.selector, "owner", address(0)));
         nft.burnIntex(address(0), SERIES_ID_1, 1);
@@ -761,7 +761,7 @@ contract IntexNFT1155Test is Test {
     function test_BurnIntex_FreesCapRoom() public {
         uint32 cap = 10;
         vm.startPrank(bridger);
-        nft.createSeries(CreateSeriesLib.params(SERIES_ID_1_DAY, cap, 0));
+        nft.openSeries(OpenSeriesLib.params(SERIES_ID_1_DAY, cap, 0));
         nft.issueIntex(user, 10, SERIES_ID_1);
         vm.stopPrank();
         _grantBurnerRole(address(this));
@@ -772,7 +772,7 @@ contract IntexNFT1155Test is Test {
         // room.
         vm.prank(bridger);
         nft.issueIntex(user2, 4, SERIES_ID_1);
-        assertEq(nft.totalSupply(TOKEN_ID_1), 10);
+        assertEq(nft.totalSupply(INTEX_ID_1), 10);
     }
 
     // --- Series enumeration ---
@@ -780,8 +780,8 @@ contract IntexNFT1155Test is Test {
     function test_SeriesAtListsSeriesInCreationOrder() public {
         assertEq(nft.totalSeries(), 0);
 
-        _createSeries(SERIES_ID_1_DAY, 0);
-        _createSeries(SERIES_ID_2_DAY, 0);
+        _openSeries(SERIES_ID_1_DAY, 0);
+        _openSeries(SERIES_ID_2_DAY, 0);
 
         assertEq(nft.totalSeries(), 2);
         assertEq(nft.seriesAt(0), SERIES_ID_1);
@@ -789,7 +789,7 @@ contract IntexNFT1155Test is Test {
     }
 
     function test_SeriesAtPastTheEndReverts() public {
-        _createSeries(SERIES_ID_1_DAY, 0);
+        _openSeries(SERIES_ID_1_DAY, 0);
 
         vm.expectRevert(IIntexNFT1155.SeriesIndexOutOfRange.selector);
         nft.seriesAt(1);
@@ -797,14 +797,14 @@ contract IntexNFT1155Test is Test {
 
     /// @dev A batch that names one token id twice must move the whole amount. The hook walks the
     ///      pair, so a mishandled duplicate would double-count or drop half the transfer.
-    function test_BatchTransferWithDuplicateTokenIds() public {
-        _createSeries(SERIES_ID_1_DAY, 0);
+    function test_BatchTransferWithDuplicateIntexIds() public {
+        _openSeries(SERIES_ID_1_DAY, 0);
         vm.prank(bridger);
         nft.issueIntex(user, 10, SERIES_ID_1);
 
         uint256[] memory ids = new uint256[](2);
-        ids[0] = TOKEN_ID_1;
-        ids[1] = TOKEN_ID_1;
+        ids[0] = INTEX_ID_1;
+        ids[1] = INTEX_ID_1;
 
         uint256[] memory amounts = new uint256[](2);
         amounts[0] = 5;
@@ -813,8 +813,8 @@ contract IntexNFT1155Test is Test {
         vm.prank(user);
         nft.safeBatchTransferFrom(user, user2, ids, amounts, "");
 
-        assertEq(nft.balanceOf(user, TOKEN_ID_1), 0, "sender keeps nothing");
-        assertEq(nft.balanceOf(user2, TOKEN_ID_1), 10, "receiver gets both halves");
+        assertEq(nft.balanceOf(user, INTEX_ID_1), 0, "sender keeps nothing");
+        assertEq(nft.balanceOf(user2, INTEX_ID_1), 10, "receiver gets both halves");
     }
 
     // ============================================================
@@ -826,7 +826,7 @@ contract IntexNFT1155Test is Test {
     // ============================================================
 
     function test_Issue_TotalSupplyConsistentMidCallback() public {
-        _createSeries(SERIES_ID_1_DAY, 0);
+        _openSeries(SERIES_ID_1_DAY, 0);
         MidCallbackSnapshotReceiver receiver = new MidCallbackSnapshotReceiver(nft);
 
         vm.prank(bridger);
@@ -840,12 +840,12 @@ contract IntexNFT1155Test is Test {
     }
 
     function test_CrosschainMint_TotalSupplyConsistentMidCallback() public {
-        _createSeries(SERIES_ID_1_DAY, 0);
+        _openSeries(SERIES_ID_1_DAY, 0);
 
         MidCallbackSnapshotReceiver receiver = new MidCallbackSnapshotReceiver(nft);
 
         vm.prank(bridger);
-        nft.crosschainMint(address(receiver), TOKEN_ID_1, 9);
+        nft.crosschainMint(address(receiver), INTEX_ID_1, 9);
 
         assertTrue(receiver.observed(), "callback did not fire");
         assertEq(receiver.observedBalance(), 9, "balance updated mid-callback");

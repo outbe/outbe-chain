@@ -1,6 +1,7 @@
 pub mod elf;
 pub mod software;
 pub mod toolchain;
+pub use outbe_operator_vm_image as vm_image;
 
 use std::collections::BTreeMap;
 use std::fs;

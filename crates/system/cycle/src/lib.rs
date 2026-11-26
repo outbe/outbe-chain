@@ -12,11 +12,12 @@
 //! (`period = 3_600`, `offset = 1`). Its handler derives the active UTC day from
 //! [`outbe_emission::schema::EmissionContract::emission_days`], allocates it and runs its
 //! Metadosis. Until the votes of the day are sealed it answers not ready, and its dependents wait.
-//! A handler revert rolls its atomic work-budget scope back, records the slot, emits
-//! `CycleTaskFailed`, and the walk continues. A revert of ProcessEmissionDay fails the block.
-//! Local work exhaustion rolls back the whole handler, emits `CycleTaskOverBudget`,
+//! A completed handler emits `CycleTaskCompleted`. A handler revert rolls its atomic
+//! work-budget scope back, records the slot, logs the cause, and the walk continues.
+//! A revert of ProcessEmissionDay fails the block.
+//! Local work exhaustion rolls back the whole handler, logs the gas,
 //! and leaves both watermarks and due dependents pending for the next block.
-//! Capacity and dependency deferrals emit `CycleTaskDeferred` without attempting work.
+//! Capacity and dependency deferrals log the reason without attempting work.
 //! Fatal and other handler errors leave the slot unchanged and return
 //! to the caller. CycleTick rejects the block on those errors.
 //! A recorded slot waits for its next scheduled window.

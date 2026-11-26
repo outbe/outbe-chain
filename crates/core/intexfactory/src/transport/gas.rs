@@ -50,7 +50,7 @@ pub fn intex_auction_winners(winners_count: usize) -> u64 {
 }
 
 /// The router keeps 1/64 at its call of the account and the account 1/64 at its call of
-/// TargetRouter, so the limit covers both shares.
+/// IntexAuctionTargetRouter, so the limit covers both shares.
 pub fn ica_gas_limit(message_gas: u64) -> u64 {
     let to_account = message_gas + message_gas.div_ceil(63);
     to_account + to_account.div_ceil(63) + ICA_OVERHEAD

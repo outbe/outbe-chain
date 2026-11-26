@@ -3,7 +3,7 @@ use super::*;
 use outbe_system_common::addresses::{AGENT_REWARD_ADDRESS, ZEROFEE_ADDRESS};
 
 pub(super) fn agent_reward_query_input() -> Vec<u8> {
-    let selector = keccak256(b"getClaimableBalance(address)");
+    let selector = keccak256(b"agentRewardTotal(address)");
     let mut input = Vec::with_capacity(36);
     input.extend_from_slice(&selector[..4]);
     input.extend_from_slice(&[0u8; 32]);

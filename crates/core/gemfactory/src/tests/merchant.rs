@@ -629,11 +629,21 @@ fn issuance_events_carry_the_call_terms_the_position_and_the_group() {
         .iter()
         .filter(|log| log.address == outbe_system_common::addresses::GEM_FACTORY_ADDRESS)
         .filter_map(|log| {
-            crate::precompile::IGemFactory::GemFactoryPositionGemIssued::decode_log(log).ok()
+            crate::precompile::IGemFactory::GemFactoryPositionRedeemed::decode_log(log).ok()
         })
-        .map(|log| (log.data.gemFactoryPositionId, log.data.gemId))
+        .map(|log| {
+            (
+                log.data.gemFactoryPositionId,
+                log.data.owner,
+                log.data.promisLoadMinor,
+                log.data.gemId,
+            )
+        })
         .collect();
-    assert_eq!(linked, vec![(position, expected[0].item.gem_id)]);
+    assert_eq!(
+        linked,
+        vec![(position, ALICE, six_decimal_unit(), expected[0].item.gem_id)]
+    );
 }
 
 fn set_source_price(storage: &StorageHandle<'_>, price: U256) {

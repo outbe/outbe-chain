@@ -366,7 +366,7 @@ fn precompile_pledged_of_returns_ciphertext() {
 fn pledge_and_pledged_burn_emit_no_gratis_event() {
     test_enclave::install();
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-    let minted_events = StorageHandle::enter(&mut provider, |storage| {
+    StorageHandle::enter(&mut provider, |storage| {
         let amount = U256::from(100u64);
         api::mint(
             storage.clone(),
@@ -383,15 +383,11 @@ fn pledge_and_pledged_burn_emit_no_gratis_event() {
         )
         .unwrap();
         api::burn_pledged(&storage, alice(), U256::from(40u64)).unwrap();
-        1
     });
     test_enclave::uninstall();
-    assert_eq!(
-        provider
-            .get_events(outbe_system_common::addresses::GRATIS_ADDRESS)
-            .len(),
-        minted_events
-    );
+    assert!(provider
+        .get_events(outbe_system_common::addresses::GRATIS_ADDRESS)
+        .is_empty());
 }
 
 #[test]

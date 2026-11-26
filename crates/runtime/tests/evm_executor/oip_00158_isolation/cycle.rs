@@ -54,15 +54,8 @@ fn cycle_worker_failure_is_a_success_receipt_but_corrupt_cleanup_rejects_block()
                 let receipt = &executor.receipts()[before];
                 assert!(receipt.success);
                 assert_eq!(receipt.cumulative_gas_used, 0);
-                let failures: Vec<_> = receipt
-                    .logs
-                    .iter()
-                    .filter_map(|log| outbe_cycle::ICycle::CycleWorkerFailed::decode_log(log).ok())
-                    .collect();
-                assert_eq!(failures.len(), 1);
-                assert_eq!(failures[0].address, CYCLE_ADDRESS);
-                assert_eq!(failures[0].data.workerId, 1);
-                assert_eq!(failures[0].data.blockNumber, BLOCK);
+                assert!(receipt.logs.iter().all(|log| log.address != CYCLE_ADDRESS
+                    || outbe_cycle::ICycle::CycleTaskCompleted::decode_log(log).is_ok()));
             }
         }
         if !corrupt {

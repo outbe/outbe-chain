@@ -6,7 +6,7 @@ import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {IERC7786GatewaySource} from "@openzeppelin/contracts/interfaces/draft-IERC7786.sol";
 
 import {DESIS} from "@precompiles/IDesis.sol";
-import {TargetRouter} from "@contracts/target/TargetRouter.sol";
+import {IntexAuctionTargetRouter} from "@contracts/target/IntexAuctionTargetRouter.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {IntexGas} from "@contracts/shared/libs/IntexGas.sol";
@@ -59,7 +59,7 @@ contract GasAttributeTest is CrossChainTest {
     uint32 internal constant OUTBE_CHAIN_ID = 2;
     bytes4 internal constant GAS_SELECTOR = bytes4(keccak256("executionGasLimit(uint256)"));
 
-    TargetRouter internal bnb;
+    IntexAuctionTargetRouter internal bnb;
     GasAttributeBidsStub internal stub;
     address internal admin = address(this);
     address internal outbeIca = makeAddr("outbeIca");

@@ -30,7 +30,7 @@ pub enum IntexFactoryError {
     UnauthorizedProceedsCaller(alloy_primitives::Address),
     #[error("proceeds from a chain {0} that the day did not start on")]
     UnexpectedProceedsSource(u32),
-    #[error("proceeds from a sender other than TargetRouter")]
+    #[error("proceeds from a sender other than IntexAuctionTargetRouter")]
     UnauthorizedProceedsSender(alloy_primitives::Bytes),
     #[error("proceeds data does not decode as (emissionDay, pageIndex)")]
     UndecodableProceedsData,

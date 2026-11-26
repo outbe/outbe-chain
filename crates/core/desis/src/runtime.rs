@@ -120,8 +120,8 @@ pub(crate) fn request_cancel(
     Ok(())
 }
 
-/// The cancel reason of the day's brief at `promis_load_minor`, if the brief cannot hold an auction.
-pub(crate) fn brief_cancel_reason(
+/// The cancel reason of the day's Desis limit at `promis_load_minor`, if it cannot hold an auction.
+pub(crate) fn desis_limit_cancel_reason(
     contract: &DesisContract<'_>,
     emission_day: EmissionDate,
     promis_load_minor: u128,

@@ -105,7 +105,8 @@ fn ensure_next_nonce(op_nonce: u64, next_op_nonce: u64) -> Result<()> {
     Ok(())
 }
 
-/// Apply an owner-authorized balance movement and publish its matching event.
+/// Apply an owner-authorized balance movement. A burn emits `GratisBurned`; a mint emits
+/// nothing here, because the factory that mints emits its own event.
 fn apply_owner_movement(storage: StorageHandle<'_>, mut request: GratisOpRequest) -> Result<()> {
     let gratis = Gratis::new(storage.clone());
     let account = request.account;
@@ -119,18 +120,18 @@ fn apply_owner_movement(storage: StorageHandle<'_>, mut request: GratisOpRequest
     ensure_owner_result(amount, op_nonce, &result)?;
     write_account_blobs(&gratis, account, &result)?;
     crate::state::account(&gratis, account).set_op_nonce(result.next_op_nonce)?;
-    let event = match operation {
-        GratisOp::Mint => SolEvent::encode_log_data(&IGratis::GratisMinedFromPromis {
-            account,
-            encryptedAmountMinor: result.encrypted_event_amount.into(),
-        }),
-        GratisOp::Burn => SolEvent::encode_log_data(&IGratis::GratisBurned {
-            account,
-            encryptedAmountMinor: result.encrypted_event_amount.into(),
-        }),
+    match operation {
+        GratisOp::Mint => {}
+        GratisOp::Burn => storage.emit_event(
+            GRATIS_ADDRESS,
+            SolEvent::encode_log_data(&IGratis::GratisBurned {
+                account,
+                encryptedAmountMinor: result.encrypted_event_amount.into(),
+            }),
+        )?,
         _ => return Err(GratisFatalError::InvalidOwnerMovement.into()),
-    };
-    storage.emit_event(GRATIS_ADDRESS, event)
+    }
+    Ok(())
 }
 
 /// Mint `amount` gratis to `caller` (owner-authorized).

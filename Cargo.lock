@@ -8424,6 +8424,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "outbe-net-up"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "clap",
+ "eyre",
+ "hex",
+ "outbe-genesis-cli",
+ "outbe-operator-node-role",
+ "outbe-operator-remote",
+ "outbe-primitives",
+ "outbe-software-bundle",
+ "rustix",
+ "serde",
+ "serde_json",
+ "tar",
+ "tempfile",
+ "tokio",
+ "toml 0.8.23",
+ "walkdir",
+ "yaml_serde",
+ "zstd 0.14.4",
+]
+
+[[package]]
 name = "outbe-nod"
 version = "0.1.0"
 dependencies = [
@@ -8482,8 +8507,81 @@ dependencies = [
 ]
 
 [[package]]
+name = "outbe-operator-node-role"
+version = "0.1.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-primitives",
+ "alloy-sol-types",
+ "eyre",
+ "hex",
+ "indicatif",
+ "k256 0.13.4",
+ "outbe-operator-systemd",
+ "outbe-snapshot",
+ "reqwest 0.12.28",
+ "rustix",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tar",
+ "tempfile",
+ "tokio",
+ "toml 0.8.23",
+ "walkdir",
+ "yaml_serde",
+ "zeroize",
+ "zstd 0.14.4",
+]
+
+[[package]]
+name = "outbe-operator-remote"
+version = "0.1.0"
+dependencies = [
+ "eyre",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "outbe-operator-systemd"
 version = "0.1.0"
+
+[[package]]
+name = "outbe-operator-vm"
+version = "0.1.0"
+dependencies = [
+ "eyre",
+ "hex",
+ "outbe-software-bundle",
+ "rustix",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "walkdir",
+]
+
+[[package]]
+name = "outbe-operator-vm-image"
+version = "0.1.0"
+dependencies = [
+ "eyre",
+ "hex",
+ "outbe-operator-systemd",
+ "outbe-software-bundle",
+ "rustix",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tar",
+ "tempfile",
+ "walkdir",
+ "zstd 0.14.4",
+]
 
 [[package]]
 name = "outbe-oracle"
@@ -9171,30 +9269,20 @@ name = "outbe-up"
 version = "0.1.0"
 dependencies = [
  "alloy-primitives",
- "alloy-sol-types",
  "clap",
  "eyre",
- "hex",
- "indicatif",
- "k256 0.13.4",
- "outbe-genesis-cli",
- "outbe-operator-systemd",
+ "outbe-operator-node-role",
+ "outbe-operator-vm",
+ "outbe-operator-vm-image",
  "outbe-primitives",
- "outbe-snapshot",
  "outbe-software-bundle",
  "reqwest 0.12.28",
  "rustix",
  "serde",
  "serde_json",
- "sha2 0.10.9",
- "tar",
  "tempfile",
  "tokio",
- "toml 0.8.23",
- "walkdir",
- "yaml_serde",
- "zeroize",
- "zstd 0.14.4",
+ "url",
 ]
 
 [[package]]
@@ -9260,6 +9348,16 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "outbe-vm-agent"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "eyre",
+ "outbe-operator-node-role",
+ "tokio",
 ]
 
 [[package]]
@@ -16978,6 +17076,7 @@ dependencies = [
  "hex",
  "outbe-genesis-cli",
  "outbe-operator-systemd",
+ "outbe-operator-vm-image",
  "outbe-software-bundle",
  "serde",
  "serde_json",

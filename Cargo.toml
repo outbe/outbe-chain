@@ -4,6 +4,10 @@ members = [
     "crates/runtime",
     "crates/operator/systemd",
     "crates/operator/software-bundle",
+    "crates/operator/vm-image",
+    "crates/operator/remote",
+    "crates/operator/node-role",
+    "crates/operator/vm",
     # blockchain
     "crates/blockchain/macros",
     "crates/blockchain/primitives",
@@ -63,6 +67,8 @@ members = [
     "crates/core/common",
     # binaries
     "bin/outbe-up",
+    "bin/outbe-net-up",
+    "bin/outbe-vm-agent",
     "bin/outbe-chain",
     "bin/outbe-genesis-cli",
     "bin/outbe-keygen",
@@ -86,6 +92,10 @@ default-members = [
     "crates/runtime",
     "crates/operator/systemd",
     "crates/operator/software-bundle",
+    "crates/operator/vm-image",
+    "crates/operator/remote",
+    "crates/operator/node-role",
+    "crates/operator/vm",
     # blockchain
     "crates/blockchain/macros",
     "crates/blockchain/primitives",
@@ -145,6 +155,8 @@ default-members = [
     "crates/core/common",
     # binaries
     "bin/outbe-up",
+    "bin/outbe-net-up",
+    "bin/outbe-vm-agent",
     "bin/outbe-chain",
     "bin/outbe-genesis-cli",
     "bin/outbe-keygen",
@@ -190,6 +202,10 @@ outbe-runtime = { path = "crates/runtime" }
 # Internal - operator tooling
 outbe-operator-systemd = { path = "crates/operator/systemd" }
 outbe-software-bundle = { path = "crates/operator/software-bundle" }
+outbe-operator-vm-image = { path = "crates/operator/vm-image" }
+outbe-operator-remote = { path = "crates/operator/remote" }
+outbe-operator-node-role = { path = "crates/operator/node-role" }
+outbe-operator-vm = { path = "crates/operator/vm" }
 # Internal - blockchain
 outbe-macros = { path = "crates/blockchain/macros" }
 outbe-primitives = { path = "crates/blockchain/primitives" }

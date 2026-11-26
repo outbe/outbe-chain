@@ -144,7 +144,7 @@ pub fn gratis_op_attestation_preimage(
     )
 }
 
-/// Personal-sign message for `outbe_deriveGratisKeys`.
+/// Personal-sign message for `outbe_deriveKeys` with the Gratis ledger.
 #[must_use]
 pub fn derive_gratis_keys_message(account: Address, ephemeral_pubkey: B256) -> Vec<u8> {
     derive_account_keys_message(Ledger::Gratis, account, ephemeral_pubkey)
