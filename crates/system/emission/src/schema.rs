@@ -14,20 +14,19 @@ pub mod emission_day_state {
 pub mod metadosis_state {
     pub const PENDING: u8 = 0;
     pub const COMPLETED: u8 = 1;
-    pub const CANCELLED: u8 = 2;
+    pub const CANCELED: u8 = 2;
     pub const FAILED: u8 = 3;
 }
 
-/// Canonical 6-slot packed `EmissionDay` record stored at `EMISSION_ADDRESS` (`0x...100D`).
+/// Canonical 5-slot packed `EmissionDay` record stored at `EMISSION_ADDRESS` (`0x...100D`).
 ///
-/// Greedy packing layout across 6 EVM storage slots:
+/// Greedy packing layout across 5 EVM storage slots:
 /// - **Slot 0:** `wwd` (`0..4`), `metadosis_start` (`4..12`), `state` (`12..13`),
 ///   `metadosis_state` (`13..14`), `emission_limit` (`14..30`).
-/// - **Slot 1:** `metadosis_limit` (`0..16`), `lysis_limit` (`16..32`).
-/// - **Slot 2:** `desis_limit` (`0..16`), `validators` (`16..32`).
-/// - **Slot 3:** `waa` (`0..16`), `sra` (`16..32`).
-/// - **Slot 4:** `cca` (`0..16`), `nods` (`16..32`).
-/// - **Slot 5:** `promis_limit` (`0..16`).
+/// - **Slot 1:** `metadosis_limit` (`0..16`), `desis_limit` (`16..32`).
+/// - **Slot 2:** `validators` (`0..16`), `waa` (`16..32`).
+/// - **Slot 3:** `sra` (`0..16`), `cca` (`16..32`).
+/// - **Slot 4:** `nods` (`0..16`), `promis_limit` (`16..32`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[storage_record(packed, exists_field = metadosis_start)]
 pub struct EmissionDay {
@@ -55,27 +54,24 @@ pub struct EmissionDay {
     pub metadosis_limit: u128,
 
     #[attribute(order = 6, default = 0)]
-    pub lysis_limit: u128,
-
-    #[attribute(order = 7, default = 0)]
     pub desis_limit: u128,
 
-    #[attribute(order = 8, default = 0)]
+    #[attribute(order = 7, default = 0)]
     pub validators: u128,
 
-    #[attribute(order = 9, default = 0)]
+    #[attribute(order = 8, default = 0)]
     pub waa: u128,
 
-    #[attribute(order = 10, default = 0)]
+    #[attribute(order = 9, default = 0)]
     pub sra: u128,
 
-    #[attribute(order = 11, default = 0)]
+    #[attribute(order = 10, default = 0)]
     pub cca: u128,
 
-    #[attribute(order = 12, default = 0)]
+    #[attribute(order = 11, default = 0)]
     pub nods: u128,
 
-    #[attribute(order = 13, default = 0)]
+    #[attribute(order = 12, default = 0)]
     pub promis_limit: u128,
 }
 
@@ -91,7 +87,6 @@ impl EmissionDay {
             metadosis_state: metadosis_state::PENDING,
             emission_limit: 0,
             metadosis_limit: 0,
-            lysis_limit: 0,
             desis_limit: 0,
             validators: 0,
             waa: 0,
@@ -119,7 +114,6 @@ impl EmissionDay {
             metadosis_state,
             emission_limit: limit,
             metadosis_limit: limit,
-            lysis_limit: 0,
             desis_limit: 0,
             validators: 0,
             waa: 0,
@@ -153,6 +147,10 @@ impl EmissionDay {
 pub struct EmissionContract {
     #[attribute(order = 0)]
     pub emission_days: outbe_primitives::storage::dsl::Map<u32, EmissionDay>,
+
+    /// The Nod loads that the Metadosis limits of past days did not cover, in minor units.
+    #[attribute(order = 1)]
+    pub excess_nod_loads_minor: outbe_primitives::storage::dsl::Value<U256>,
 }
 
 #[cfg(test)]
@@ -163,15 +161,15 @@ mod tests {
     };
 
     #[test]
-    fn emission_days_map_base_is_slot_zero_and_occupies_six_slots() {
+    fn emission_days_map_base_is_slot_zero_and_occupies_five_slots() {
         let mut provider = HashMapStorageProvider::new(1);
         let contract = EmissionContract::new(StorageHandle::new(&mut provider));
         assert_eq!(contract.emission_days.base_slot(), U256::from(0));
-        assert_eq!(EmissionDay::SLOTS, 6);
+        assert_eq!(EmissionDay::SLOTS, 5);
     }
 
     #[test]
-    fn emission_day_six_slot_packed_layout_round_trips_and_supports_empty_days() {
+    fn emission_day_five_slot_packed_layout_round_trips_and_supports_empty_days() {
         let mut provider = HashMapStorageProvider::new(1);
         let storage = StorageHandle::new(&mut provider);
         let contract = EmissionContract::new(storage.clone());
@@ -197,7 +195,6 @@ mod tests {
             metadosis_state: metadosis_state::COMPLETED,
             emission_limit: 1000,
             metadosis_limit: 840,
-            lysis_limit: 300,
             desis_limit: 540,
             validators: 40,
             waa: 40,
@@ -238,7 +235,6 @@ mod tests {
         assert_eq!(loaded.metadosis_state, populated.metadosis_state);
         assert_eq!(loaded.emission_limit, populated.emission_limit);
         assert_eq!(loaded.metadosis_limit, populated.metadosis_limit);
-        assert_eq!(loaded.lysis_limit, populated.lysis_limit);
         assert_eq!(loaded.desis_limit, populated.desis_limit);
         assert_eq!(loaded.validators, populated.validators);
         assert_eq!(loaded.waa, populated.waa);

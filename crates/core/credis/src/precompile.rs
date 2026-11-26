@@ -1,5 +1,5 @@
 use alloy_primitives::{Address, Bytes, U256};
-use alloy_sol_types::{sol, SolInterface};
+use alloy_sol_types::SolInterface;
 
 use outbe_core_common::erc::{
     ERC165_INTERFACE_ID, ERC4906_INTERFACE_ID, ERC721_INTERFACE_ID, ERC721_METADATA_INTERFACE_ID,
@@ -23,7 +23,11 @@ const SUPPORTED_INTERFACES: [[u8; 4]; 4] = [
     ERC4906_INTERFACE_ID,
 ];
 
-sol!("../../../contracts/precompiles/src/ICredis.sol");
+#[allow(clippy::too_many_arguments)]
+mod abi {
+    alloy_sol_types::sol!("../../../contracts/precompiles/src/ICredis.sol");
+}
+pub use abi::ICredis;
 
 pub fn dispatch(
     storage: outbe_primitives::storage::StorageHandle,
@@ -83,7 +87,7 @@ pub fn dispatch(
     })
 }
 
-fn abi_credis(p: &crate::schema::Credis, now: u64) -> Result<ICredis::CredisData> {
+fn abi_credis(p: &crate::schema::CredisView, now: u64) -> Result<ICredis::CredisData> {
     let outcome = crate::runtime::outcome(p, now)?;
     Ok(ICredis::CredisData {
         credisId: p.credis_id,
@@ -92,7 +96,6 @@ fn abi_credis(p: &crate::schema::Credis, now: u64) -> Result<ICredis::CredisData
         asset: p.asset,
         issuanceCurrency: p.issuance_currency,
         referenceCurrency: p.reference_currency,
-        source: p.source,
         amountMinor: p.amount_minor,
         outstandingAmountMinor: outcome.outstanding_amount_minor,
         gratisMinor: p.gratis_minor,
@@ -105,9 +108,9 @@ fn abi_credis(p: &crate::schema::Credis, now: u64) -> Result<ICredis::CredisData
         settledFeeMinor: p.settled_fee_minor,
         call: ICredis::CallTerms {
             callPriceMinor: p.call_price_minor,
-            callWindow: p.call_window_seconds,
-            callThreshold: p.call_threshold_seconds,
-            callNoticePeriod: p.call_notice_period_seconds,
+            callWindow: p.terms.call_window_seconds,
+            callThreshold: p.terms.call_threshold_seconds,
+            callNoticePeriod: p.terms.call_notice_period_seconds,
             calledAt: p.called_at,
             settlementDeadline: if p.called_at == 0 {
                 0

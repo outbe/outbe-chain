@@ -11,7 +11,7 @@ import {MockERC20} from "@test-mocks/MockERC20.sol";
 import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 
 /// @dev Commit-bond custody: lock/release under AUCTION_ROLE, the escrow-local
-///      abandoned-bond safety valve, and the shared-lockId accounting with bid escrow.
+///      bid bond escrow timeout, and the shared-lockId accounting with bid escrow.
 contract EscrowAdapterBondTest is Test {
     EscrowAdapter escrow;
     MockTheCompact compact;
@@ -132,36 +132,36 @@ contract EscrowAdapterBondTest is Test {
         assertEq(escrow.getIntexAuctionBidBond(emissionDay1, bidder1).amount, BOND_AMOUNT, "re-locked");
     }
 
-    // --- unlockAbandonedIntexAuctionBidBond ---
+    // --- unlockIntexAuctionBidBondAfterTimeout ---
 
-    function test_ClaimAbandonedCommitBond_RevertsBeforeWindow() public {
+    function test_UnlockBidBondAfterTimeout_RevertsBeforeWindow() public {
         _lockBond();
-        uint32 unlockableAt = uint32(block.timestamp) + escrow.BID_BOND_ABANDON_DELAY();
+        uint32 unlockableAt = uint32(block.timestamp) + escrow.BID_BOND_ESCROW_TIMEOUT();
 
         vm.warp(unlockableAt - 1);
         vm.prank(outsider);
         vm.expectRevert(
             abi.encodeWithSelector(
-                IEscrowAdapter.IntexAuctionBidBondNotYetAbandoned.selector, unlockableAt, unlockableAt - 1
+                IEscrowAdapter.IntexAuctionBidBondEscrowTimeoutNotOver.selector, unlockableAt, unlockableAt - 1
             )
         );
-        escrow.unlockAbandonedIntexAuctionBidBond(emissionDay1, bidder1);
+        escrow.unlockIntexAuctionBidBondAfterTimeout(emissionDay1, bidder1);
     }
 
-    function test_ClaimAbandonedCommitBond_RevertsWhenMissing() public {
+    function test_UnlockBidBondAfterTimeout_RevertsWhenMissing() public {
         vm.expectRevert(IEscrowAdapter.IntexAuctionBidBondNotFound.selector);
-        escrow.unlockAbandonedIntexAuctionBidBond(emissionDay1, bidder1);
+        escrow.unlockIntexAuctionBidBondAfterTimeout(emissionDay1, bidder1);
     }
 
     /// @dev Permissionless and pays the stored bidder, never the caller.
-    function test_ClaimAbandonedCommitBond_PaysBidderNotCaller() public {
+    function test_UnlockBidBondAfterTimeout_PaysBidderNotCaller() public {
         _lockBond();
         uint256 bidderBefore = paymentToken.balanceOf(bidder1);
         uint256 outsiderBefore = paymentToken.balanceOf(outsider);
 
-        vm.warp(block.timestamp + escrow.BID_BOND_ABANDON_DELAY());
+        vm.warp(block.timestamp + escrow.BID_BOND_ESCROW_TIMEOUT());
         vm.prank(outsider);
-        escrow.unlockAbandonedIntexAuctionBidBond(emissionDay1, bidder1);
+        escrow.unlockIntexAuctionBidBondAfterTimeout(emissionDay1, bidder1);
 
         assertEq(paymentToken.balanceOf(bidder1), bidderBefore + BOND_AMOUNT, "bidder repaid");
         assertEq(paymentToken.balanceOf(outsider), outsiderBefore, "caller gets nothing");
@@ -169,7 +169,7 @@ contract EscrowAdapterBondTest is Test {
 
         // Terminal: a second claim has nothing to pay.
         vm.expectRevert(IEscrowAdapter.IntexAuctionBidBondNotFound.selector);
-        escrow.unlockAbandonedIntexAuctionBidBond(emissionDay1, bidder1);
+        escrow.unlockIntexAuctionBidBondAfterTimeout(emissionDay1, bidder1);
     }
 
     /// @dev The valve is auction-independent by design: a bond locked before the auction
@@ -183,9 +183,9 @@ contract EscrowAdapterBondTest is Test {
         vm.expectRevert(IEscrowAdapter.LocksOutstanding.selector);
         escrow.setDependencies(newAuction, address(compact), address(paymentToken));
 
-        vm.warp(block.timestamp + escrow.BID_BOND_ABANDON_DELAY());
+        vm.warp(block.timestamp + escrow.BID_BOND_ESCROW_TIMEOUT());
         vm.prank(outsider);
-        escrow.unlockAbandonedIntexAuctionBidBond(emissionDay1, bidder1);
+        escrow.unlockIntexAuctionBidBondAfterTimeout(emissionDay1, bidder1);
         assertEq(paymentToken.balanceOf(bidder1), 1000e18, "full principal recovered");
 
         vm.prank(admin);

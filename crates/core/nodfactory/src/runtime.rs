@@ -23,10 +23,12 @@ use crate::precompile::INodFactory;
 use outbe_vaultrouter::settlement::{self, Currencies, SettlementCost, SettlementPayment};
 
 /// Issues an authenticated encrypted Nod through the block-scoped body lifecycle.
+#[cfg(any(test, feature = "test-utils"))]
 pub fn issue_nod(storage: &StorageHandle<'_>, encrypted: &EncryptedNodV1) -> Result<U256> {
     issue_nod_at(storage, encrypted, storage.now_secs()?)
 }
 
+#[cfg(any(test, feature = "test-utils"))]
 pub(crate) fn issue_nod_at(
     storage: &StorageHandle<'_>,
     encrypted: &EncryptedNodV1,
@@ -278,7 +280,7 @@ pub fn mine_gratis(storage: &StorageHandle<'_>, request: MineGratisRequest) -> R
     storage.clone().with_checkpoint(|| {
         nod_api::remove_nod(storage, item, group)?;
         let nod = outbe_nod::NodContract::new(storage.clone());
-        if storage.now_secs()? >= crate::called::offering_end_of(&nod, start_day)? {
+        if storage.now_secs()? >= crate::call::offering_end_of(&nod, start_day)? {
             nod_api::close_empty_group(storage, group_key)?;
         }
         // The Nod owner authorizes the mint, including when a relayer submits it.

@@ -584,7 +584,7 @@ fn advance_finalized_view(
     outbe_tee::authority::note_finalized_authority_revision(block_number);
 }
 
-fn build_cn_record(
+pub(crate) fn build_cn_record(
     witness: VerifiedChildParentWitness,
     digest: Digest,
 ) -> CertifiedParentProofRecord {

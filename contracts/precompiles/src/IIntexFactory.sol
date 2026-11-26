@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.30;
 
+/// @dev The IntexFactory precompile. Matches `INTEX_FACTORY_ADDRESS` in crates/system/common/src/addresses.rs.
+address constant INTEX_FACTORY = 0x0000000000000000000000000000000000001015;
+
 /// @title IIntexFactory
 /// @notice User-facing call surface for the IntexFactory runtime precompile:
 ///         settlement, Promis mining, and auction proceeds intake. Issuance is
@@ -17,16 +20,21 @@ interface IIntexFactory {
     error UnitsExceedBalance();
     error InsufficientSettled();
     error InsufficientProofOfWork();
-    error NotOriginRouter();
+    error UnauthorizedProceedsCaller(address caller);
+    error UnexpectedProceedsSource(uint32 srcChainId);
+    error UnauthorizedProceedsSender(bytes from);
+    error UndecodableProceedsData();
+    error ProceedsTransferRefused();
+    error ChainIdExceedsU32();
+    error InvalidWireMessage(uint8 msgType);
     error ForfeitedPromisLoadOverflow();
-    error IssuanceChunkCountExceedsU16();
+    error IntexSeriesPageCountExceedsU16();
     error PriceExceedsWireType();
     error MarkedUpPriceOverflow();
     error OwnerUnitsExceedU32();
     error SettledUnitsExceedU32();
     error NftBalanceExceedsU32();
     error NftBalanceOfUndecodable();
-    error RouterAnsweredNoLegs();
     error PromisOverflow();
     error MiningSequenceOverflow();
     error MinedUnitsExceedSeries();
@@ -85,11 +93,19 @@ interface IIntexFactory {
     /// @notice Leading zero bytes `minePromis` requires of the work hash.
     function powDifficulty() external view returns (uint8);
 
-    /// @notice Burn auction proceeds (native COEN, sent as msg.value) and credit them to the
-    ///         Promis limit pool in whole protocol units. Callable only by the OriginRouter.
-    /// @param emissionDay Emission day (yyyymmdd) the proceeds belong to.
-    /// @param srcChainId Target chain the proceeds arrived from.
-    function burnIntexAuctionProceeds(uint32 emissionDay, uint32 srcChainId) external payable;
+    /// @notice The ERC20Router of WCOEN delivers the proceeds of one page of winners from
+    ///         IntexAuctionTargetRouter of a chain of the day, with `abi.encode(emissionDay, pageIndex)` in
+    ///         `extraData`. The factory burns the WCOEN into the Promis Limit with code 43.
+    function onCrosschainTokensReceived(
+        uint32 srcChainId,
+        bytes calldata from,
+        uint256 amount,
+        bytes calldata extraData
+    ) external returns (bytes4);
+
+    /// @notice IntexAuctionTargetRouter on Outbe hands over the proceeds of one page of winners: the factory
+    ///         takes `amount` WCOEN that the router approved and burns it with code 43.
+    function receiveLocalProceeds(uint32 emissionDay, uint32 pageIndex, uint256 amount) external;
 
     /// @notice One owner's units of a series. `issuedUnits` and `settledUnits` are the
     ///         owner's current balances on this, the origin chain, with Issued units counted
@@ -110,7 +126,7 @@ interface IIntexFactory {
 
     /// @notice How close a right is to its group's call. The window ends at the last
     ///         finalized UTC day. Prices are COEN in `referenceCurrency` at scale 1e6.
-    struct CallProgress {
+    struct CallState {
         uint32 callWindowDays;
         uint32 callThresholdDays;
         /// Window days since the group's start, priced or not.
@@ -128,7 +144,23 @@ interface IIntexFactory {
 
     /// @notice Read the call progress of `intexId`. Reverts `SeriesNotFound`, or
     ///         `SeriesNotIssued` once the series is Called or Forfeited.
-    function getCallProgress(uint256 intexId) external view returns (CallProgress memory);
+    function callState(uint256 intexId) external view returns (CallState memory);
+
+    /// @notice The target chains that are not Off, with their modes: 1 Series, 2 Auctions.
+    function targetChains() external view returns (uint32[] memory chainIds, uint8[] memory modes);
+
+    /// @notice The chains in Auctions that `emissionDay` started on; empty before its start.
+    function targetsOf(uint32 emissionDay) external view returns (uint32[] memory);
+
+    /// @notice Sends the due messages of the outbox to the target chains. Anyone may call it.
+    function flush() external;
+
+    /// @notice The first message of the outbox of `chainId`: its type and day, the messages
+    ///         that wait for that chain, the failed tries of the first one and its next try.
+    function outboxHead(uint32 chainId)
+        external
+        view
+        returns (uint8 msgType, uint32 emissionDay, uint32 pending, uint32 failures, uint64 nextTry);
 
     /// @notice The series was force-called. It settles until `settlementDeadline`, inclusive.
     event IntexSeriesCalled(
@@ -163,13 +195,28 @@ interface IIntexFactory {
         uint256 forfeitedAmountMinor
     );
 
-    /// @notice All 8 tries of the series' call notice to `dstChainId` failed, so the factory sends
-    ///         it to that chain no more. A kept message stays in the origin router for anyone to
-    ///         resend. `errorData` is the revert data of the last try. `dstChainId` is 0 when
-    ///         the router refused the whole message and could not name the chains of the day.
-    event IntexSeriesCallNoticeSendFailed(bytes14 indexed seriesId, uint32 indexed dstChainId, bytes errorData);
+    /// @notice `sendId` is the Hyperlane message id that CrosschainBridge returned.
+    event IntexSeriesSent(
+        bytes32 indexed sendId,
+        uint32 indexed emissionDay,
+        uint32 indexed dstChainId,
+        uint32 pageIndex,
+        uint32 totalPages,
+        uint32 seriesCount
+    );
+    event IntexSeriesCallNoticeSent(bytes32 indexed sendId, bytes14 indexed seriesId, uint32 indexed dstChainId);
+
+    /// @notice A try to send the message failed; `failures` counts the failed tries in a row.
+    event IntexSeriesSendFailed(
+        uint32 indexed emissionDay, uint32 indexed dstChainId, uint32 pageIndex, uint32 failures, bytes errorData
+    );
+    event IntexSeriesCallNoticeSendFailed(
+        bytes14 indexed seriesId, uint32 indexed dstChainId, uint32 failures, bytes errorData
+    );
 
     /// @notice `amountMinor` native COEN (18 decimals) of `emissionDay`'s auction proceeds from
     ///         `srcChainId` was burned.
-    event IntexAuctionProceedsBurned(uint32 indexed emissionDay, uint32 indexed srcChainId, uint256 amountMinor);
+    event IntexAuctionProceedsBurned(
+        uint32 indexed emissionDay, uint32 indexed srcChainId, uint32 pageIndex, uint256 amountMinor
+    );
 }

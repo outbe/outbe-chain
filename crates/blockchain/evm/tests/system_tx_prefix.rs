@@ -111,6 +111,8 @@ fn canonical_inputs() -> Vec<SystemTx> {
         SystemTx::BeginBlock { step_index: 6 },
         SystemTx::BeginBlock { step_index: 7 },
         SystemTx::BeginBlock { step_index: 8 },
+        SystemTx::BeginBlock { step_index: 9 },
+        SystemTx::BeginBlock { step_index: 10 },
     ]
 }
 
@@ -332,6 +334,8 @@ fn system_prefix_aggregate_visible_gas_must_fit_block_cap() {
         SystemTx::BeginBlock { step_index: 6 },
         SystemTx::BeginBlock { step_index: 7 },
         SystemTx::BeginBlock { step_index: 8 },
+        SystemTx::BeginBlock { step_index: 9 },
+        SystemTx::BeginBlock { step_index: 10 },
     ];
     let txs: Vec<TransactionSigned> = inputs
         .into_iter()

@@ -175,8 +175,8 @@ impl World {
         self.ok(
             RELAYER,
             INTEX_NFT1155_ADDRESS,
-            IIntexNFT1155::createSeriesCall {
-                params: IIntexNFT1155::CreateSeriesParams {
+            IIntexNFT1155::openSeriesCall {
+                params: IIntexNFT1155::OpenSeriesParams {
                     seriesId: FixedBytes(SERIES),
                     emissionDay: 20_241_220,
                     issuedAt: TIMESTAMP,
@@ -305,7 +305,7 @@ impl World {
         let settled = self
             .view(
                 INTEX_ADDRESS,
-                IIntex::getIntexSeriesCall {
+                IIntex::getIntexCall {
                     intexId: issued_id(),
                 },
             )

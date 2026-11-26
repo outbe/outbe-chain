@@ -11,7 +11,7 @@ use outbe_evm::precompiles::{
 use outbe_runtime::precompiles::outbe_exact_precompile_addresses;
 use outbe_system_common::addresses::*;
 
-fn expected_exact_addresses() -> [Address; 42] {
+fn expected_exact_addresses() -> [Address; 41] {
     [
         GRATIS_ADDRESS,
         GRATIS_FACTORY_ADDRESS,
@@ -36,7 +36,6 @@ fn expected_exact_addresses() -> [Address; 42] {
         AGENT_REWARD_ADDRESS,
         EMISSION_ADDRESS,
         METADOSIS_ADDRESS,
-        FIDELITY_ADDRESS,
         PROMIS_LIMIT_ADDRESS,
         ORACLE_ADDRESS,
         ZEROFEE_ADDRESS,

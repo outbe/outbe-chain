@@ -276,7 +276,7 @@ impl World {
     /// Stamps the group's call directly. `tests::nod_lifecycle` covers the
     /// scan that decides *when* to stamp. What matters here is the gate
     /// `settle_nod` applies once it is stamped.
-    fn mark_called(&mut self, nod_id: U256, at: u64) {
+    fn call_series(&mut self, nod_id: U256, at: u64) {
         self.enter(|storage| {
             let item = nod_api::get_item(&storage, nod_id).unwrap().unwrap();
             let nod = NodContract::new(storage);

@@ -29,9 +29,6 @@ use outbe_primitives::zero_fee_types::{
 };
 use outbe_radicle::protocol_state::{RadicleProtocolError, RadicleProtocolState};
 use outbe_rpc::state_reader::OutbeRpcStateReader;
-use outbe_rpc::{
-    EpochInfo, ParticipationInfo, SlashConfig, SlashInfo, ValidatorDetailInfo, ValidatorInfo,
-};
 use outbe_tee::dcap_protocol::DcapOnboardingContextV1;
 use outbe_tee::tee_attestation_activation::TeeAttestationChainSpecStateV1;
 use outbe_txpool::TxPoolZeroFeePolicy;
@@ -424,117 +421,8 @@ impl TeeSessionStateReader for OutbeRuntime {
 }
 
 impl OutbeRpcStateReader for OutbeRuntime {
-    fn validators(&self, storage: StorageHandle<'_>) -> Result<Vec<ValidatorInfo>> {
-        let vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-        let records = vs.get_active_validators()?;
-        let staking = outbe_staking::contract::Staking::new(storage);
-        let mut result = Vec::with_capacity(records.len());
-        for record in &records {
-            let stake = staking
-                .get_stake(record.validator_address)
-                .unwrap_or(U256::ZERO);
-            result.push(ValidatorInfo {
-                address: record.validator_address,
-                consensus_pubkey: hex::encode(record.consensus_pubkey),
-                status: record.status,
-                stake,
-            });
-        }
-        Ok(result)
-    }
-
-    fn validator(
-        &self,
-        storage: StorageHandle<'_>,
-        address: Address,
-    ) -> Result<Option<ValidatorDetailInfo>> {
-        let vs = outbe_validatorset::contract::ValidatorSet::new(storage);
-        let state = vs.validator_state(address)?;
-        if !state.is_registered() {
-            return Ok(None);
-        }
-        let consensus_pubkey = state
-            .consensus_pubkey()
-            .ok_or(outbe_rpc::RpcValidatorStateError::MissingConsensusPubkey)?;
-        let history = state
-            .history()
-            .ok_or(outbe_rpc::RpcValidatorStateError::MissingHistory)?;
-        Ok(Some(ValidatorDetailInfo {
-            address,
-            consensus_pubkey: hex::encode(consensus_pubkey),
-            status: state
-                .lifecycle()
-                .stored_status()
-                .ok_or(outbe_rpc::RpcValidatorStateError::MissingPersistedStatus)?,
-            stake: state.bonded_stake(),
-            slash_count: history.slash_count(),
-            missed_blocks: history.missed_blocks(),
-            missed_votes: history.missed_votes(),
-            blocks_proposed: history.blocks_proposed(),
-            joined_at_height: history.joined_at_height(),
-            deactivated_at_height: history.last_deactivated_at_height().unwrap_or(0),
-            unbonding_end: state.unbonding_end_hint().unwrap_or(0),
-            has_bls_share: state.has_bls_share(),
-        }))
-    }
-
-    fn epoch(&self, storage: StorageHandle<'_>) -> Result<EpochInfo> {
-        let vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-        let epoch = vs.epoch_snapshot()?;
-        let active_count = vs.active_validator_count()?;
-        let total_staked = outbe_staking::contract::Staking::new(storage).get_total_staked()?;
-        Ok(EpochInfo {
-            epoch_number: epoch.number,
-            epoch_start_timestamp: epoch.start_timestamp,
-            epoch_start_block: epoch.start_block,
-            epoch_length_blocks: epoch.length_blocks,
-            active_validator_count: active_count,
-            total_staked,
-        })
-    }
-
     fn epoch_snapshot(&self, storage: StorageHandle<'_>) -> Result<EpochSnapshot> {
         outbe_validatorset::contract::ValidatorSet::new(storage).epoch_snapshot()
-    }
-
-    fn stake(&self, storage: StorageHandle<'_>, address: Address) -> Result<U256> {
-        outbe_staking::contract::Staking::new(storage).get_stake(address)
-    }
-
-    fn slash_info(&self, storage: StorageHandle<'_>, address: Address) -> Result<SlashInfo> {
-        let indicator = outbe_slashindicator::contract::SlashIndicator::new(storage);
-        Ok(SlashInfo {
-            proposer_miss_count: indicator.proposer_miss_count.read(&address)?,
-            voter_miss_count: indicator.voter_miss_count.read(&address)?,
-            felony_count: indicator.felony_count.read(&address)?,
-        })
-    }
-
-    fn slash_config(&self, storage: StorageHandle<'_>) -> Result<SlashConfig> {
-        let indicator = outbe_slashindicator::contract::SlashIndicator::new(storage);
-        Ok(SlashConfig {
-            proposer_misdemeanor_threshold: indicator.proposer_misdemeanor_threshold()?,
-            proposer_felony_threshold: indicator.proposer_felony_threshold()?,
-            voter_misdemeanor_threshold: indicator.voter_misdemeanor_threshold()?,
-            voter_felony_threshold: indicator.voter_felony_threshold()?,
-            slash_amount_percent: indicator.slash_amount_percent()?,
-            evidence_reward_percent: indicator.evidence_reward_percent()?,
-        })
-    }
-
-    fn participation(
-        &self,
-        storage: StorageHandle<'_>,
-        address: Address,
-    ) -> Result<ParticipationInfo> {
-        let participation =
-            outbe_validatorset::contract::ValidatorSet::new(storage).participation(address)?;
-        Ok(ParticipationInfo {
-            address,
-            blocks_proposed: participation.blocks_proposed,
-            missed_blocks: participation.missed_blocks,
-            missed_votes: participation.missed_votes,
-        })
     }
 
     fn live_upgrade_candidate(
@@ -620,7 +508,7 @@ impl EngineProtocolState for OutbeRuntime {
     }
 
     fn network_encryption_epoch(&self, storage: StorageHandle<'_>) -> Result<u64> {
-        outbe_teeregistry::TeeRegistry::new(storage).tribute_offer_epoch()
+        outbe_teeregistry::TeeRegistry::new(storage).offer_epoch()
     }
 
     fn tee_recipient(

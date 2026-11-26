@@ -16,8 +16,6 @@ pub mod pow;
 pub mod profile;
 pub mod series_id;
 pub mod settlement;
-pub mod tribute_day_encryption;
-pub mod tribute_encryption;
 pub mod wwd_entity_id;
 
 #[doc(hidden)]

@@ -277,7 +277,7 @@ fn deterministic_onboarding_is_exact_and_rejects_nonce_recipient_or_context_chan
         enclave_id: B256::repeat_byte(0x25),
         binding_id: B256::repeat_byte(0x26),
         policy_hash: B256::repeat_byte(0x27),
-        recipient_x25519: recipient.tribute_offer_public(),
+        recipient_x25519: recipient.recipient_public(),
         network_encryption_public: group.public(),
         key_epoch: 3,
         network_encryption_epoch: 4,
@@ -331,7 +331,7 @@ fn stage0_onboarding_and_v2_sealing_known_answers() {
         public: crypto_ops::x25519_public(&[0x11; 32]),
         group_sig: Zeroizing::new(vec![0x44; 48]),
         key_epoch: 1,
-        tribute_offer_epoch: 2,
+        offer_epoch: 2,
     };
     let context = DcapOnboardingContextV1 {
         chain_id: [0x11; 32],
@@ -369,17 +369,17 @@ fn stage0_onboarding_and_v2_sealing_known_answers() {
 }
 
 #[test]
-fn offer_handle_opens_frozen_tribute_offer_and_rejects_wrong_domain() {
+fn offer_handle_opens_frozen_offer_and_rejects_wrong_domain() {
     let key = OfferKeyHandle::for_test([0x22; 32]);
-    let salt = b"outbe/tribute/offer-salt/v1\0\0\0\0\0";
-    let info = b"tribute-factory-encryption";
+    let salt = b"outbe/offer/salt/v1\0\0\0\0\0\0\0\0\0\0\0\0\0";
+    let info = b"outbe/offer/encryption/v1";
     let peer = hex!("7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b14");
-    // Independent Node.js crypto vector for X25519, HKDF-SHA256 and ChaCha20-Poly1305.
-    let ciphertext = hex!("458849d1d74bc1f6e4ec719b1e39f38e12dd67749a9568cd1a196c5536");
+    // Independent Python cryptography 41.0.7 vector for X25519, HKDF-SHA256 and ChaCha20-Poly1305.
+    let ciphertext = hex!("4fa4c1adee7f8931cc160559b9a8c1233092299e9b6f191baf9219f3");
     let plaintext = key
         .ecdhe_decrypt(salt, info, &peer, &[0x44; 12], &ciphertext)
         .unwrap();
-    assert_eq!(plaintext.as_slice(), b"tribute-offer");
+    assert_eq!(plaintext.as_slice(), b"frozen-offer");
     assert!(key
         .ecdhe_decrypt(salt, b"wrong domain", &peer, &[0x44; 12], &ciphertext)
         .is_err());
@@ -541,8 +541,8 @@ fn envelope_scope_cannot_extend_hkdf_extract_input_lengths() {
 fn resident_offer_identity_is_deterministic_and_material_is_chain_bound() {
     let a = ResidentTeeKeys::from_seed([0x43; 32]).unwrap();
     let b = ResidentTeeKeys::from_seed([0x43; 32]).unwrap();
-    assert_eq!(a.tribute_offer_public(), b.tribute_offer_public());
-    assert_eq!(a.tribute_offer_secret, b.tribute_offer_secret);
+    assert_eq!(a.recipient_public(), b.recipient_public());
+    assert_eq!(a.recipient_secret, b.recipient_secret);
     let make = |chain| {
         ResidentOfferMaterial::for_test(b"same group signature".to_vec(), chain, 3, 4).unwrap()
     };

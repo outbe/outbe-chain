@@ -30,6 +30,7 @@ interface IHyperlaneController {
     error ValidatorAnnounceLengthMismatch();
     error UnknownHook(uint32 domain);
     error NotActiveValidator(address caller);
+    error NotSystemTransaction(address caller);
     error SignerMismatch(address validator, address expected, address recovered);
     error SignerTaken(address signer, address validator);
     error StaleIndex(uint32 index, uint32 submitted);
@@ -106,9 +107,10 @@ interface IHyperlaneController {
 
     /// Mirrors the active Outbe validator set into every ISM: validators =
     /// active validators, threshold = ceil(2/3 * n). No-op when the local ISM
-    /// already matches. Permissionless: it only applies what consensus decided.
-    /// `CROSSCHAIN_BRIDGE` runs the ISM calls. Returns whether a rotation was
-    /// dispatched.
+    /// already matches. Only the epoch boundary system transaction can call
+    /// it, so at most one rotation per epoch is in flight. Other callers get
+    /// `NotSystemTransaction`. `CROSSCHAIN_BRIDGE` runs the ISM calls.
+    /// Returns whether a rotation was dispatched.
     function sync() external returns (bool changed);
 
     /// InterchainAccountRouter on Outbe.

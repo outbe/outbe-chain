@@ -262,7 +262,7 @@ fn block_fsm_preserves_static_indices_and_prefix_nonce_positions() {
                 .unwrap();
         }
         assert_eq!(fsm.stage(), BlockExecutionStage::BeginBlock);
-        for index in 0..9 {
+        for index in 0..11 {
             assert_eq!(
                 fsm.expected_prefix_body_index(),
                 Some(indices.len() + usize::from(index))

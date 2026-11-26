@@ -6,7 +6,6 @@ use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolError;
 use outbe_core_common::confidential_tee::hkdf_sha256;
 use outbe_core_common::nod_encryption::NodTermsV1;
-use outbe_fidelity::{apply_cohort_op, FidelityCohortOp, FidelityCohortRequest, FidelityOpSection};
 use outbe_gratis::enclave_client::mine_encrypted_nod;
 use outbe_gratis::nod_mine::{apply, MineEncryptedNodRequestV1, MineKeys};
 use outbe_gratis::precompile::IGratis;
@@ -28,11 +27,9 @@ use outbe_tee::witness::{
 fn private_mine_replays_exactly_and_preserves_other_gratis_writers() {
     let network = StateKeyHandle::for_test([7; 32]);
     let key = StateKeyHandle::for_test([9; 32]);
-    let fidelity_key = StateKeyHandle::for_test([13; 32]);
     let keys = MineKeys {
         nod: &network,
         gratis: &key,
-        fidelity: &fidelity_key,
     };
     let account = Address::repeat_byte(3);
     let amount = U256::from(123u64);
@@ -66,39 +63,13 @@ fn private_mine_replays_exactly_and_preserves_other_gratis_writers() {
         nod,
         current_balance: vec![],
         modify_auth: auth(GratisOp::Mint, amount, 0),
-        fidelity: FidelityOpSection {
-            op: FidelityCohortOp::In,
-            timestamp: 1_000_000,
-            first_qualified_start: 0,
-            current_blob: vec![],
-        },
     };
     let first = apply(keys, &request).unwrap();
     assert_eq!(first, apply(keys, &request).unwrap());
     assert_eq!(first.next_op_nonce, 1);
-    assert!(!first.fidelity.new_blob.is_empty());
-    let standalone = apply_cohort_op(
-        &fidelity_key,
-        &FidelityCohortRequest {
-            chain_id: chain,
-            account,
-            amount: U256::ONE,
-            section: FidelityOpSection {
-                op: FidelityCohortOp::In,
-                timestamp: 1_000_001,
-                first_qualified_start: 1_000_000,
-                current_blob: first.fidelity.new_blob.clone(),
-            },
-        },
-    )
-    .unwrap();
-    assert_eq!(&standalone.outcome.new_blob[8..12], b"FID2");
     let mut resumed = request.clone();
     resumed.current_balance = first.new_balance.clone();
     resumed.modify_auth = auth(GratisOp::Mint, amount, 1);
-    resumed.fidelity.current_blob = standalone.outcome.new_blob;
-    resumed.fidelity.timestamp = 1_000_002;
-    resumed.fidelity.first_qualified_start = 1_000_000;
     assert!(apply(keys, &resumed).is_ok());
     let view_key = hkdf_sha256(&[9; 32], account.as_slice(), b"outbe/gratis/view-key/v1").unwrap();
     assert_eq!(
@@ -119,7 +90,7 @@ fn private_mine_replays_exactly_and_preserves_other_gratis_writers() {
         current_balance: first.new_balance.clone(),
         current_pledged: Vec::new(),
         modify_auth: auth(GratisOp::Burn, U256::from(23u64), 1),
-        fidelity: None,
+        sealed_pledge: None,
     };
     let after = apply_op(&key, &burn);
     assert!(matches!(after.status, GratisOpStatus::Applied));
@@ -132,9 +103,6 @@ fn private_mine_replays_exactly_and_preserves_other_gratis_writers() {
         .unwrap(),
         U256::from(100u64)
     );
-    let mut invalid_fidelity = request;
-    invalid_fidelity.fidelity.current_blob = vec![1, 2, 3];
-    assert!(apply(keys, &invalid_fidelity).is_err());
 }
 
 #[test]
@@ -188,12 +156,6 @@ fn resident_dispatch_mines_and_signs_deterministic_refusals() {
             ),
             op_nonce: 0,
         },
-        fidelity: FidelityOpSection {
-            op: FidelityCohortOp::In,
-            timestamp: 1_000_000,
-            first_qualified_start: 0,
-            current_blob: Vec::new(),
-        },
     };
     let leader = context.attestation_public();
     let _guard = set_in_process_tee_context_for_test(Some(Arc::clone(&context)));
@@ -206,7 +168,6 @@ fn resident_dispatch_mines_and_signs_deterministic_refusals() {
     let first = mine_encrypted_nod(request.clone()).unwrap();
     assert_eq!(first, mine_encrypted_nod(request.clone()).unwrap());
     assert_eq!(first.next_op_nonce, 1);
-    assert!(!first.fidelity.new_blob.is_empty());
     assert_eq!(
         decrypt_balance(
             &derive_view_key(&gratis_key, account).unwrap(),

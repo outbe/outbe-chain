@@ -21,12 +21,14 @@ use crate::errors::FollowTransportError;
 use crate::follow::upstream::UpstreamTipError;
 use crate::follow::{CertifiedFinalizedBlock, FinalizedSource, TipSource};
 use alloy_primitives::{Address, B256};
+use alloy_sol_types::SolCall;
 use commonware_codec::Read as _;
 use commonware_consensus::types::Height;
 use jsonrpsee::core::client::{ClientT, Error as ClientError};
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use jsonrpsee::rpc_params;
 use outbe_primitives::tee_operator_v1::TeeRenewalScheduleV1;
+use outbe_primitives::tee_registry_abi_v1::ITeeRegistryV1;
 use outbe_tee::registry_view::{ChainRpc, FinalizedStateRpc, RegistryRpc};
 use tracing::{debug, warn};
 
@@ -175,7 +177,7 @@ impl UpstreamRpcClient {
 
 impl UpstreamRpcClient {
     /// Query the upstream's on-chain threshold network encryption public key
-    /// (`TeeRegistry` selector `0x1b640a92`). A non-zero value means the chain is
+    /// (`ITeeRegistryV1.offerPublicKey()`). A non-zero value means the chain is
     /// TEE-bootstrapped. Then a follower that re-executes enclave-dependent txs
     /// needs a local enclave that holds the key. This function reads the key from
     /// the UPSTREAM, not from the follower's local state. The follower starts at
@@ -183,8 +185,10 @@ impl UpstreamRpcClient {
     /// local read would spuriously report a non-TEE chain.
     pub async fn network_encryption_public_key(&self) -> eyre::Result<alloy_primitives::B256> {
         let call = serde_json::json!({
-            "to": "0x000000000000000000000000000000000000ee0a",
-            "data": "0x1b640a92",
+            "to": outbe_primitives::addresses::TEE_REGISTRY_ADDRESS,
+            "data": alloy_primitives::hex::encode_prefixed(
+                ITeeRegistryV1::offerPublicKeyCall {}.abi_encode()
+            ),
         });
         let result: String = self
             .client
@@ -289,10 +293,13 @@ impl FinalizedStateRpc for UpstreamRpcClient {
 }
 
 impl RegistryRpc for UpstreamRpcClient {
-    async fn tee_renewal_schedule_v1(&self) -> Result<TeeRenewalScheduleV1, Self::Error> {
+    async fn tee_renewal_schedule_v1(
+        &self,
+        finalized_hash: B256,
+    ) -> Result<TeeRenewalScheduleV1, Self::Error> {
         let schedule: TeeRenewalScheduleV1 = self
             .client
-            .request("outbe_teeRenewalScheduleV1", rpc_params![])
+            .request("outbe_teeRenewalScheduleV1", rpc_params![finalized_hash])
             .await
             .map_err(|error| FollowTransportError::UpstreamRpcRequest {
                 method: "outbe_teeRenewalScheduleV1",

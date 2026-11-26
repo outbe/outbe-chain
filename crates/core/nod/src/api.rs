@@ -35,7 +35,7 @@ pub fn effective_state(
 /// protocol units (1e6 per whole COEN). Asset payment units are quoted separately.
 ///
 /// The cost is derived rather than stored from the entry price and the load the
-/// Nod carries. Lysis mints the Nod from exactly this formula.
+/// Nod carries.
 pub use outbe_core_common::nod_rules::settlement_cost_minor;
 
 /// Timestamp by which a called group must be settled, or `0` while it is not
@@ -56,10 +56,10 @@ pub fn settlement_deadline(storage: &StorageHandle<'_>, group_key: B256) -> Resu
 pub use outbe_core_common::settlement::settlement_deadline_of;
 
 /// The Nod's state as of this block, as `getNod` reports it: an unsettled Nod of a
-/// forfeited group reads Forfeited.
+/// closed group reads Forfeited.
 pub fn state_of(storage: &StorageHandle<'_>, item: &NodItemState) -> Result<EffectiveState> {
     let nod = NodContract::new(storage.clone());
-    if !item.is_settled && nod.group_is_forfeited.read(&item.group_key)? {
+    if !item.is_settled && nod.group_is_closed.read(&item.group_key)? {
         return Ok(EffectiveState::Forfeited);
     }
     let called_at = nod.group_called_at.read(&item.group_key)?;
@@ -98,7 +98,7 @@ pub fn issue_at_offer(
 
 /// Adds the load, or with `nominal` the nominal, of `nod` to the day sum `previous`
 /// of `scope`.
-pub fn add_to_day_sum(
+pub fn add_to_worldwide_day_sum(
     storage: &StorageHandle<'_>,
     scope: B256,
     previous: Option<outbe_core_common::nod_encryption::EncryptedNodGroupLoadV1>,
@@ -122,7 +122,7 @@ pub fn add_to_day_sum(
 }
 
 /// Reads a day sum in the enclave.
-pub fn read_day_sum(
+pub fn read_worldwide_day_sum(
     storage: &StorageHandle<'_>,
     record: &outbe_core_common::nod_encryption::EncryptedNodGroupLoadV1,
 ) -> Result<U256> {
@@ -157,17 +157,17 @@ pub fn sub_series_entry_price(
     Ok((!price.is_zero()).then_some(price))
 }
 
-/// Returns whether `group_key` has been forfeited after its call notice period lapsed.
-pub fn is_group_forfeited(storage: &StorageHandle<'_>, group_key: B256) -> Result<bool> {
+/// Returns whether `group_key` has been closed after its call notice period lapsed.
+pub fn is_group_closed(storage: &StorageHandle<'_>, group_key: B256) -> Result<bool> {
     NodContract::new(storage.clone())
-        .group_is_forfeited
+        .group_is_closed
         .read(&group_key)
 }
 
-/// Whether the forfeit pass has started on `group_key` or finished it.
-pub fn is_group_forfeit_started(storage: &StorageHandle<'_>, group_key: B256) -> Result<bool> {
+/// Whether the close pass has started on `group_key` or finished it.
+pub fn is_group_close_started(storage: &StorageHandle<'_>, group_key: B256) -> Result<bool> {
     let nod = NodContract::new(storage.clone());
-    Ok(nod.group_forfeiting.read(&group_key)? || nod.group_is_forfeited.read(&group_key)?)
+    Ok(nod.group_closing.read(&group_key)? || nod.group_is_closed.read(&group_key)?)
 }
 
 /// Permissionless cleanup of an unsettled forfeited Nod (`INod.clean(uint256)`).
@@ -195,7 +195,7 @@ pub fn take_series_unsettled_load(
     nod.take_series_unsettled_load(group_key, sub_series, load)
 }
 
-/// Removes a loaded Nod item and decrements membership. A forfeited group closes with its
+/// Removes a loaded Nod item and decrements membership. A closed group is deleted with its
 /// last Nod; a group never called stays for [`close_empty_group`].
 pub fn remove_nod(
     storage: &StorageHandle<'_>,

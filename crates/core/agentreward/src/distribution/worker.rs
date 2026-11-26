@@ -102,11 +102,11 @@ fn credit_job_entries(
             .filter(|value| *value <= job.pool_minor)
             .ok_or(AgentRewardError::InvalidJob)?;
         if !share.is_zero() {
-            contract.add_claimable_reward(pool, address, share)?;
-            contract.emit(IAgentReward::RewardAccrued {
+            contract.add_agent_reward(pool, address, share)?;
+            contract.emit(IAgentReward::AgentRewardAdded {
                 account: address,
                 pool: job.pool,
-                utcDay: job.day,
+                emissionDay: job.day,
                 promisLoadMinor: share,
             })?;
         }
@@ -141,7 +141,7 @@ fn finish_job(
         residue,
     )?;
     AgentRewardContract::new(ctx.storage.clone()).emit(
-        crate::precompile::IAgentReward::RewardLimitReturned {
+        crate::precompile::IAgentReward::AgentRewardLimitReturned {
             emissionDay: job.day,
             pool: pool as u8,
             amountMinor: residue,
@@ -188,7 +188,7 @@ fn source_entry(
             let address = index
                 .addresses
                 .read(&AgentRewardContract::address_index_key(day, job.next_index))?;
-            let count_key = AgentRewardContract::tribute_count_key(day, address);
+            let count_key = AgentRewardContract::offer_count_key(day, address);
             let count = index.counts.read(&count_key)?;
             // WAA/SRA append only on a positive first contribution and remain immutable.
             // Address zero itself is valid; a missing positive count is not.

@@ -193,7 +193,7 @@ fn a_called_gem_settles_at_its_deadline_and_is_refused_a_second_later() {
     assert_eq!(
         gem.state,
         outbe_gem::GemState::Forfeited as u8,
-        "the public status projects Forfeited before any cleanup"
+        "the public status projects Forfeited before the forfeit pass"
     );
     assert_eq!(gem.owner, OWNER);
 }

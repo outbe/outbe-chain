@@ -28,30 +28,26 @@ fn assert_error<T: std::fmt::Debug>(
 fn deadlines_follow_positive_credits_and_are_independent() {
     with_contract_mut(|storage, contract| {
         for pool in POOLS {
+            contract.add_agent_reward(pool, ALICE, U256::ZERO).unwrap();
+            assert_eq!(contract.agent_reward_deadline(pool, ALICE).unwrap(), 0);
             contract
-                .add_claimable_reward(pool, ALICE, U256::ZERO)
-                .unwrap();
-            assert_eq!(contract.get_pool_balance_deadline(pool, ALICE).unwrap(), 0);
-            contract
-                .add_claimable_reward(pool, ALICE, U256::from(10))
+                .add_agent_reward(pool, ALICE, U256::from(10))
                 .unwrap();
             assert_eq!(
-                contract.get_pool_balance_deadline(pool, ALICE).unwrap(),
+                contract.agent_reward_deadline(pool, ALICE).unwrap(),
                 T_NOW + REWARD_BALANCE_IDLE_SECONDS
             );
         }
         storage.set_block_timestamp(U256::from(T_NOW + 10)).unwrap();
         for pool in POOLS {
-            contract
-                .add_claimable_reward(pool, ALICE, U256::ONE)
-                .unwrap();
-            contract.add_claimable_reward(pool, BOB, U256::ONE).unwrap();
+            contract.add_agent_reward(pool, ALICE, U256::ONE).unwrap();
+            contract.add_agent_reward(pool, BOB, U256::ONE).unwrap();
             assert_eq!(
-                contract.get_pool_balance_deadline(pool, ALICE).unwrap(),
+                contract.agent_reward_deadline(pool, ALICE).unwrap(),
                 T_NOW + REWARD_BALANCE_IDLE_SECONDS
             );
             assert_eq!(
-                contract.get_pool_balance_deadline(pool, BOB).unwrap(),
+                contract.agent_reward_deadline(pool, BOB).unwrap(),
                 T_NOW + 10 + REWARD_BALANCE_IDLE_SECONDS
             );
         }
@@ -64,66 +60,61 @@ fn idle_reward_balance_goes_to_promis_limit() {
         with_contract_mut(|storage, contract| {
             let load = U256::from(100);
             contract
-                .add_claimable_reward(pool, Address::ZERO, load)
+                .add_agent_reward(pool, Address::ZERO, load)
                 .unwrap();
-            contract.add_claimable_reward(pool, BOB, U256::ONE).unwrap();
+            contract.add_agent_reward(pool, BOB, U256::ONE).unwrap();
             contract
                 .pending_total_minor
                 .write(&(pool as u8), U256::from(77))
                 .unwrap();
-            let deadline = contract
-                .get_pool_balance_deadline(pool, Address::ZERO)
-                .unwrap();
+            let deadline = contract.agent_reward_deadline(pool, Address::ZERO).unwrap();
             storage
                 .set_block_timestamp(U256::from(deadline - 1))
                 .unwrap();
             assert_error(
-                contract.return_expired_reward(pool, Address::ZERO),
-                AgentRewardError::RewardBalanceNotExpired(deadline),
+                contract.expire_agent_reward(pool, Address::ZERO),
+                AgentRewardError::AgentRewardNotExpired(deadline),
             );
             storage.set_block_timestamp(U256::from(deadline)).unwrap();
             // Credits to an expired aggregate balance retain its deadline.
             contract
-                .add_claimable_reward(pool, Address::ZERO, U256::ONE)
+                .add_agent_reward(pool, Address::ZERO, U256::ONE)
                 .unwrap();
             assert_eq!(
-                contract
-                    .get_pool_balance_deadline(pool, Address::ZERO)
-                    .unwrap(),
+                contract.agent_reward_deadline(pool, Address::ZERO).unwrap(),
                 deadline
             );
             let promis = PromisLimitContract::new(storage.clone());
             assert_eq!(
-                contract.return_expired_reward(pool, Address::ZERO).unwrap(),
+                contract.expire_agent_reward(pool, Address::ZERO).unwrap(),
                 load + U256::ONE
             );
             assert_eq!(promis.promis_limit().unwrap(), load + U256::ONE);
-            assert_eq!(contract.pool_claimable_total(pool).unwrap(), U256::ONE);
-            assert_eq!(contract.pool_pending_total(pool).unwrap(), U256::from(77));
+            assert_eq!(contract.pool_agent_reward_total(pool).unwrap(), U256::ONE);
             assert_eq!(
-                contract
-                    .get_pool_balance_deadline(pool, Address::ZERO)
-                    .unwrap(),
+                contract.pool_pending_agent_reward_total(pool).unwrap(),
+                U256::from(77)
+            );
+            assert_eq!(
+                contract.agent_reward_deadline(pool, Address::ZERO).unwrap(),
                 0
             );
             assert_eq!(
-                contract.return_expired_reward(pool, Address::ZERO).unwrap(),
+                contract.expire_agent_reward(pool, Address::ZERO).unwrap(),
                 U256::ZERO
             );
             assert_eq!(promis.promis_limit().unwrap(), load + U256::ONE);
             assert_eq!(storage.balance(Address::ZERO).unwrap(), U256::ZERO);
             contract
-                .add_claimable_reward(pool, Address::ZERO, U256::ONE)
+                .add_agent_reward(pool, Address::ZERO, U256::ONE)
                 .unwrap();
             assert_eq!(
-                contract
-                    .get_pool_balance_deadline(pool, Address::ZERO)
-                    .unwrap(),
+                contract.agent_reward_deadline(pool, Address::ZERO).unwrap(),
                 deadline + REWARD_BALANCE_IDLE_SECONDS
             );
             assert_error(
-                contract.return_expired_reward(pool, Address::ZERO),
-                AgentRewardError::RewardBalanceNotExpired(deadline + REWARD_BALANCE_IDLE_SECONDS),
+                contract.expire_agent_reward(pool, Address::ZERO),
+                AgentRewardError::AgentRewardNotExpired(deadline + REWARD_BALANCE_IDLE_SECONDS),
             );
         });
     }
@@ -151,22 +142,22 @@ fn claims_reject_exact_and_past_deadlines_without_issuing_gems() {
                     .unwrap();
                 }
                 contract
-                    .add_claimable_reward(pool, ALICE, U256::from(10))
+                    .add_agent_reward(pool, ALICE, U256::from(10))
                     .unwrap();
-                let deadline = contract.get_pool_balance_deadline(pool, ALICE).unwrap();
+                let deadline = contract.agent_reward_deadline(pool, ALICE).unwrap();
                 storage
                     .set_block_timestamp(U256::from(deadline + offset))
                     .unwrap();
                 assert_error(
-                    contract.claim_reward(pool, ALICE, U256::ZERO, (USD, USD)),
-                    AgentRewardError::ClaimDeadlinePassed(deadline),
+                    contract.redeem_agent_reward(pool, ALICE, U256::ZERO, (USD, USD)),
+                    AgentRewardError::AgentRewardDeadlinePassed(deadline),
                 );
                 assert_eq!(
-                    contract.get_pool_claimable_reward(pool, ALICE).unwrap(),
+                    contract.get_agent_reward(pool, ALICE).unwrap(),
                     U256::from(10)
                 );
                 assert_eq!(
-                    contract.get_pool_balance_deadline(pool, ALICE).unwrap(),
+                    contract.agent_reward_deadline(pool, ALICE).unwrap(),
                     deadline
                 );
                 assert!(outbe_gem::api::list_by_owner(&storage, ALICE)
@@ -191,7 +182,7 @@ fn tiny_partial_claim_renews_only_its_pool_and_full_claim_clears_deadline() {
             }
             for credited_pool in POOLS {
                 contract
-                    .add_claimable_reward(credited_pool, ALICE, U256::from(10))
+                    .add_agent_reward(credited_pool, ALICE, U256::from(10))
                     .unwrap();
             }
             let deadline = T_NOW + REWARD_BALANCE_IDLE_SECONDS;
@@ -200,10 +191,10 @@ fn tiny_partial_claim_renews_only_its_pool_and_full_claim_clears_deadline() {
                 .unwrap();
             seed_oracle(&storage, ONE_COEN);
             contract
-                .claim_reward(pool, ALICE, U256::ONE, (USD, USD))
+                .redeem_agent_reward(pool, ALICE, U256::ONE, (USD, USD))
                 .unwrap();
             assert_eq!(
-                contract.get_pool_claimable_reward(pool, ALICE).unwrap(),
+                contract.get_agent_reward(pool, ALICE).unwrap(),
                 U256::from(9)
             );
             for other_pool in POOLS {
@@ -213,17 +204,15 @@ fn tiny_partial_claim_renews_only_its_pool_and_full_claim_clears_deadline() {
                     deadline
                 };
                 assert_eq!(
-                    contract
-                        .get_pool_balance_deadline(other_pool, ALICE)
-                        .unwrap(),
+                    contract.agent_reward_deadline(other_pool, ALICE).unwrap(),
                     expected
                 );
             }
             // Another series than the partial claim: one Gem per owner, series and block.
             contract
-                .claim_reward(pool, ALICE, U256::ZERO, (EUR, USD))
+                .redeem_agent_reward(pool, ALICE, U256::ZERO, (EUR, USD))
                 .unwrap();
-            assert_eq!(contract.get_pool_balance_deadline(pool, ALICE).unwrap(), 0);
+            assert_eq!(contract.agent_reward_deadline(pool, ALICE).unwrap(), 0);
             assert_eq!(
                 contract
                     .reward_balance_deadlines
@@ -243,19 +232,19 @@ fn failures_preserve_deadlines_and_return_accounting() {
         StorageHandle::enter(&mut provider, |storage| {
             let mut contract = AgentRewardContract::new(storage.clone());
             contract
-                .add_claimable_reward(RewardPool::Waa, ALICE, U256::from(10))
+                .add_agent_reward(RewardPool::Waa, ALICE, U256::from(10))
                 .unwrap();
             let deadline = contract
-                .get_pool_balance_deadline(RewardPool::Waa, ALICE)
+                .agent_reward_deadline(RewardPool::Waa, ALICE)
                 .unwrap();
             // A failed Gem issuance must not renew the remaining reward.
             storage.set_block_timestamp(U256::from(T_NOW + 10)).unwrap();
             assert!(contract
-                .claim_reward(RewardPool::Waa, ALICE, U256::ONE, (USD, USD))
+                .redeem_agent_reward(RewardPool::Waa, ALICE, U256::ONE, (USD, USD))
                 .is_err());
             assert_eq!(
                 contract
-                    .get_pool_balance_deadline(RewardPool::Waa, ALICE)
+                    .agent_reward_deadline(RewardPool::Waa, ALICE)
                     .unwrap(),
                 deadline
             );
@@ -276,7 +265,7 @@ fn failures_preserve_deadlines_and_return_accounting() {
         let before = provider.storage.clone();
         StorageHandle::enter(&mut provider, |storage| {
             assert!(AgentRewardContract::new(storage)
-                .return_expired_reward(RewardPool::Waa, ALICE)
+                .expire_agent_reward(RewardPool::Waa, ALICE)
                 .is_err());
         });
         assert_eq!(provider.storage, before);
@@ -290,42 +279,37 @@ fn failures_preserve_deadlines_and_return_accounting() {
 fn missing_deadlines_and_time_overflow_fail_without_partial_credits() {
     with_contract_mut(|storage, contract| {
         let pool = RewardPool::Waa;
-        contract
-            .add_claimable_reward(pool, ALICE, U256::ONE)
-            .unwrap();
+        contract.add_agent_reward(pool, ALICE, U256::ONE).unwrap();
         contract
             .reward_balance_deadlines
             .write(&AgentRewardContract::reward_balance_key(pool, ALICE), 0)
             .unwrap();
         assert_error(
-            contract.get_pool_balance_deadline(pool, ALICE),
+            contract.agent_reward_deadline(pool, ALICE),
             AgentRewardError::RewardDeadlineMissing,
         );
         assert_error(
-            contract.add_claimable_reward(pool, ALICE, U256::ONE),
+            contract.add_agent_reward(pool, ALICE, U256::ONE),
             AgentRewardError::RewardDeadlineMissing,
         );
         assert_error(
-            contract.return_expired_reward(pool, ALICE),
+            contract.expire_agent_reward(pool, ALICE),
             AgentRewardError::RewardDeadlineMissing,
         );
         assert_error(
-            contract.claim_reward(pool, ALICE, U256::ONE, (USD, USD)),
+            contract.redeem_agent_reward(pool, ALICE, U256::ONE, (USD, USD)),
             AgentRewardError::RewardDeadlineMissing,
         );
         storage.set_block_timestamp(U256::from(u64::MAX)).unwrap();
         assert_error(
-            contract.add_claimable_reward(pool, BOB, U256::ONE),
+            contract.add_agent_reward(pool, BOB, U256::ONE),
             AgentRewardError::RewardDeadlineOverflow,
         );
         storage.set_block_timestamp(U256::MAX).unwrap();
-        assert!(contract.add_claimable_reward(pool, BOB, U256::ONE).is_err());
-        assert_eq!(contract.get_pool_balance_deadline(pool, BOB).unwrap(), 0);
-        assert_eq!(
-            contract.get_pool_claimable_reward(pool, BOB).unwrap(),
-            U256::ZERO
-        );
-        assert_eq!(contract.pool_claimable_total(pool).unwrap(), U256::ONE);
+        assert!(contract.add_agent_reward(pool, BOB, U256::ONE).is_err());
+        assert_eq!(contract.agent_reward_deadline(pool, BOB).unwrap(), 0);
+        assert_eq!(contract.get_agent_reward(pool, BOB).unwrap(), U256::ZERO);
+        assert_eq!(contract.pool_agent_reward_total(pool).unwrap(), U256::ONE);
     });
 }
 
@@ -333,8 +317,8 @@ fn missing_deadlines_and_time_overflow_fail_without_partial_credits() {
 fn zero_address_waa_and_sra_distribution_establishes_deadlines() {
     with_contract_mut(|storage, contract| {
         let day = WorldwideDay::new(timestamp_to_date_key(T_NOW));
-        contract.increment_waa_tribute(day, Address::ZERO).unwrap();
-        contract.increment_sra_tribute(day, Address::ZERO).unwrap();
+        contract.increment_waa_offer(day, Address::ZERO).unwrap();
+        contract.increment_sra_offer(day, Address::ZERO).unwrap();
         let ctx = outbe_primitives::block::BlockRuntimeContext::new(
             outbe_primitives::block::BlockContext {
                 block_gas_limit: 0,
@@ -360,14 +344,12 @@ fn zero_address_waa_and_sra_distribution_establishes_deadlines() {
         .unwrap();
         for pool in [RewardPool::Waa, RewardPool::Sra] {
             assert_eq!(
-                contract
-                    .get_pool_balance_deadline(pool, Address::ZERO)
-                    .unwrap(),
+                contract.agent_reward_deadline(pool, Address::ZERO).unwrap(),
                 T_NOW + REWARD_BALANCE_IDLE_SECONDS
             );
         }
         assert_eq!(
-            contract.get_claimable_reward(Address::ZERO).unwrap(),
+            contract.agent_reward_total(Address::ZERO).unwrap(),
             U256::from(30)
         );
     });
@@ -380,29 +362,27 @@ fn a_partial_claim_with_deadline_overflow_preserves_the_balance() {
             .set_block_timestamp(U256::from(u64::MAX - REWARD_BALANCE_IDLE_SECONDS))
             .unwrap();
         contract
-            .add_claimable_reward(RewardPool::Waa, ALICE, U256::from(10))
+            .add_agent_reward(RewardPool::Waa, ALICE, U256::from(10))
             .unwrap();
         storage
             .set_block_timestamp(U256::from(u64::MAX - 1))
             .unwrap();
         assert_error(
-            contract.claim_reward(RewardPool::Waa, ALICE, U256::ONE, (USD, USD)),
+            contract.redeem_agent_reward(RewardPool::Waa, ALICE, U256::ONE, (USD, USD)),
             AgentRewardError::RewardDeadlineOverflow,
         );
         assert_eq!(
-            contract
-                .get_pool_claimable_reward(RewardPool::Waa, ALICE)
-                .unwrap(),
+            contract.get_agent_reward(RewardPool::Waa, ALICE).unwrap(),
             U256::from(10)
         );
         assert_eq!(
             contract
-                .get_pool_balance_deadline(RewardPool::Waa, ALICE)
+                .agent_reward_deadline(RewardPool::Waa, ALICE)
                 .unwrap(),
             u64::MAX
         );
         assert_eq!(
-            contract.pool_claimable_total(RewardPool::Waa).unwrap(),
+            contract.pool_agent_reward_total(RewardPool::Waa).unwrap(),
             U256::from(10)
         );
     });

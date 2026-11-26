@@ -27,8 +27,14 @@ where
         recovered_pending_boundary: Option<PendingDkgBoundarySnapshot>,
         recovery_anchor_height: u64,
     ) -> Result<()> {
-        self.restore_pending(recovered_pending_boundary, recovery_anchor_height)
-            .await?;
+        if self
+            .restore_pending(&ctx, recovered_pending_boundary, recovery_anchor_height)
+            .await?
+            == super::pending_recovery::PendingRestoreOutcome::Stopped
+        {
+            info!("global stop received during pending DKG startup channel registration; exiting");
+            return Ok(());
+        }
         self.publish_repository_material();
         let mut authority = self.protocol.tee_authority_watch();
         let mut latest_consensus_tip;
@@ -56,7 +62,13 @@ where
             // completion (see DKG completion handler below). The top of the
             // next iteration consumes it. The fallback path covers the
             // genesis-bootstrap iteration where no prior DKG completion ran.
-            let current_subchannels = self.acquire_epoch_subchannels().await?;
+            let Some(current_subchannels) = self.acquire_epoch_subchannels(&ctx).await? else {
+                info!(
+                    epoch = %self.state.current_epoch,
+                    "global stop received during epoch subchannel acquisition; exiting"
+                );
+                break 'epoch_loop;
+            };
 
             let accountable = Arc::new(AtomicBool::new(self.local_validator_accountable()));
             let (mut engine_handle_task, signer_enabled) = self
@@ -118,7 +130,7 @@ where
 
                 // DKG reshare completed (from background task).
                 Some(dkg_result) = self.rotation.dkg_result_rx.recv() => {
-                    if let EventAction::Outcome(outcome) = self.complete_dkg(dkg_result).await? { return Ok(outcome); }
+                    if let EventAction::Outcome(outcome) = self.complete_dkg(&ctx, dkg_result).await? { return Ok(outcome); }
                 },
 
                 Some(progress) = self.rotation.dkg_progress_rx.recv() => {
@@ -321,7 +333,10 @@ where
         Ok(())
     }
 
-    async fn acquire_epoch_subchannels(&mut self) -> Result<super::transport::EpochSubchannels<E>> {
+    async fn acquire_epoch_subchannels(
+        &mut self,
+        ctx: &E,
+    ) -> Result<Option<super::transport::EpochSubchannels<E>>> {
         let current_subchannels = if self.channels.replacement_epoch_subchannels.is_some() {
             crate::epoch_subchannels::take_or_register_current(
                 self.state.current_epoch,
@@ -331,7 +346,7 @@ where
                 &mut self.channels.res_mux,
             )
             .await?
-        } else {
+        } else if self.channels.next_epoch_subchannels.is_some() {
             crate::epoch_subchannels::take_or_register_current(
                 self.state.current_epoch,
                 &mut self.channels.next_epoch_subchannels,
@@ -340,6 +355,22 @@ where
                 &mut self.channels.res_mux,
             )
             .await?
+        } else {
+            let Some(channels) = poll_mux_registration_until_stopped(
+                ctx,
+                crate::epoch_subchannels::take_or_register_current(
+                    self.state.current_epoch,
+                    &mut self.channels.next_epoch_subchannels,
+                    &mut self.channels.vote_mux,
+                    &mut self.channels.cert_mux,
+                    &mut self.channels.res_mux,
+                ),
+            )
+            .await?
+            else {
+                return Ok(None);
+            };
+            channels
         };
         if let Some(pending_epoch) = self.rotation.deferred_startup_pending_epoch.take() {
             if self.channels.next_epoch_subchannels.is_some() {
@@ -348,27 +379,33 @@ where
                         .into(),
                 );
             }
-            self.channels.next_epoch_subchannels = Some(
+            let current_epoch = self.state.current_epoch;
+            let Some(next_subchannels) = poll_mux_registration_until_stopped(
+                ctx,
                 crate::epoch_subchannels::register_epoch_subchannels(
                     pending_epoch,
                     &mut self.channels.vote_mux,
                     &mut self.channels.cert_mux,
                     &mut self.channels.res_mux,
+                ),
+            )
+            .await
+            .wrap_err_with(|| {
+                format!(
+                    "pre-register recovered future-epoch subchannels after acquiring current epoch {current_epoch}"
                 )
-                .await
-                .wrap_err_with(|| {
-                    format!(
-                        "pre-register recovered future-epoch subchannels after acquiring current epoch {current_epoch}"
-                    ,current_epoch = self.state.current_epoch)
-                })?,
-            );
+            })?
+            else {
+                return Ok(None);
+            };
+            self.channels.next_epoch_subchannels = Some(next_subchannels);
             info!(
                 active_epoch = %self.state.current_epoch,
                 pending_epoch = %pending_epoch,
                 "pre-registered recovered future DKG channels after current epoch"
             );
         }
-        Ok(current_subchannels)
+        Ok(Some(current_subchannels))
     }
 
     pub(super) async fn promote_boundary(
@@ -425,22 +462,29 @@ pub fn future_epoch_hint_height(
     epocher.backup_vote_hint_height(current_epoch)
 }
 
-async fn reacquire_replacement_channels<T>(
+pub(super) async fn poll_mux_registration_until_stopped<T>(
     ctx: &impl Spawner,
-    reacquire: impl Future<Output = Result<T>>,
+    register: impl Future<Output = Result<T>>,
 ) -> Result<Option<T>> {
     let mut stack_shutdown = ctx.stopped();
     tokio::select! {
         biased;
         _ = &mut stack_shutdown => Ok(None),
-        result = reacquire => {
-            // Stop may become ready during the reacquire future's poll.
+        result = register => {
+            // Stop may become ready during the registration future's poll.
             if (&mut stack_shutdown).now_or_never().is_some() {
                 return Ok(None);
             }
             result.map(Some)
         }
     }
+}
+
+async fn reacquire_replacement_channels<T>(
+    ctx: &impl Spawner,
+    reacquire: impl Future<Output = Result<T>>,
+) -> Result<Option<T>> {
+    poll_mux_registration_until_stopped(ctx, reacquire).await
 }
 
 #[cfg(test)]
@@ -557,5 +601,243 @@ mod tests {
                 assert_eq!(*name, actor);
             });
         }
+    }
+
+    type SimMuxHandle = commonware_p2p::utils::mux::MuxHandle<
+        commonware_p2p::simulated::Sender<
+            commonware_cryptography::bls12381::PublicKey,
+            deterministic::Context,
+        >,
+    >;
+    type SimMuxer = commonware_p2p::utils::mux::Muxer<
+        deterministic::Context,
+        commonware_p2p::simulated::Sender<
+            commonware_cryptography::bls12381::PublicKey,
+            deterministic::Context,
+        >,
+        commonware_p2p::simulated::Receiver<commonware_cryptography::bls12381::PublicKey>,
+    >;
+    type SimMuxTaskHandle =
+        commonware_runtime::Handle<std::result::Result<(), commonware_p2p::simulated::Error>>;
+
+    struct TestEpochMuxes {
+        vote: SimMuxHandle,
+        cert: SimMuxHandle,
+        res: SimMuxHandle,
+        cert_handle: Option<SimMuxTaskHandle>,
+        _held_cert_muxer: Option<SimMuxer>,
+    }
+
+    async fn setup_epoch_muxes(
+        ctx: &deterministic::Context,
+        start_cert_muxer: bool,
+    ) -> TestEpochMuxes {
+        use commonware_cryptography::{bls12381, Signer as _};
+        use commonware_p2p::{
+            simulated::{Config as SimConfig, Network as SimNetwork},
+            utils::mux::Muxer,
+        };
+        use commonware_runtime::Quota;
+        use commonware_utils::{NZUsize, NZU32};
+        use std::num::NonZeroUsize;
+
+        let (network, oracle) = SimNetwork::new(
+            ctx.child("network"),
+            SimConfig {
+                max_size: 64 * 1024,
+                disconnect_on_block: true,
+                max_peers_per_set: NonZeroUsize::new(1).unwrap(),
+                tracked_peer_sets: NZUsize!(1),
+            },
+        );
+        network.start();
+
+        let pk = bls12381::PrivateKey::from_seed(7).public_key();
+        let control = oracle.control(pk);
+        let quota = Quota::per_second(NZU32!(1_000));
+        let (votes_tx, votes_rx) = control.register(0, quota).await.unwrap();
+        let (certs_tx, certs_rx) = control.register(1, quota).await.unwrap();
+        let (res_tx, res_rx) = control.register(2, quota).await.unwrap();
+
+        let (vote_muxer, vote) = Muxer::new(ctx.child("vote_mux"), votes_tx, votes_rx);
+        vote_muxer.start();
+        let (cert_muxer, cert) = Muxer::new(ctx.child("cert_mux"), certs_tx, certs_rx);
+        let (cert_handle, _held_cert_muxer) = if start_cert_muxer {
+            (Some(cert_muxer.start()), None)
+        } else {
+            (None, Some(cert_muxer))
+        };
+        let (res_muxer, res) = Muxer::new(ctx.child("res_mux"), res_tx, res_rx);
+        res_muxer.start();
+
+        TestEpochMuxes {
+            vote,
+            cert,
+            res,
+            cert_handle,
+            _held_cert_muxer,
+        }
+    }
+
+    #[test]
+    fn poll_mux_registration_cancels_partial_epoch_subchannels_on_stop() {
+        use super::poll_mux_registration_until_stopped;
+        use commonware_consensus::types::Epoch;
+
+        deterministic::Runner::default().start(|ctx| async move {
+            let mut muxes = setup_epoch_muxes(&ctx, false).await;
+            let mut vote_probe = muxes.vote.clone();
+
+            let reg = poll_mux_registration_until_stopped(
+                &ctx,
+                crate::epoch_subchannels::register_epoch_subchannels(
+                    Epoch::new(7),
+                    &mut muxes.vote,
+                    &mut muxes.cert,
+                    &mut muxes.res,
+                ),
+            );
+            futures::pin_mut!(reg);
+
+            // First poll enqueues vote registration on the FIFO vote muxer.
+            assert!(reg.as_mut().now_or_never().is_none());
+            // A later registration on the same FIFO muxer guarantees vote(7) completed.
+            let _fence = vote_probe.register(999).await.unwrap();
+            // Second poll stores vote(7) inside the future and parks on unstarted cert_mux.
+            assert!(reg.as_mut().now_or_never().is_none());
+            // Public mux state confirms vote(7) is registered while cert(7) is still pending.
+            assert!(matches!(
+                vote_probe.register(7).await,
+                Err(MuxError::AlreadyRegistered(7))
+            ));
+
+            let stop = ctx.child("mid_reg_stop").stop(0, None);
+            futures::pin_mut!(stop);
+            let stop_result = stop.as_mut().now_or_never();
+
+            let channels = reg
+                .await
+                .expect("stop during partial multi-channel registration must return Ok(None)");
+            assert!(channels.is_none());
+            match stop_result {
+                Some(result) => result.unwrap(),
+                None => stop.await.unwrap(),
+            }
+        });
+    }
+
+    #[test]
+    fn poll_mux_registration_propagates_live_epoch_subchannel_errors() {
+        use super::poll_mux_registration_until_stopped;
+        use commonware_consensus::types::Epoch;
+        use outbe_simplex::errors::EpochSubchannelError;
+
+        deterministic::Runner::default().start(|ctx| async move {
+            let mut muxes = setup_epoch_muxes(&ctx, true).await;
+
+            // Live occupied subchannel fails with EpochSubchannelError::Register.
+            let _occupied = muxes.vote.register(1).await.unwrap();
+            let dup_err = match poll_mux_registration_until_stopped(
+                &ctx,
+                crate::epoch_subchannels::register_epoch_subchannels(
+                    Epoch::new(1),
+                    &mut muxes.vote,
+                    &mut muxes.cert,
+                    &mut muxes.res,
+                ),
+            )
+            .await
+            {
+                Ok(_) => panic!("occupied vote subchannel must fail while live"),
+                Err(err) => err,
+            };
+            assert!(matches!(
+                dup_err.downcast_ref::<EpochSubchannelError>(),
+                Some(EpochSubchannelError::Register { .. })
+            ));
+
+            // Live closed mux fails with EpochSubchannelError::Register.
+            let cert_handle = muxes.cert_handle.take().expect("cert muxer started");
+            cert_handle.abort();
+            let _ = cert_handle.await;
+            let closed_err = match poll_mux_registration_until_stopped(
+                &ctx,
+                crate::epoch_subchannels::register_epoch_subchannels(
+                    Epoch::new(2),
+                    &mut muxes.vote,
+                    &mut muxes.cert,
+                    &mut muxes.res,
+                ),
+            )
+            .await
+            {
+                Ok(_) => panic!("closed cert mux must fail while live"),
+                Err(err) => err,
+            };
+            assert!(matches!(
+                closed_err.downcast_ref::<EpochSubchannelError>(),
+                Some(EpochSubchannelError::Register { .. })
+            ));
+        });
+    }
+
+    #[test]
+    fn supervise_global_stop_drains_clean_engine_and_surfaces_drain_failures() {
+        use super::{supervise_epoch_loop_result, EpochLoopAction, EpochLoopOutcome};
+        use crate::application_shutdown::ApplicationDrain;
+        use crate::errors::StackShutdownError;
+
+        // Clean engine drain within 5s returns ExitStack.
+        deterministic::Runner::default().start(|ctx| async move {
+            let mut engine = ctx.child("clean_engine").spawn(|_| async {});
+            let action = supervise_epoch_loop_result(
+                &ctx,
+                Ok(EpochLoopOutcome::GlobalStop),
+                &mut engine,
+                &ApplicationDrain::default(),
+            )
+            .await
+            .expect("clean engine drain must succeed");
+            assert_eq!(action, EpochLoopAction::ExitStack);
+        });
+
+        // Stalled engine past 5s returns SimplexEngineDrainTimedOut.
+        deterministic::Runner::default().start(|ctx| async move {
+            let mut engine = ctx
+                .child("stalled_engine")
+                .spawn(|_| std::future::pending::<()>());
+            let err = supervise_epoch_loop_result(
+                &ctx,
+                Ok(EpochLoopOutcome::GlobalStop),
+                &mut engine,
+                &ApplicationDrain::default(),
+            )
+            .await
+            .expect_err("stalled engine drain must time out");
+            assert!(matches!(
+                err.downcast_ref::<StackShutdownError>(),
+                Some(StackShutdownError::SimplexEngineDrainTimedOut(_))
+            ));
+        });
+
+        // Aborted engine handle returns SimplexEngineFailedWhileDraining.
+        deterministic::Runner::default().start(|ctx| async move {
+            let mut engine = ctx
+                .child("aborted_engine")
+                .spawn(|_| std::future::pending::<()>());
+            engine.abort();
+            let err = supervise_epoch_loop_result(
+                &ctx,
+                Ok(EpochLoopOutcome::GlobalStop),
+                &mut engine,
+                &ApplicationDrain::default(),
+            )
+            .await
+            .expect_err("aborted engine drain must fail");
+            assert!(matches!(
+                err.downcast_ref::<StackShutdownError>(),
+                Some(StackShutdownError::SimplexEngineFailedWhileDraining(_))
+            ));
+        });
     }
 }

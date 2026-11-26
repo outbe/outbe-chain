@@ -94,7 +94,7 @@ pub(super) fn devnet_resident() -> (Arc<InProcessTeeContext>, TeePolicyV1, B256)
         },
         initialization_challenge: [3; 32],
         node_host_noise_x25519: [4; 32],
-        recipient_x25519: keys.tribute_offer_public(),
+        recipient_x25519: keys.recipient_public(),
         attestation_ed25519: keys.attestation_pub(),
         noise_responder_x25519: keys.noise_public(),
     };
@@ -173,8 +173,8 @@ fn dispatch(script: &ScriptedRegistry, to: Address, data: &[u8]) -> Result<Vec<u
         || data.starts_with(&ITeeRegistryV1::nodeHostEnclaveBindingCall::SELECTOR)
     {
         ITeeRegistryV1::validatorEnclaveBindingCall::abi_encode_returns(&script.binding)
-    } else if data.starts_with(&ITeeRegistryV1::tributeOfferPublicKeyCall::SELECTOR) {
-        ITeeRegistryV1::tributeOfferPublicKeyCall::abi_encode_returns(&U256::from(7))
+    } else if data.starts_with(&ITeeRegistryV1::offerPublicKeyCall::SELECTOR) {
+        ITeeRegistryV1::offerPublicKeyCall::abi_encode_returns(&U256::from(7))
     } else if data.starts_with(&ITeeRegistryV1::enclaveUpgradeV1Call::SELECTOR) {
         ITeeRegistryV1::enclaveUpgradeV1Call::abi_encode_returns(
             &ITeeRegistryV1::enclaveUpgradeV1Return {
@@ -188,7 +188,7 @@ fn dispatch(script: &ScriptedRegistry, to: Address, data: &[u8]) -> Result<Vec<u
     } else if data.starts_with(&ITeeRegistryV1::pendingEnclaveUpgradeCall::SELECTOR) {
         ITeeRegistryV1::pendingEnclaveUpgradeCall::abi_encode_returns(&pending)
     } else if data.starts_with(&ITeeRegistryV1::keyEpochCall::SELECTOR)
-        || data.starts_with(&ITeeRegistryV1::tributeOfferEpochCall::SELECTOR)
+        || data.starts_with(&ITeeRegistryV1::offerEpochCall::SELECTOR)
     {
         U256::ZERO.abi_encode()
     } else if to == VALIDATOR_SET_ADDRESS
@@ -305,14 +305,29 @@ pub(super) fn eth_module(script: Arc<Mutex<ScriptedRegistry>>, calls: RpcCalls) 
 pub(super) fn outbe_module(script: Arc<Mutex<ScriptedRegistry>>, calls: RpcCalls) -> RpcModule<()> {
     let mut module = RpcModule::new(());
     module
-        .register_method("outbe_teeRenewalScheduleV1", move |_, _, _| {
+        .register_method("outbe_teeRenewalScheduleV1", move |params, _, _| {
+            let args: Vec<Value> = match params.as_str() {
+                None => Vec::new(),
+                Some(_) => params.parse()?,
+            };
             calls
                 .lock()
                 .unwrap()
                 .push("outbe_teeRenewalScheduleV1".into());
-            Ok::<_, ErrorObjectOwned>(
-                serde_json::to_value(&script.lock().unwrap().schedule).unwrap(),
-            )
+            let schedule = script.lock().unwrap().schedule;
+            if let Some(value) = args.first().filter(|v| !v.is_null()) {
+                let hash: B256 = serde_json::from_value(value.clone()).map_err(|error| {
+                    ErrorObjectOwned::owned(-32602, format!("{error}"), None::<()>)
+                })?;
+                if hash != schedule.finalized_hash {
+                    return Err(ErrorObjectOwned::owned(
+                        -32602,
+                        format!("unknown schedule checkpoint {hash}"),
+                        None::<()>,
+                    ));
+                }
+            }
+            Ok::<_, ErrorObjectOwned>(serde_json::to_value(schedule).unwrap())
         })
         .unwrap();
     module
@@ -396,9 +411,7 @@ async fn in_process_founding_tick_omits_domain_rpc() {
     )
     .unwrap()
     .expect("founding lifecycle module");
-    for method in ["outbe_deriveKeys", "outbe_deriveGratisKeys"] {
-        assert!(methods.method(method).is_none(), "{method}");
-    }
+    assert!(methods.method("outbe_deriveKeys").is_none());
     assert!(methods.method("eth_chainId").is_some());
     assert!(methods.method("outbe_teeRenewalScheduleV1").is_some());
     let root = tempfile::tempdir().unwrap();

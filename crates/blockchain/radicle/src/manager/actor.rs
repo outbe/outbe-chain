@@ -100,6 +100,11 @@ impl RadicleManagerHandle {
     }
 
     #[must_use]
+    pub fn subscribe(&self) -> watch::Receiver<ManagerStatus> {
+        self.status.clone()
+    }
+
+    #[must_use]
     pub fn signed_peers(&self) -> Vec<VerifiedEndpoint> {
         self.status.borrow().signed_peers.clone()
     }

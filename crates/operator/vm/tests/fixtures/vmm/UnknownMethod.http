@@ -1,0 +1,15 @@
+HTTP/1.1 404 Not Found
+content-type: application/json
+server: dstack VMM
+x-frame-options: SAMEORIGIN
+permissions-policy: interest-cohort=()
+x-content-type-options: nosniff
+x-app-version: v0.6.3 (git:c88f60e781a62d542e08)
+x-accel-buffering: no
+content-length: 59
+connection: close
+date: Wed, 25 Nov 2026 09:56:03 GMT
+
+{
+  "error": "Service not found: S1ReadOnlyUnknownMethod"
+}

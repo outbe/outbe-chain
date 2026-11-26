@@ -38,7 +38,7 @@ pub enum BlockHeightRegime {
     /// Block 1: One-time network bootstrap block.
     /// Carries prefix system txs (mandatory epoch-0 `BoundaryOutcome`, mandatory
     /// `TeeBootstrap`, `ValidatorLiveness`, optional `RadiclePublication`, and the
-    /// 9 `BEGIN_BLOCK_ORDER` modules), no parent finalization accounting
+    /// 11 `BEGIN_BLOCK_ORDER` modules), no parent finalization accounting
     /// (`CertifiedParentAccounting` / `LateFinalizeCredits`), and no user transactions.
     GenesisBootstrap,
     /// Block `>= 2`: Steady-state execution regime.

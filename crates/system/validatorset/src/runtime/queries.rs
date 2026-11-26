@@ -104,9 +104,10 @@ impl ValidatorSet<'_> {
     }
 
     /// Returns validators admitted to consensus P2P as secondary peers:
-    /// both pending phases (`WaitingForReadiness`, `Joining`) and both jailed
-    /// phases (`JailRetained`, `Jail`). This view controls network admission
-    /// only. A live share independently gates the current-participant predicate.
+    /// pending (`WaitingForReadiness`, `Joining`), retired (`Unbonding`,
+    /// `Inactive`), and jailed (`JailRetained`, `Jail`) records. This view
+    /// controls network admission only. A live share independently gates the
+    /// current-participant predicate, and `JailRetained` appears in both views.
     /// Downstream code drops peers without P2P information.
     pub fn get_admitted_non_consensus_validators(&self) -> Result<Vec<ValidatorRecord>> {
         self.get_validators_matching(ValidatorLifecycle::is_secondary_admission)

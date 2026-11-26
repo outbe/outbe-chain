@@ -44,7 +44,7 @@ pub fn signing_payload(nft_hash: Fr, nonce: Fr, binding: Fr) -> Result<Fr, Error
 /// Submission binding:
 /// `Poseidon2([DOMAIN, sender, cid_lo128, cid_hi128, host_chain_id, l2_chain_id])`.
 ///
-/// The commitment ID uses its established two-limb Tribute encoding, independent
+/// The commitment ID uses its established two-limb offer encoding, independent
 /// of the three-limb encoding used for U256 amounts. Both chain IDs are bound so
 /// identical circuits on different L2s cannot share a submission context.
 pub fn binding(

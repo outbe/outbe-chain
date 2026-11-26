@@ -5,8 +5,7 @@ use jsonrpsee::core::RpcResult;
 use jsonrpsee::proc_macros::rpc;
 use thiserror::Error;
 
-/// Sealed view + modify keys returned by `outbe_deriveKeys` and
-/// `outbe_deriveGratisKeys`.
+/// Sealed view + modify keys returned by `outbe_deriveKeys`.
 ///
 /// The enclave derives the account's keys and seals them to the requester's
 /// ephemeral X25519 key: `sealed = AEAD(ECDHE(enclaveEphemeral, requesterEphemeral),
@@ -24,22 +23,13 @@ pub struct GratisKeysSealed {
 #[rpc(server, namespace = "outbe")]
 pub trait OutbeDomainApi {
     /// Derive the account's confidential view + modify keys for `ledger` (`Gratis`,
-    /// `Promis`, `Fidelity`, `Tribute`, or `Nod`) inside the enclave and return them
+    /// `Promis`, or `Nod`) inside the enclave and return them
     /// sealed to `ephemeralPubkey` (a client X25519 public key). This is off-chain key
     /// delivery. It never touches consensus state.
     #[method(name = "deriveKeys")]
     async fn derive_keys(
         &self,
         ledger: outbe_core_common::confidential_tee::Ledger,
-        account: Address,
-        ephemeral_pubkey: B256,
-        signature: Bytes,
-    ) -> RpcResult<GratisKeysSealed>;
-
-    /// Deprecated alias for `deriveKeys(Gratis, ...)`, kept for existing Gratis clients.
-    #[method(name = "deriveGratisKeys")]
-    async fn derive_gratis_keys(
-        &self,
         account: Address,
         ephemeral_pubkey: B256,
         signature: Bytes,
@@ -184,21 +174,6 @@ impl OutbeDomainRpcHandler {
             enclave_ephemeral_pubkey: B256::from(sealed.enclave_ephemeral_pubkey),
         })
     }
-
-    pub(crate) async fn derive_gratis_keys_checked(
-        &self,
-        account: Address,
-        ephemeral_pubkey: B256,
-        signature: Bytes,
-    ) -> RpcResult<GratisKeysSealed> {
-        self.derive_keys_checked(
-            outbe_core_common::confidential_tee::Ledger::Gratis,
-            account,
-            ephemeral_pubkey,
-            signature,
-        )
-        .await
-    }
 }
 
 #[jsonrpsee::core::async_trait]
@@ -211,16 +186,6 @@ impl OutbeDomainApiServer for OutbeDomainRpcHandler {
         signature: Bytes,
     ) -> RpcResult<GratisKeysSealed> {
         self.derive_keys_checked(ledger, account, ephemeral_pubkey, signature)
-            .await
-    }
-
-    async fn derive_gratis_keys(
-        &self,
-        account: Address,
-        ephemeral_pubkey: B256,
-        signature: Bytes,
-    ) -> RpcResult<GratisKeysSealed> {
-        self.derive_gratis_keys_checked(account, ephemeral_pubkey, signature)
             .await
     }
 }
@@ -303,7 +268,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn derive_keys_and_gratis_alias_reject_invalid_and_mismatched_signatures() {
+    async fn derive_keys_rejects_invalid_and_mismatched_signatures() {
         let authority = outbe_tee::authority::TeeAuthorityChannel::new(
             outbe_tee::authority::TeeAuthorityState::Armed {
                 enclave_id: B256::repeat_byte(7),
@@ -333,7 +298,12 @@ mod tests {
         );
 
         let malformed_err = handler
-            .derive_gratis_keys_checked(account, ephemeral_pubkey, Bytes::from([0xff; 65]))
+            .derive_keys_checked(
+                Ledger::Gratis,
+                account,
+                ephemeral_pubkey,
+                Bytes::from([0xff; 65]),
+            )
             .await
             .unwrap_err();
         assert_eq!(
@@ -344,13 +314,7 @@ mod tests {
             .message()
             .starts_with("signature recovery failed:"));
 
-        for ledger in [
-            Ledger::Gratis,
-            Ledger::Promis,
-            Ledger::Fidelity,
-            Ledger::Tribute,
-            Ledger::Nod,
-        ] {
+        for ledger in [Ledger::Gratis, Ledger::Promis, Ledger::Nod] {
             let prehash = eip191_hash(&derive_account_keys_message(
                 ledger,
                 account,
@@ -373,27 +337,6 @@ mod tests {
                 format!("signature signer {recovered} does not control account {account}")
             );
         }
-
-        let gratis_prehash = eip191_hash(&derive_account_keys_message(
-            Ledger::Gratis,
-            account,
-            ephemeral_pubkey,
-        ));
-        let (foreign_sig, recovered) = sample_recoverable_sig(&gratis_prehash, Some(account));
-
-        let err = handler
-            .derive_gratis_keys_checked(
-                account,
-                ephemeral_pubkey,
-                Bytes::copy_from_slice(&foreign_sig),
-            )
-            .await
-            .unwrap_err();
-        assert_eq!(err.code(), jsonrpsee::types::error::INVALID_PARAMS_CODE);
-        assert_eq!(
-            err.message(),
-            format!("signature signer {recovered} does not control account {account}")
-        );
     }
 
     #[tokio::test]
@@ -432,12 +375,7 @@ mod tests {
             jsonrpsee::types::error::INTERNAL_ERROR_CODE
         );
 
-        for target_ledger in [
-            Ledger::Promis,
-            Ledger::Fidelity,
-            Ledger::Tribute,
-            Ledger::Nod,
-        ] {
+        for target_ledger in [Ledger::Promis, Ledger::Nod] {
             let err = handler
                 .derive_keys_checked(
                     target_ledger,
@@ -453,18 +391,18 @@ mod tests {
                 .contains(&format!("does not control account {owner}")));
         }
 
-        let tribute_prehash = eip191_hash(&derive_account_keys_message(
-            Ledger::Tribute,
+        let promis_prehash = eip191_hash(&derive_account_keys_message(
+            Ledger::Promis,
             owner,
             ephemeral_pubkey,
         ));
-        let tribute_sig = signer.sign_hash(&tribute_prehash).expect("sign tribute");
+        let promis_sig = signer.sign_hash(&promis_prehash).expect("sign promis");
         let cross_err = handler
             .derive_keys_checked(
                 Ledger::Nod,
                 owner,
                 ephemeral_pubkey,
-                Bytes::copy_from_slice(&tribute_sig),
+                Bytes::copy_from_slice(&promis_sig),
             )
             .await
             .unwrap_err();
@@ -496,30 +434,19 @@ mod tests {
         let names: std::collections::BTreeSet<&str> = rpc_module.method_names().collect();
         let expected: std::collections::BTreeSet<&str> = [
             "outbe_consensusStatus",
-            "outbe_deriveGratisKeys",
             "outbe_deriveKeys",
             "outbe_getConsensusBlock",
-            "outbe_getEmissionInfo",
-            "outbe_getEpochInfo",
             "outbe_getFinalityProof",
             "outbe_getFinalization",
-            "outbe_getParticipation",
-            "outbe_getSlashConfig",
-            "outbe_getSlashInfo",
-            "outbe_getStake",
-            "outbe_getValidator",
-            "outbe_getValidators",
-            "outbe_getVrfSeed",
             "outbe_radiclePeers",
             "outbe_radicleRepositories",
             "outbe_radicleStatus",
-            "outbe_syncStatus",
             "outbe_teeRenewalScheduleV1",
             "outbe_upgradeKeyV1",
         ]
         .into_iter()
         .collect();
-        assert_eq!(expected.len(), 21);
+        assert_eq!(expected.len(), 10);
         assert_eq!(names, expected);
     }
 

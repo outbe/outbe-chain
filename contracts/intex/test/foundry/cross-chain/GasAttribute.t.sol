@@ -1,39 +1,81 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
-import {ReferenceCurrencyPriceLib} from "../helpers/ReferenceCurrencyPriceLib.sol";
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
-import {MockDesis} from "@test-mocks/MockDesis.sol";
+import {IERC7786GatewaySource} from "@openzeppelin/contracts/interfaces/draft-IERC7786.sol";
 
-import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
-import {TargetRouter} from "@contracts/target/TargetRouter.sol";
-import {IOriginRouter} from "@contracts/origin/interfaces/IOriginRouter.sol";
+import {DESIS} from "@precompiles/IDesis.sol";
+import {IntexAuctionTargetRouter} from "@contracts/target/IntexAuctionTargetRouter.sol";
+import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
+import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {IntexGas} from "@contracts/shared/libs/IntexGas.sol";
 
-/// @dev Every send carries the destination gas as the ERC-7786 executionGasLimit attribute, sized from IntexGas.
+/// @dev Supplies a settable number of revealed bids and takes the clearing flip without effect.
+contract GasAttributeBidsStub {
+    uint256 public count;
+
+    function setCount(uint256 n) external {
+        count = n;
+    }
+
+    function startAuctionClearing(uint32) external {}
+
+    function auctionStage(uint32) external pure returns (IIntexAuction.AuctionStage) {
+        return IIntexAuction.AuctionStage.AwaitingResult;
+    }
+
+    function revealedIntexAuctionBidsCount(uint32) external view returns (uint256) {
+        return count;
+    }
+
+    function revealedIntexAuctionBidsSlice(uint32, uint256 offset, uint256 limit)
+        external
+        view
+        returns (IIntexAuction.SubmittedIntexAuctionBidData[] memory slice)
+    {
+        uint256 end = offset + limit;
+        if (end > count) end = count;
+        slice = new IIntexAuction.SubmittedIntexAuctionBidData[](end > offset ? end - offset : 0);
+        for (uint256 i = 0; i < slice.length; ++i) {
+            slice[i] = bid(offset + i);
+        }
+    }
+
+    function bid(uint256 i) public view returns (IIntexAuction.SubmittedIntexAuctionBidData memory) {
+        return IIntexAuction.SubmittedIntexAuctionBidData({
+            bidder: address(uint160(0xBEEF + i)),
+            intexBidRate: 100e6,
+            intexQuantity: 1,
+            timestamp: uint32(block.timestamp),
+            issuanceCurrency: 840,
+            referenceCurrency: 840
+        });
+    }
+}
+
+/// @dev Every bids send carries the destination gas as the ERC-7786 executionGasLimit attribute, sized from IntexGas.
 contract GasAttributeTest is CrossChainTest {
-    uint32 internal constant BNB_CHAIN_ID = 1;
     uint32 internal constant OUTBE_CHAIN_ID = 2;
     bytes4 internal constant GAS_SELECTOR = bytes4(keccak256("executionGasLimit(uint256)"));
 
-    OriginRouter internal outbe;
-    TargetRouter internal bnb;
+    IntexAuctionTargetRouter internal bnb;
+    GasAttributeBidsStub internal stub;
     address internal admin = address(this);
-    address internal desis;
+    address internal outbeIca = makeAddr("outbeIca");
 
     function setUp() public {
         _setUpBridge();
-        outbe = DeployProxy.originRouter(address(bridge), admin);
         bnb = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
-        outbe.registerRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(bnb)));
-        bnb.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbe)));
-        outbe.addTarget(BNB_CHAIN_ID);
-        vm.deal(address(outbe), 10 ether);
+        stub = new GasAttributeBidsStub();
+        bnb.setDependencies(address(stub), makeAddr("intex"), makeAddr("escrow"));
+        _wireOutbeIca(bnb, outbeIca);
+        vm.deal(address(bnb), 10 ether);
+    }
 
-        desis = address(new MockDesis());
-        outbe.setDependencies(desis, makeAddr("factory"));
-        bnb.setDependencies(admin, makeAddr("intex"), makeAddr("escrow"));
+    function _attributes(uint256 gasLimit) internal pure returns (bytes[] memory attrs) {
+        attrs = new bytes[](1);
+        attrs[0] = abi.encodeWithSelector(GAS_SELECTOR, gasLimit);
     }
 
     /// @dev The last recorded send carries exactly one executionGasLimit attribute equal to `expectedGas`.
@@ -43,34 +85,39 @@ contract GasAttributeTest is CrossChainTest {
         assertEq(attrs[0], abi.encodeWithSelector(GAS_SELECTOR, expectedGas), "executionGasLimit attribute mismatch");
     }
 
-    function test_fixedMessage_carriesTypeGas() public {
-        IOriginRouter.IntexAuctionStartParams memory p;
-        p.prices = ReferenceCurrencyPriceLib.one(840, 1, 3);
-        p.emissionDay = 42;
-        p.prices = ReferenceCurrencyPriceLib.one(840, 1, 3);
-        vm.prank(desis);
-        outbe.sendIntexAuctionStart(p);
-        _assertLastGas(IntexGas.intexAuctionStart(1));
+    /// @dev Relay a one-page day of `n` bids and expect its page to buy `IntexGas.bidsPage(n)`.
+    function _assertPageGas(uint32 day, uint256 n) internal {
+        stub.setCount(n);
+        address[] memory bidders = new address[](n);
+        uint256[] memory packed = new uint256[](n);
+        for (uint256 i = 0; i < n; ++i) {
+            IIntexAuction.SubmittedIntexAuctionBidData memory b = stub.bid(i);
+            bidders[i] = b.bidder;
+            packed[i] = BridgeMsgCodec.packBid(
+                b.intexQuantity, b.intexBidRate, b.timestamp, b.issuanceCurrency, b.referenceCurrency
+            );
+        }
+        bytes memory page = BridgeMsgCodec.encodeBidsPage(day, uint32(block.chainid), 0, 1, bidders, packed);
+        vm.expectCall(
+            address(bridge),
+            abi.encodeCall(
+                IERC7786GatewaySource.sendMessage,
+                (_interop(OUTBE_CHAIN_ID, DESIS), page, _attributes(IntexGas.bidsPage(n)))
+            )
+        );
+        _deliver(OUTBE_CHAIN_ID, outbeIca, address(bnb), BridgeMsgCodec.encodeIntexAuctionClearingStart(day));
+        _assertLastGas(IntexGas.BIDS_TOTALS);
     }
 
-    function test_variableMessage_gasScalesWithItemCount() public {
-        // Freeze day 42's snapshot so the addressed refund send passes membership.
-        IOriginRouter.IntexAuctionStartParams memory sp;
-        sp.prices = ReferenceCurrencyPriceLib.one(840, 1, 3);
-        sp.emissionDay = 42;
-        vm.prank(desis);
-        outbe.sendIntexAuctionStart(sp);
-
-        _assertRefundGas(1);
-        _assertRefundGas(5);
-        // Sizing is strictly increasing in the item count.
-        assertGt(IntexGas.assetReturn(5, true), IntexGas.assetReturn(1, true), "gas must grow with item count");
+    function test_bidsPage_gasScalesWithItemCount() public {
+        _assertPageGas(42, 1);
+        _assertPageGas(43, 5);
+        assertGt(IntexGas.bidsPage(5), IntexGas.bidsPage(1), "gas must grow with item count");
     }
 
-    function _assertRefundGas(uint256 n) internal {
-        vm.prank(desis);
-        outbe.sendIntexAuctionWinners(BNB_CHAIN_ID, 42, 0, 1, 1, 1, new address[](n), 0, 0);
-        // The chain's only chunk carries its winners, so it is the one that routes the day's proceeds.
-        _assertLastGas(IntexGas.assetReturn(n, n != 0));
+    function test_bidsPause_carriesTypeGas() public {
+        vm.prank(address(bnb));
+        bnb.sendIntexAuctionBidsPause(42);
+        _assertLastGas(IntexGas.BIDS_PAUSE);
     }
 }

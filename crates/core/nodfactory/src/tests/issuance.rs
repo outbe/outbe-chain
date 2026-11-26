@@ -397,8 +397,7 @@ fn call(storage: &StorageHandle<'_>, group: B256) -> (u64, u64) {
     let terms = nod.read_call_terms(group).unwrap();
     let called_at =
         outbe_system_common::time::date_key_to_utc_timestamp(GROUP_DAY).unwrap() + 86_400;
-    crate::called::mark_called(&mut nod, group, called_at, terms.call_notice_period_seconds)
-        .unwrap();
+    crate::call::call_series(&mut nod, group, called_at, terms.call_notice_period_seconds).unwrap();
     (
         called_at,
         nod_api::settlement_deadline_of(called_at, terms.call_notice_period_seconds),
@@ -426,7 +425,7 @@ fn block_at<'s>(
     )
 }
 
-fn forfeit_at(
+fn close_at(
     storage: &StorageHandle<'_>,
     block_number: u64,
     timestamp: u64,
@@ -435,7 +434,7 @@ fn forfeit_at(
     let ctx = block_at(storage, block_number, timestamp);
     let through_day = outbe_core_common::deadline_queue::deadline_day(timestamp).unwrap();
     let mut budget = outbe_system_common::pass_budget::PassBudget::new(100, writes);
-    crate::forfeited::forfeit_through(&ctx, through_day, &mut budget).unwrap()
+    crate::close::close_through(&ctx, through_day, &mut budget).unwrap()
 }
 
 fn promis_limit(storage: &StorageHandle<'_>) -> U256 {
@@ -444,9 +443,9 @@ fn promis_limit(storage: &StorageHandle<'_>) -> U256 {
         .unwrap()
 }
 
-fn forfeit_queue_is_empty(storage: &StorageHandle<'_>) -> bool {
+fn close_queue_is_empty(storage: &StorageHandle<'_>) -> bool {
     let nod = outbe_nod::NodContract::new(storage.clone());
-    outbe_core_common::deadline_queue::first_day(&outbe_nod::state::ForfeitQueue(&nod))
+    outbe_core_common::deadline_queue::first_day(&outbe_nod::state::CloseQueue(&nod))
         .unwrap()
         .is_none()
 }
@@ -504,9 +503,9 @@ fn sub_series_of_one_day_and_reference_share_one_call_group() {
         nod_api::record_settled(&storage, loaded_item, loaded_group).unwrap();
 
         let (called_at, deadline) = call(&storage, group);
-        forfeit_at(&storage, 10, deadline + 86_400, 100);
+        close_at(&storage, 10, deadline + 86_400, 100);
         assert_eq!(promis_limit(&storage), U256::from(25));
-        crate::cleanup::cleanup(&block_at(&storage, 11, deadline + 86_400)).unwrap();
+        crate::forfeit::forfeit_through(&block_at(&storage, 11, deadline + 86_400)).unwrap();
         assert!(nod_api::get_item(&storage, settled).unwrap().is_some());
         for nod_id in [usd, eur] {
             assert!(nod_api::get_item(&storage, nod_id).unwrap().is_none());
@@ -638,19 +637,19 @@ fn a_group_forfeits_one_series_per_write_and_credits_once() {
         let (group, deadline) = lapsed_two_series_group(&storage);
         let at = deadline + 86_400;
 
-        forfeit_at(&storage, 10, at, 1);
+        close_at(&storage, 10, at, 1);
         assert_eq!(promis_limit(&storage), U256::ZERO);
-        assert!(!nod_api::is_group_forfeited(&storage, group).unwrap());
-        assert!(nod_api::is_group_forfeit_started(&storage, group).unwrap());
+        assert!(!nod_api::is_group_closed(&storage, group).unwrap());
+        assert!(nod_api::is_group_close_started(&storage, group).unwrap());
 
-        let progress = forfeit_at(&storage, 11, at, 1);
+        let progress = close_at(&storage, 11, at, 1);
         assert!(matches!(
             progress,
             outbe_core_common::deadline_queue::Progress::Complete
         ));
         assert_eq!(promis_limit(&storage), U256::from(40));
-        assert!(nod_api::is_group_forfeited(&storage, group).unwrap());
-        assert!(forfeit_queue_is_empty(&storage));
+        assert!(nod_api::is_group_closed(&storage, group).unwrap());
+        assert!(close_queue_is_empty(&storage));
     });
     assert_eq!(
         closed_series(&world),
@@ -694,11 +693,11 @@ fn a_series_left_open_defers_the_group_and_the_retry_credits_once() {
                 .write(&[0xFF; 3])
                 .unwrap();
 
-            forfeit_at(&storage, 10, deadline + 86_400, 64);
+            close_at(&storage, 10, deadline + 86_400, 64);
             assert_eq!(promis_limit(&storage), U256::ZERO);
-            assert!(!nod_api::is_group_forfeited(&storage, group).unwrap());
-            assert!(nod_api::is_group_forfeit_started(&storage, group).unwrap());
-            assert!(!forfeit_queue_is_empty(&storage));
+            assert!(!nod_api::is_group_closed(&storage, group).unwrap());
+            assert!(nod_api::is_group_close_started(&storage, group).unwrap());
+            assert!(!close_queue_is_empty(&storage));
             (group, target_key, saved_load, deadline)
         });
         assert_eq!(closed_series(&world), expected_after_first);
@@ -709,15 +708,15 @@ fn a_series_left_open_defers_the_group_and_the_retry_credits_once() {
                 .bytes(&target_key)
                 .write(&saved_load)
                 .unwrap();
-            forfeit_at(&storage, 11, deadline + 2 * 86_400, 64);
+            close_at(&storage, 11, deadline + 2 * 86_400, 64);
             assert_eq!(promis_limit(&storage), U256::from(40));
-            assert!(nod_api::is_group_forfeited(&storage, group).unwrap());
-            assert!(forfeit_queue_is_empty(&storage));
+            assert!(nod_api::is_group_closed(&storage, group).unwrap());
+            assert!(close_queue_is_empty(&storage));
         });
         assert_eq!(closed_series(&world), expected_final);
     }
 
-    // Even when every sub-series fails on the first attempt, `group_forfeiting` latches.
+    // Even when every sub-series fails on the first attempt, `group_closing` latches.
     let mut world = World::new();
     world.enter(|storage| {
         let (group, deadline) = lapsed_two_series_group(&storage);
@@ -732,10 +731,10 @@ fn a_series_left_open_defers_the_group_and_the_retry_credits_once() {
                 .write(&[0xFF; 3])
                 .unwrap();
         }
-        forfeit_at(&storage, 10, deadline + 86_400, 64);
-        assert!(!nod_api::is_group_forfeited(&storage, group).unwrap());
-        assert!(nod_api::is_group_forfeit_started(&storage, group).unwrap());
-        assert!(!forfeit_queue_is_empty(&storage));
+        close_at(&storage, 10, deadline + 86_400, 64);
+        assert!(!nod_api::is_group_closed(&storage, group).unwrap());
+        assert!(nod_api::is_group_close_started(&storage, group).unwrap());
+        assert!(!close_queue_is_empty(&storage));
     });
 }
 
@@ -810,7 +809,7 @@ fn any_account_cleans_a_forfeited_unsettled_nod() {
             "a Nod that is not forfeited stays"
         );
         let (_, deadline) = call(&storage, group);
-        forfeit_at(&storage, 10, deadline + 86_400, 100);
+        close_at(&storage, 10, deadline + 86_400, 100);
         assert!(
             clean_as(&storage, stranger, settled).is_err(),
             "a settled Nod stays"
@@ -847,11 +846,11 @@ fn forfeited_nod_loads_go_to_the_promis_limit_once() {
         let group = group_of(&storage, settled);
         let (_, deadline) = call(&storage, group);
         let at = deadline + 86_400;
-        forfeit_at(&storage, 10, at, 100);
+        close_at(&storage, 10, at, 100);
         assert_eq!(promis_limit(&storage), U256::from(31));
-        crate::cleanup::cleanup(&block_at(&storage, 11, at)).unwrap();
-        forfeit_at(&storage, 12, at + 86_400, 100);
-        crate::cleanup::cleanup(&block_at(&storage, 13, at + 86_400)).unwrap();
+        crate::forfeit::forfeit_through(&block_at(&storage, 11, at)).unwrap();
+        close_at(&storage, 12, at + 86_400, 100);
+        crate::forfeit::forfeit_through(&block_at(&storage, 13, at + 86_400)).unwrap();
         assert_eq!(promis_limit(&storage), U256::from(31));
         for nod_id in forfeited {
             assert!(nod_api::get_item(&storage, nod_id).unwrap().is_none());

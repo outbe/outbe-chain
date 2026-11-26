@@ -6,6 +6,19 @@
   },
   {
     "type": "function",
+    "name": "ASSET_ESCROW_TIMEOUT",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "AUCTION_ROLE",
     "inputs": [],
     "outputs": [
@@ -19,7 +32,7 @@
   },
   {
     "type": "function",
-    "name": "BID_BOND_ABANDON_DELAY",
+    "name": "BID_BOND_ESCROW_TIMEOUT",
     "inputs": [],
     "outputs": [
       {
@@ -52,19 +65,6 @@
         "name": "",
         "type": "bytes32",
         "internalType": "bytes32"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "RETURN_ABANDON_DELAY",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint32",
-        "internalType": "uint32"
       }
     ],
     "stateMutability": "view"
@@ -766,24 +766,6 @@
   },
   {
     "type": "function",
-    "name": "returnAbandonedIntexAuctionAsset",
-    "inputs": [
-      {
-        "name": "emissionDay",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "bidder",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "returnIntexAuctionAsset",
     "inputs": [
       {
@@ -809,6 +791,24 @@
         "internalType": "bool"
       }
     ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "returnIntexAuctionAssetAfterTimeout",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "bidder",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
     "stateMutability": "nonpayable"
   },
   {
@@ -915,24 +915,6 @@
   },
   {
     "type": "function",
-    "name": "unlockAbandonedIntexAuctionBidBond",
-    "inputs": [
-      {
-        "name": "emissionDay",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "bidder",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "unlockIntexAuctionBidBond",
     "inputs": [
       {
@@ -949,6 +931,24 @@
         "name": "reason",
         "type": "uint8",
         "internalType": "uint8"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "unlockIntexAuctionBidBondAfterTimeout",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "bidder",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "outputs": [],
@@ -1510,6 +1510,22 @@
   },
   {
     "type": "error",
+    "name": "IntexAuctionAssetEscrowTimeoutNotOver",
+    "inputs": [
+      {
+        "name": "returnableAt",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "nowTs",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "IntexAuctionAssetNotYetReturnable",
     "inputs": [
       {
@@ -1536,12 +1552,7 @@
   },
   {
     "type": "error",
-    "name": "IntexAuctionBidBondNotFound",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "IntexAuctionBidBondNotYetAbandoned",
+    "name": "IntexAuctionBidBondEscrowTimeoutNotOver",
     "inputs": [
       {
         "name": "unlockableAt",
@@ -1554,6 +1565,11 @@
         "internalType": "uint32"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "IntexAuctionBidBondNotFound",
+    "inputs": []
   },
   {
     "type": "error",
@@ -1626,22 +1642,6 @@
     "type": "error",
     "name": "ReentrancyGuardReentrantCall",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ReturnNotYetAbandoned",
-    "inputs": [
-      {
-        "name": "returnableAt",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "nowTs",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ]
   },
   {
     "type": "error",

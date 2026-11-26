@@ -6,90 +6,74 @@ import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Ini
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 import {ERC1967Utils} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
-import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
-import {TargetRouter} from "@contracts/target/TargetRouter.sol";
+import {IntexAuctionTargetRouter} from "@contracts/target/IntexAuctionTargetRouter.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
-import {MockDesis} from "@test-mocks/MockDesis.sol";
 
 contract RoutersUupsTest is CrossChainTest {
     uint32 internal constant OUTBE_CHAIN_ID = 1;
-    uint32 internal constant BNB_CHAIN_ID = 2;
 
     address internal stranger = makeAddr("stranger");
+    address internal erc20Router = makeAddr("erc20Router");
 
-    OriginRouter internal origin;
-    TargetRouter internal target;
+    IntexAuctionTargetRouter internal target;
 
     function setUp() public {
         _setUpBridge();
 
-        origin = DeployProxy.originRouter(address(bridge), address(this));
-        target = DeployProxy.targetRouter(address(bridge), address(this), OUTBE_CHAIN_ID);
+        target = DeployProxy.targetRouter(address(bridge), address(this), OUTBE_CHAIN_ID, erc20Router);
     }
 
     function test_Initialize_SetsAdmin() public view {
-        assertTrue(origin.hasRole(origin.DEFAULT_ADMIN_ROLE(), address(this)));
         assertTrue(target.hasRole(target.DEFAULT_ADMIN_ROLE(), address(this)));
     }
 
     function test_RevertWhen_InitializeCalledTwice() public {
         vm.expectRevert(Initializable.InvalidInitialization.selector);
-        origin.initialize(stranger);
-        vm.expectRevert(Initializable.InvalidInitialization.selector);
         target.initialize(stranger);
     }
 
     function test_RevertWhen_ImplementationInitialized() public {
-        OriginRouter impl = new OriginRouter(address(bridge));
-        vm.expectRevert(Initializable.InvalidInitialization.selector);
-        impl.initialize(address(this));
-
-        TargetRouter timpl = new TargetRouter(address(bridge), OUTBE_CHAIN_ID);
+        IntexAuctionTargetRouter timpl = new IntexAuctionTargetRouter(address(bridge), OUTBE_CHAIN_ID, erc20Router);
         vm.expectRevert(Initializable.InvalidInitialization.selector);
         timpl.initialize(address(this));
     }
 
     function test_RevertWhen_InitializeZeroDelegate() public {
-        OriginRouter impl = new OriginRouter(address(bridge));
-        bytes memory initData = abi.encodeCall(OriginRouter.initialize, (address(0)));
+        IntexAuctionTargetRouter impl = new IntexAuctionTargetRouter(address(bridge), OUTBE_CHAIN_ID, erc20Router);
+        bytes memory initData = abi.encodeCall(IntexAuctionTargetRouter.initialize, (address(0)));
         vm.expectRevert(abi.encodeWithSignature("ZeroAddress(string)", "delegate"));
         new ERC1967Proxy(address(impl), initData);
     }
 
     function test_RevertWhen_UpgradeByNonAdmin() public {
-        TargetRouter newImpl = new TargetRouter(address(bridge), OUTBE_CHAIN_ID);
+        IntexAuctionTargetRouter newImpl = new IntexAuctionTargetRouter(address(bridge), OUTBE_CHAIN_ID, erc20Router);
         vm.prank(stranger);
         vm.expectRevert(
             abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, stranger, bytes32(0))
         );
         target.upgradeToAndCall(address(newImpl), "");
-
-        OriginRouter newOriginImpl = new OriginRouter(address(bridge));
-        vm.prank(stranger);
-        vm.expectRevert(
-            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, stranger, bytes32(0))
-        );
-        origin.upgradeToAndCall(address(newOriginImpl), "");
     }
 
-    function test_Upgrade_PreservesWiringPeersAndBridge() public {
-        // Wire the origin side and register a remote messenger so post-upgrade state has something to prove.
-        MockDesis desisMock = new MockDesis();
-        address factory = makeAddr("factory");
-        origin.setDependencies(address(desisMock), factory);
-        origin.registerRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(target)));
-        origin.addTarget(BNB_CHAIN_ID);
+    function test_Upgrade_PreservesWiringRolesAndImmutables() public {
+        address auction = makeAddr("auction");
+        address intex = makeAddr("intex");
+        address escrow = makeAddr("escrow");
+        address ica = makeAddr("outbeIca");
+        target.setDependencies(auction, intex, escrow);
+        target.grantRole(target.OUTBE_ICA_ROLE(), ica);
 
-        OriginRouter newImpl = new OriginRouter(address(bridge));
-        origin.upgradeToAndCall(address(newImpl), "");
+        IntexAuctionTargetRouter newImpl = new IntexAuctionTargetRouter(address(bridge), OUTBE_CHAIN_ID, erc20Router);
+        target.upgradeToAndCall(address(newImpl), "");
 
-        bytes32 implSlot = vm.load(address(origin), ERC1967Utils.IMPLEMENTATION_SLOT);
+        bytes32 implSlot = vm.load(address(target), ERC1967Utils.IMPLEMENTATION_SLOT);
         assertEq(address(uint160(uint256(implSlot))), address(newImpl));
-        assertEq(origin.desis(), address(desisMock));
-        assertEq(origin.intexFactory(), factory);
-        assertEq(origin.remoteMessenger(BNB_CHAIN_ID), _interop(BNB_CHAIN_ID, address(target)));
-        assertEq(address(origin.BRIDGE()), address(bridge));
-        assertTrue(origin.hasRole(origin.DEFAULT_ADMIN_ROLE(), address(this)));
-        assertTrue(origin.isTarget(BNB_CHAIN_ID));
+        assertEq(address(target.intexAuction()), auction);
+        assertEq(address(target.intexContract()), intex);
+        assertEq(address(target.escrow()), escrow);
+        assertTrue(target.hasRole(target.OUTBE_ICA_ROLE(), ica));
+        assertTrue(target.hasRole(target.DEFAULT_ADMIN_ROLE(), address(this)));
+        assertEq(address(target.BRIDGE()), address(bridge));
+        assertEq(address(target.erc20Router()), erc20Router);
+        assertEq(target.OUTBE_CHAIN_ID(), OUTBE_CHAIN_ID);
     }
 }

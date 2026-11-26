@@ -4,7 +4,7 @@ use outbe_system_common::time::SECONDS_PER_DAY_U32;
 #[test]
 fn issue_enrolls_in_call_bin() {
     with_factory(|s| {
-        runtime::issue_intex(&s, sample(7)).unwrap();
+        runtime::open_intex_series(&s, sample(7)).unwrap();
         let f = IntexContract::new(s.clone());
         let bin =
             outbe_system_common::call_bins::price_to_bin(U256::from(EXPECTED_TRIGGER)).unwrap();
@@ -64,8 +64,8 @@ pub(super) fn fill_days(
 #[test]
 fn a_group_holds_its_bin_entry_until_its_last_member_leaves() {
     with_factory(|s| {
-        runtime::issue_intex(&s, sample(11)).unwrap();
-        runtime::issue_intex(&s, sample(22)).unwrap();
+        runtime::open_intex_series(&s, sample(11)).unwrap();
+        runtime::open_intex_series(&s, sample(22)).unwrap();
         let mut f = IntexContract::new(s.clone());
         let bin =
             outbe_system_common::call_bins::price_to_bin(U256::from(EXPECTED_TRIGGER)).unwrap();
@@ -87,7 +87,7 @@ fn a_group_holds_its_bin_entry_until_its_last_member_leaves() {
 #[test]
 fn try_call_marks_called_when_threshold_met() {
     with_factory(|s| {
-        runtime::issue_intex(&s, sample(7)).unwrap();
+        runtime::open_intex_series(&s, sample(7)).unwrap();
         let mut f = IntexContract::new(s.clone());
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
@@ -114,7 +114,7 @@ fn try_call_marks_called_when_threshold_met() {
 #[test]
 fn try_call_skips_when_below_threshold() {
     with_factory(|s| {
-        runtime::issue_intex(&s, sample(7)).unwrap();
+        runtime::open_intex_series(&s, sample(7)).unwrap();
         let mut f = IntexContract::new(s.clone());
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
@@ -182,7 +182,7 @@ mod called_pstar;
 #[test]
 fn a_group_is_called_once() {
     with_factory(|s| {
-        runtime::issue_intex(&s, sample(9)).unwrap();
+        runtime::open_intex_series(&s, sample(9)).unwrap();
         outbe_intex::api::call_group_of(&s, sid(9), ISSUED_AT + 10).unwrap();
         let series = outbe_intex::api::get_series(&s, sid(9)).unwrap();
         assert_eq!(series_state(&s, sid(9)), outbe_intex::IntexState::Called);

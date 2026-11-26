@@ -11,7 +11,7 @@ pub const UNKNOWN: u8 = 0;
 /// One CCA-held liquidity reservation. A zero `asset` means the slot is empty.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[storage_record(exists_field = asset)]
-pub struct LiquidityReservation {
+pub struct CredisReservation {
     #[key]
     pub id: U256,
     #[attribute(order = 0)]
@@ -41,24 +41,31 @@ pub struct LiquidityReservation {
     pub asset_decimals: u8,
     #[attribute(order = 12)]
     pub reference_currency: u16,
-    #[attribute(order = 13)]
-    pub source: Address,
     /// The reservation's UTC day in its currencies.
-    #[attribute(order = 14)]
+    #[attribute(order = 13)]
     pub series_id: outbe_core_common::series_id::SeriesId,
     /// The reservation's UTC hour, 0-23.
-    #[attribute(order = 15)]
+    #[attribute(order = 14)]
     pub sub_series: u8,
-    #[attribute(order = 16)]
+    #[attribute(order = 15)]
     pub call_start_day: u32,
-    #[attribute(order = 17)]
+    #[attribute(order = 16)]
     pub call_rate: u16,
-    #[attribute(order = 18)]
+    #[attribute(order = 17)]
     pub call_window_seconds: u32,
-    #[attribute(order = 19)]
+    #[attribute(order = 18)]
     pub call_threshold_seconds: u32,
-    #[attribute(order = 20)]
+    #[attribute(order = 19)]
     pub call_notice_period_seconds: u32,
+    /// WCOEN the CCA put in for the pledged Gratis, 18 decimals.
+    #[attribute(order = 20)]
+    pub wcoen_minor: U256,
+    /// Account of the CCA that gets the stablecoins of the Credis owner.
+    #[attribute(order = 21)]
+    pub cca_receiver: Address,
+    /// Account of the card issuer that gets the escrow.
+    #[attribute(order = 22)]
+    pub omnibus: Address,
 }
 
 /// A pending governance action. A zero vault means the record is absent.
@@ -121,22 +128,26 @@ pub struct VaultRouterContract {
     #[attribute(order = 9)]
     pub reservation_nonce: outbe_primitives::storage::dsl::Value<U256>,
 
-    /// roots 13-33: CCA stables reservations keyed by id. Each record field
+    /// roots 13-35: CCA stables reservations keyed by id. Each record field
     /// hashes its key with a separate root; these roots must not be reused.
     #[attribute(order = 10)]
-    pub reservations: outbe_primitives::storage::dsl::Map<U256, LiquidityReservation>,
+    pub reservations: outbe_primitives::storage::dsl::Map<U256, CredisReservation>,
 
-    /// slot 35: vault -> underlying asset captured at registration time.
+    /// slot 36: vault -> underlying asset captured at registration time.
     #[attribute(order = 11)]
     pub vault_assets: outbe_primitives::storage::dsl::Map<Address, Address>,
 
-    /// roots 36-38: pending vault actions keyed by proposal ID.
+    /// roots 37-39: pending vault actions keyed by proposal ID.
     #[attribute(order = 12)]
     pub vault_actions: outbe_primitives::storage::dsl::Map<U256, VaultActionData>,
 
-    /// slot 39: vault -> pending proposal ID; zero means none.
+    /// slot 40: vault -> pending proposal ID; zero means none.
     #[attribute(order = 13)]
     pub pending_vault_proposals: outbe_primitives::storage::dsl::Map<Address, U256>,
+
+    /// slot 41: vault -> open Credis reservations whose escrow came from it.
+    #[attribute(order = 14)]
+    pub vault_open_reservations: outbe_primitives::storage::dsl::Map<Address, u32>,
 }
 
 impl<'storage> VaultRouterContract<'storage> {
@@ -154,14 +165,47 @@ impl<'storage> VaultRouterContract<'storage> {
         StorageSet::new(base, self.address, self.storage.clone())
     }
 
+    /// Holds `reservation` and counts it against the vault its escrow came from.
+    pub fn hold_credis_reservation(
+        &self,
+        reservation: &CredisReservation,
+    ) -> outbe_primitives::error::Result<()> {
+        self.reservations.create(reservation)?;
+        let open = self
+            .vault_open_reservations
+            .read(&reservation.vault)?
+            .checked_add(1)
+            .ok_or(crate::errors::VaultRouterError::InvalidReservationAmount)?;
+        self.vault_open_reservations.write(&reservation.vault, open)
+    }
+
+    /// Deletes the reservation `id` and returns it, or `None` when none is held.
+    pub fn take_credis_reservation(
+        &self,
+        id: U256,
+    ) -> outbe_primitives::error::Result<Option<CredisReservation>> {
+        let Some(reservation) = self.reservations.get(id)? else {
+            return Ok(None);
+        };
+        self.reservations.delete(id)?;
+        let open = self
+            .vault_open_reservations
+            .read(&reservation.vault)?
+            .checked_sub(1)
+            .ok_or(crate::errors::VaultRouterError::ReservationNotFound(id))?;
+        self.vault_open_reservations
+            .write(&reservation.vault, open)?;
+        Ok(Some(reservation))
+    }
+
     /// First vault registered for `asset`, or `None` if the asset has no vault.
     pub fn first_vault(&self, asset: Address) -> outbe_primitives::error::Result<Option<Address>> {
         self.asset_vault_set(asset).at(0)
     }
 }
 
-impl From<LiquidityReservation> for crate::precompile::IVaultRouter::LiquidityReservation {
-    fn from(r: LiquidityReservation) -> Self {
+impl From<CredisReservation> for crate::precompile::IVaultRouter::CredisReservation {
+    fn from(r: CredisReservation) -> Self {
         Self {
             asset: r.asset,
             amountMinor: r.amount_minor,
@@ -176,9 +220,11 @@ impl From<LiquidityReservation> for crate::precompile::IVaultRouter::LiquidityRe
             issuanceCurrency: r.issuance_currency,
             assetDecimals: r.asset_decimals,
             referenceCurrency: r.reference_currency,
-            source: r.source,
             seriesId: r.series_id.into(),
             subSeries: r.sub_series,
+            wcoenMinor: r.wcoen_minor,
+            ccaReceiver: r.cca_receiver,
+            omnibus: r.omnibus,
         }
     }
 }

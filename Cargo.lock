@@ -7808,7 +7808,6 @@ dependencies = [
 name = "outbe-cli"
 version = "0.1.0"
 dependencies = [
- "alloy-consensus",
  "alloy-eips",
  "alloy-primitives",
  "alloy-sol-types",
@@ -7822,15 +7821,12 @@ dependencies = [
  "hex",
  "k256 0.13.4",
  "libc",
- "outbe-core-common",
  "outbe-primitives",
  "outbe-rpc",
  "outbe-simplex",
  "outbe-system-common",
  "outbe-tee",
  "outbe-update",
- "outbe-zerofee",
- "outbe-zk",
  "radicle-crypto",
  "rand 0.10.2",
  "rand_core 0.10.1",
@@ -7870,6 +7866,7 @@ dependencies = [
  "alloy-consensus",
  "alloy-primitives",
  "alloy-rpc-types-engine",
+ "alloy-sol-types",
  "bytes",
  "clap",
  "commonware-actor",
@@ -7924,13 +7921,10 @@ name = "outbe-core-common"
 version = "0.1.0"
 dependencies = [
  "alloy-primitives",
- "ark-bn254",
- "ark-ff 0.6.0",
  "base64 0.22.1",
  "ed25519-dalek 2.2.0",
  "hex",
  "k256 0.13.4",
- "outbe-poseidon",
  "outbe-primitives",
  "outbe-system-common",
  "outbe-tee",
@@ -7969,9 +7963,7 @@ dependencies = [
  "outbe-ccaregistry",
  "outbe-core-common",
  "outbe-credis",
- "outbe-fidelity",
  "outbe-gratis",
- "outbe-gratisfactory",
  "outbe-oracle",
  "outbe-primitives",
  "outbe-promislimit",
@@ -8276,37 +8268,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "outbe-fidelity"
-version = "0.1.0"
-dependencies = [
- "alloy-primitives",
- "alloy-sol-types",
- "ed25519-dalek 2.2.0",
- "hex",
- "k256 0.13.4",
- "outbe-core-common",
- "outbe-fidelity-math",
- "outbe-macros",
- "outbe-primitives",
- "outbe-system-common",
- "outbe-tee",
- "postcard",
- "serde",
- "serde_json",
- "thiserror 2.0.21",
- "zeroize",
-]
-
-[[package]]
-name = "outbe-fidelity-math"
-version = "0.1.0"
-dependencies = [
- "alloy-primitives",
- "outbe-system-common",
- "thiserror 2.0.21",
-]
-
-[[package]]
 name = "outbe-fsepochregistry"
 version = "0.1.0"
 dependencies = [
@@ -8393,7 +8354,6 @@ dependencies = [
  "ed25519-dalek 2.2.0",
  "hex",
  "outbe-core-common",
- "outbe-fidelity",
  "outbe-macros",
  "outbe-nod",
  "outbe-primitives",
@@ -8414,15 +8374,12 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "outbe-core-common",
- "outbe-fidelity",
  "outbe-gratis",
- "outbe-macros",
  "outbe-nod",
  "outbe-primitives",
  "outbe-promislimit",
  "outbe-system-common",
  "outbe-tee",
- "outbe-vaultrouter",
  "thiserror 2.0.21",
 ]
 
@@ -8496,6 +8453,7 @@ dependencies = [
  "evm2",
  "outbe-core-common",
  "outbe-intex",
+ "outbe-intexfactory",
  "outbe-macros",
  "outbe-oracle",
  "outbe-primitives",
@@ -8560,34 +8518,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "outbe-lysis"
-version = "0.1.0"
-dependencies = [
- "alloy-primitives",
- "hex",
- "num-bigint 0.4.8",
- "outbe-core-common",
- "outbe-primitives",
- "outbe-system-common",
- "serde",
- "serde_json",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "outbe-lysis-v1-reference"
-version = "0.1.0"
-dependencies = [
- "clap",
- "eyre",
- "num-bigint 0.4.8",
- "num-traits",
- "serde",
- "serde_json",
- "sha2 0.10.9",
-]
-
-[[package]]
 name = "outbe-macros"
 version = "0.1.0"
 dependencies = [
@@ -8611,7 +8541,6 @@ dependencies = [
  "outbe-core-common",
  "outbe-desis",
  "outbe-emission",
- "outbe-fidelity",
  "outbe-macros",
  "outbe-nod",
  "outbe-oracle",
@@ -8622,6 +8551,31 @@ dependencies = [
  "proptest",
  "thiserror 2.0.21",
  "tracing",
+]
+
+[[package]]
+name = "outbe-net-up"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "clap",
+ "eyre",
+ "hex",
+ "outbe-genesis-cli",
+ "outbe-operator-node-role",
+ "outbe-operator-remote",
+ "outbe-primitives",
+ "outbe-software-bundle",
+ "rustix",
+ "serde",
+ "serde_json",
+ "tar",
+ "tempfile",
+ "tokio",
+ "toml 0.8.23",
+ "walkdir",
+ "yaml_serde",
+ "zstd 0.14.4",
 ]
 
 [[package]]
@@ -8683,8 +8637,81 @@ dependencies = [
 ]
 
 [[package]]
+name = "outbe-operator-node-role"
+version = "0.1.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-primitives",
+ "alloy-sol-types",
+ "eyre",
+ "hex",
+ "indicatif",
+ "k256 0.13.4",
+ "outbe-operator-systemd",
+ "outbe-snapshot",
+ "reqwest 0.12.28",
+ "rustix",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tar",
+ "tempfile",
+ "tokio",
+ "toml 0.8.23",
+ "walkdir",
+ "yaml_serde",
+ "zeroize",
+ "zstd 0.14.4",
+]
+
+[[package]]
+name = "outbe-operator-remote"
+version = "0.1.0"
+dependencies = [
+ "eyre",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "outbe-operator-systemd"
 version = "0.1.0"
+
+[[package]]
+name = "outbe-operator-vm"
+version = "0.1.0"
+dependencies = [
+ "eyre",
+ "hex",
+ "outbe-software-bundle",
+ "rustix",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "walkdir",
+]
+
+[[package]]
+name = "outbe-operator-vm-image"
+version = "0.1.0"
+dependencies = [
+ "eyre",
+ "hex",
+ "outbe-operator-systemd",
+ "outbe-software-bundle",
+ "rustix",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tar",
+ "tempfile",
+ "walkdir",
+ "zstd 0.14.4",
+]
 
 [[package]]
 name = "outbe-oracle"
@@ -8802,6 +8829,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "outbe-core-common",
  "outbe-macros",
  "outbe-primitives",
  "outbe-system-common",
@@ -8820,7 +8848,6 @@ dependencies = [
  "outbe-core-common",
  "outbe-credis",
  "outbe-credisfactory",
- "outbe-fidelity",
  "outbe-gem",
  "outbe-gemfactory",
  "outbe-gratis",
@@ -9022,7 +9049,6 @@ dependencies = [
  "outbe-engine",
  "outbe-evm",
  "outbe-execution",
- "outbe-fidelity",
  "outbe-fsepochregistry",
  "outbe-gem",
  "outbe-gemfactory",
@@ -9396,30 +9422,20 @@ name = "outbe-up"
 version = "0.1.0"
 dependencies = [
  "alloy-primitives",
- "alloy-sol-types",
  "clap",
  "eyre",
- "hex",
- "indicatif",
- "k256 0.13.4",
- "outbe-genesis-cli",
- "outbe-operator-systemd",
+ "outbe-operator-node-role",
+ "outbe-operator-vm",
+ "outbe-operator-vm-image",
  "outbe-primitives",
- "outbe-snapshot",
  "outbe-software-bundle",
  "reqwest 0.12.28",
  "rustix",
  "serde",
  "serde_json",
- "sha2 0.10.9",
- "tar",
  "tempfile",
  "tokio",
- "toml 0.8.23",
- "walkdir",
- "yaml_serde",
- "zeroize",
- "zstd 0.14.4",
+ "url",
 ]
 
 [[package]]
@@ -9485,6 +9501,16 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "outbe-vm-agent"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "eyre",
+ "outbe-operator-node-role",
+ "tokio",
 ]
 
 [[package]]
@@ -17270,6 +17296,7 @@ dependencies = [
  "hex",
  "outbe-genesis-cli",
  "outbe-operator-systemd",
+ "outbe-operator-vm-image",
  "outbe-software-bundle",
  "serde",
  "serde_json",

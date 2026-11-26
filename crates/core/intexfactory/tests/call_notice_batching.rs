@@ -5,8 +5,8 @@
 
 use alloy_primitives::U256;
 use outbe_intex::SeriesId;
-use outbe_intexfactory::constants::MAX_SERIES_PER_MARK;
-use outbe_intexfactory::notify::{joins_run, pack_call_notice, send_call_notices};
+use outbe_intexfactory::call_notice::{joins_run, pack_call_notice, send_call_notices};
+use outbe_intexfactory::constants::MAX_SERIES_PER_CALL_NOTICE;
 use outbe_intexfactory::IntexFactoryContract;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
@@ -88,15 +88,8 @@ fn drain(handle: &StorageHandle<'_>) {
     send_call_notices(&ctx).expect("a dropped notice never fails the drain");
 }
 
-/// A provider whose OriginRouter accepts sends, so the drain exercises the path a live chain takes
-/// rather than the requeue a missing stub produces.
 fn provider() -> HashMapStorageProvider {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.stub_sub_call_at(
-        outbe_intexfactory::constants::ORIGIN_ROUTER_ADDRESS,
-        alloy_primitives::Bytes::from(vec![0u8; 32]),
-    );
-    storage
+    HashMapStorageProvider::new(CHAIN_ID)
 }
 
 fn bounds(handle: &StorageHandle<'_>) -> (u32, u32) {
@@ -128,7 +121,7 @@ fn a_run_never_reaches_past_the_chunk_limit() {
     let mut storage = provider();
     StorageHandle::enter(&mut storage, |handle| {
         // One coalesced run: the wire cap turns every eight entries into one call.
-        let run_cap = SWEEP_WRITES_PER_BLOCK * MAX_SERIES_PER_MARK as u32;
+        let run_cap = SWEEP_WRITES_PER_BLOCK * MAX_SERIES_PER_CALL_NOTICE as u32;
         let queued = run_cap + 5;
         for index in 0..queued {
             push_called(&handle, index, CALLED_AT);
@@ -197,7 +190,7 @@ fn a_run_that_hits_the_chunk_limit_is_split_not_overrun() {
         assert_eq!(
             bounds(&handle),
             (SWEEP_WRITES_PER_BLOCK, queued),
-            "the firing stops on its router-call budget"
+            "the firing stops on its message budget"
         );
 
         let factory = IntexFactoryContract::new(handle.clone());

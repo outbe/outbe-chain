@@ -105,7 +105,7 @@ library IntexMetadata {
             _currencyTrait("Reference Currency", data.referenceCurrency)
         );
 
-        // Raw minor units stay in readData. These are display values.
+        // Raw minor units stay in getIntexSeries. These are display values.
         string memory economics = string.concat(
             ",{\"trait_type\":\"Entry Price\",\"value\":",
             _amountPlain(data.entryPriceMinor, PRICE_DECIMALS, PRICE_PRECISION),

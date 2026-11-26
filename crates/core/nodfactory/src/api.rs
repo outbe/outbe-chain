@@ -1,6 +1,7 @@
 //! Cross-module NodFactory API.
 
 use alloy_primitives::{Address, Bytes, U256};
+#[cfg(any(test, feature = "test-utils"))]
 use outbe_core_common::nod_encryption::EncryptedNodV1;
 use outbe_primitives::{error::Result, storage::StorageHandle};
 use outbe_vaultrouter::settlement::SettlementPayment;
@@ -9,6 +10,8 @@ use crate::runtime;
 
 pub use crate::runtime::MineGratisRequest;
 
+/// Issues a Nod with no offer checks: a fixture for tests and benchmarks.
+#[cfg(any(test, feature = "test-utils"))]
 pub fn issue_nod(storage: &StorageHandle<'_>, encrypted: &EncryptedNodV1) -> Result<U256> {
     runtime::issue_nod(storage, encrypted)
 }

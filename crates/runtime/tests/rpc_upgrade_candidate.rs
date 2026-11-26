@@ -97,12 +97,12 @@ fn candidate_storage(context: &DcapOnboardingContextV1) -> HashMapStorageProvide
             .write(context.policy_hash)
             .unwrap();
         registry
-            .tribute_offer_public_key
+            .offer_public_key
             .write(B256::from(context.network_encryption_public))
             .unwrap();
         registry.key_epoch.write(context.key_epoch).unwrap();
         registry
-            .tribute_offer_epoch
+            .offer_epoch
             .write(context.network_encryption_epoch)
             .unwrap();
     });

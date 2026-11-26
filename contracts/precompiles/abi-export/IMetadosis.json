@@ -29,52 +29,10 @@
         "internalType": "uint32"
       },
       {
-        "name": "tributeNominalTotalMinor",
+        "name": "nominalAmountMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
-      },
-      {
-        "name": "gratisDemandMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "dayGratisLimitMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "lysisLimitMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "unusedLysisLimitMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "lysisAllocationMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "status",
-        "type": "string",
-        "indexed": false,
-        "internalType": "string"
-      },
-      {
-        "name": "blockNumber",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
       }
     ],
     "anonymous": false
@@ -94,6 +52,25 @@
         "type": "uint8",
         "indexed": false,
         "internalType": "uint8"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "MetadosisLimitExceeded",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "excessMinor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -177,7 +154,7 @@
   },
   {
     "type": "error",
-    "name": "InvalidLysisLimitSplit",
+    "name": "InvalidMetadosisLimitSplit",
     "inputs": [
       {
         "name": "dayLimit",
@@ -185,7 +162,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "lysisLimitMinor",
+        "name": "nodLoadsMinor",
         "type": "uint256",
         "internalType": "uint256"
       }

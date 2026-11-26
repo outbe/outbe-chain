@@ -774,17 +774,18 @@ fn vault_action_remove_retries_after_active_cca_drains_real_vault_shares() {
 }
 
 #[test]
-fn reserve_stables_rejects_pending_first_vault_removal_through_abi() {
+fn create_credis_reservation_rejects_pending_first_vault_removal_through_abi() {
     let mut world = pending_removal_world();
     let result = world.call(
         CCA,
         VAULT_ROUTER_ADDRESS,
-        IVaultRouter::reserveStablesCall {
-            credisOwner: CCA,
-            source: CCA,
+        IVaultRouter::createCredisReservationCall {
+            owner: CCA,
             asset: ASSET,
             amountMinor: U256::from(AMOUNT),
             referenceCurrency: 840,
+            ccaReceiver: CCA,
+            omnibus: CCA,
         }
         .abi_encode()
         .into(),
@@ -805,7 +806,9 @@ fn reserve_stables_rejects_pending_first_vault_removal_through_abi() {
     let reservation = world.view(
         CCA,
         VAULT_ROUTER_ADDRESS,
-        IVaultRouter::reservationOfCall { id: U256::ONE },
+        IVaultRouter::getCredisReservationCall {
+            credisReservationId: U256::ONE,
+        },
     );
     assert_eq!(reservation.amountMinor, U256::ZERO);
     assert!(world.logs().is_empty());

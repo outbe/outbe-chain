@@ -324,7 +324,7 @@ fn wwd_takes_offers_only_by_the_time_and_seals_on_close() {
             proj.offering_end,
             date_key_to_utc_timestamp(20261003).unwrap() + 12 * 3_600
         );
-        assert!(!outbe_worldwideday::is_sealed(storage.clone(), wwd).unwrap());
+        assert!(!outbe_worldwideday::is_worldwide_day_sealed(storage.clone(), wwd).unwrap());
 
         // The day takes offers by the time, with no oracle price.
         storage
@@ -343,7 +343,7 @@ fn wwd_takes_offers_only_by_the_time_and_seals_on_close() {
         let seal_ts = proj.offering_end + 12 * 3_600;
         advance_at(&storage, seal_ts, genesis_ts);
         assert!(!factory.pipeline_wwd.read_all().unwrap().contains(&wwd));
-        assert!(outbe_worldwideday::is_sealed(storage.clone(), wwd).unwrap());
+        assert!(outbe_worldwideday::is_worldwide_day_sealed(storage.clone(), wwd).unwrap());
     });
 }
 
@@ -400,7 +400,7 @@ fn wwd_without_price_runs_as_empty_day() {
         );
         allocate_to_metadosis(&ctx_03, emission_day, expected_limit);
         outbe_worldwideday::advance_worldwide_days_command(&ctx_03).unwrap();
-        assert!(!outbe_worldwideday::is_sealed(storage.clone(), wwd).unwrap());
+        assert!(!outbe_worldwideday::is_worldwide_day_sealed(storage.clone(), wwd).unwrap());
 
         crate::commands::process_emission_day(&ctx_03, emission_day).unwrap();
         advance_at(
@@ -408,14 +408,14 @@ fn wwd_without_price_runs_as_empty_day() {
             date_key_to_utc_timestamp(20261004).unwrap(),
             genesis_ts,
         );
-        assert!(outbe_worldwideday::is_sealed(storage.clone(), wwd).unwrap());
+        assert!(outbe_worldwideday::is_worldwide_day_sealed(storage.clone(), wwd).unwrap());
         let settled = api::emission_day(storage.clone(), emission_day)
             .unwrap()
             .unwrap();
         assert_eq!(settled.state, metadosis_state::COMPLETED);
         assert_eq!(settled.wwd, wwd);
         assert_eq!(
-            outbe_worldwideday::day_totals(storage.clone(), wwd)
+            outbe_worldwideday::worldwide_day_totals(storage.clone(), wwd)
                 .unwrap()
                 .nod_count,
             0
@@ -445,7 +445,6 @@ fn wwd_without_price_runs_as_empty_day() {
         .collect::<Vec<_>>();
     assert_eq!(completed.len(), 1);
     assert_eq!(completed[0].emissionDay, 20261002);
-    assert_eq!(completed[0].status, "COMPLETED");
 
     let canceled_or_failed = provider
         .get_ordered_events()
@@ -459,7 +458,7 @@ fn wwd_without_price_runs_as_empty_day() {
 }
 
 #[test]
-fn zero_metadosis_limit_cancels_day_with_reason_one_and_preserves_cancelled_state() {
+fn zero_metadosis_limit_cancels_day_with_reason_one_and_preserves_canceled_state() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     provider.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 64);
     install_test_enclaves();
@@ -502,7 +501,7 @@ fn zero_metadosis_limit_cancels_day_with_reason_one_and_preserves_cancelled_stat
             .unwrap();
         assert_eq!(
             record.metadosis_state,
-            outbe_emission::schema::metadosis_state::CANCELLED
+            outbe_emission::schema::metadosis_state::CANCELED
         );
         assert_eq!(
             record.state,

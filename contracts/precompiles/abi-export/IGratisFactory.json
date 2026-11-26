@@ -1,43 +1,6 @@
 [
   {
     "type": "function",
-    "name": "cancelPledge",
-    "inputs": [
-      {
-        "name": "reservationId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "collateralOf",
-    "inputs": [
-      {
-        "name": "credisId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "source",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "remainingMinor",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "mineCoen",
     "inputs": [
       {
@@ -91,60 +54,6 @@
   },
   {
     "type": "function",
-    "name": "pledgeGratis",
-    "inputs": [
-      {
-        "name": "reservationId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "auth",
-        "type": "tuple",
-        "internalType": "struct IGratisFactory.ModifyAuth",
-        "components": [
-          {
-            "name": "mac",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          },
-          {
-            "name": "opNonce",
-            "type": "uint64",
-            "internalType": "uint64"
-          }
-        ]
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "pledgeOf",
-    "inputs": [
-      {
-        "name": "reservationId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "source",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "gratisMinor",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "supportsInterface",
     "inputs": [
       {
@@ -192,147 +101,13 @@
         "internalType": "address"
       },
       {
-        "name": "gratisMinor",
+        "name": "amountMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       }
     ],
     "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "GratisPledgeBurned",
-    "inputs": [
-      {
-        "name": "credisId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "source",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "gratisMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "GratisPledgeCanceled",
-    "inputs": [
-      {
-        "name": "reservationId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "source",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "gratisMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "GratisPledgeCreated",
-    "inputs": [
-      {
-        "name": "reservationId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "source",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "gratisMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "GratisPledgeReleased",
-    "inputs": [
-      {
-        "name": "credisId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "source",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "gratisMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "GratisPledgeSentToCredis",
-    "inputs": [
-      {
-        "name": "reservationId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "credisId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "error",
-    "name": "Exceeded",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "Exists",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "FidelityNotEligible",
-    "inputs": []
   },
   {
     "type": "error",
@@ -342,41 +117,6 @@
   {
     "type": "error",
     "name": "NativeCoenOverflow",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "NotFound",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "NotReservationSource",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "PledgeExists",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "PledgeMismatch",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "PledgeNotFound",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ReservationExpired",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ReservationNotFound",
     "inputs": []
   }
 ]

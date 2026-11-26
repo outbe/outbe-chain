@@ -94,7 +94,23 @@ fn founding_methods(chain: Arc<Founding>) -> (RpcModule<()>, RpcModule<()>) {
         .unwrap();
     let mut outbe = RpcModule::new(());
     outbe
-        .register_method("outbe_teeRenewalScheduleV1", move |_, _, _| {
+        .register_method("outbe_teeRenewalScheduleV1", move |params, _, _| {
+            let args: Vec<Value> = match params.as_str() {
+                None => Vec::new(),
+                Some(_) => params.parse()?,
+            };
+            if let Some(value) = args.first().filter(|v| !v.is_null()) {
+                let hash: B256 = serde_json::from_value(value.clone()).map_err(|error| {
+                    ErrorObjectOwned::owned(-32602, format!("{error}"), None::<()>)
+                })?;
+                if hash != chain.schedule.finalized_hash {
+                    return Err(ErrorObjectOwned::owned(
+                        -32602,
+                        format!("unknown schedule checkpoint {hash}"),
+                        None::<()>,
+                    ));
+                }
+            }
             Ok::<_, ErrorObjectOwned>(serde_json::to_value(&chain.schedule).unwrap())
         })
         .unwrap();
@@ -141,10 +157,8 @@ impl Founding {
             {
                 ITeeRegistryV1::validatorEnclaveBindingCall::abi_encode_returns(&self.binding)
             }
-            (TEE_REGISTRY_ADDRESS, s)
-                if s == ITeeRegistryV1::tributeOfferPublicKeyCall::SELECTOR =>
-            {
-                ITeeRegistryV1::tributeOfferPublicKeyCall::abi_encode_returns(&self.offer_public)
+            (TEE_REGISTRY_ADDRESS, s) if s == ITeeRegistryV1::offerPublicKeyCall::SELECTOR => {
+                ITeeRegistryV1::offerPublicKeyCall::abi_encode_returns(&self.offer_public)
             }
             (TEE_REGISTRY_ADDRESS, s) if s == ITeeRegistryV1::enclaveUpgradeV1Call::SELECTOR => {
                 ITeeRegistryV1::enclaveUpgradeV1Call::abi_encode_returns(
@@ -172,7 +186,7 @@ impl Founding {
             }
             (TEE_REGISTRY_ADDRESS, s)
                 if s == ITeeRegistryV1::keyEpochCall::SELECTOR
-                    || s == ITeeRegistryV1::tributeOfferEpochCall::SELECTOR =>
+                    || s == ITeeRegistryV1::offerEpochCall::SELECTOR =>
             {
                 U256::ZERO.abi_encode()
             }

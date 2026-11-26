@@ -1,5 +1,5 @@
 //! The Gem lifecycle as GemFactory runs it: issuance on the live profile, settlement and
-//! burn rules, the daily call sweep and the forfeit sweep in EVM storage.
+//! burn rules, the daily call sweep and the close sweep in EVM storage.
 
 use alloy_primitives::{address, Address, B256, U256};
 use outbe_oracle::schema::OracleContract;
@@ -107,7 +107,7 @@ pub(crate) fn call_gem(storage: &StorageHandle, gem_id: U256, at: u64) {
     let group = group_of(storage, gem_id);
     let mut gem = GemContract::new(storage.clone());
     let terms = gem.read_call_terms(group).unwrap();
-    crate::called::mark_called(&mut gem, group, &terms, at).unwrap();
+    crate::call::call_series(&mut gem, group, &terms, at).unwrap();
 }
 
 /// Settles a gem the way the factory does once payment is accepted: an uncalled gem,
@@ -217,23 +217,23 @@ pub(crate) fn block_ctx<'s>(storage: &StorageHandle<'s>) -> BlockRuntimeContext<
     block_ctx_at(storage, storage.now_secs().unwrap())
 }
 
-/// One block of the daily pass and its cleanup, as the Cycle runs them.
+/// One block of the daily pass and its forfeit pass, as the Cycle runs them.
 pub(crate) fn continue_sweeps(ctx: &BlockRuntimeContext) -> Result<()> {
     let block = super::daily_pass(ctx)?;
-    crate::hooks::cleanup(&block)?;
+    crate::hooks::forfeit_through(&block)?;
     Ok(())
 }
 
 fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
-    crate::called::scan_and_call(ctx)
+    crate::call::scan_and_call(ctx)
 }
 
 fn schedule_call_pass(ctx: &BlockRuntimeContext) -> Result<()> {
-    crate::called::schedule_call_pass(ctx)
+    crate::call::schedule_call_pass(ctx)
 }
 
-fn process_call_pass(ctx: &BlockRuntimeContext) -> Result<u32> {
-    crate::called::process_call_pass(ctx)
+fn run_call_pass(ctx: &BlockRuntimeContext) -> Result<u32> {
+    crate::call::run_call_pass(ctx)
 }
 
 pub(crate) fn begin_block_at(storage: &StorageHandle, ts: u64) {

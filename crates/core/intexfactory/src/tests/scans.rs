@@ -9,7 +9,7 @@ const MATURE_TS: u64 = ISSUED_AT + 21 * DAY + 1;
 #[test]
 fn scan_and_call_force_calls_breached_series() {
     with_factory(|s| {
-        runtime::issue_intex(&s, sample(7)).unwrap();
+        runtime::open_intex_series(&s, sample(7)).unwrap();
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
         let scan_ts = ISSUED_AT + 60 * DAY;
@@ -31,7 +31,7 @@ fn scan_and_call_force_calls_breached_series() {
             },
             s.clone(),
         );
-        assert_eq!(called::scan_and_call(&ctx).unwrap(), 1);
+        assert_eq!(call::scan_and_call(&ctx).unwrap(), 1);
         assert_eq!(series_state(&s, sid(7)), outbe_intex::IntexState::Called);
     });
 }
@@ -44,7 +44,7 @@ fn a_called_series_reports_its_settlement_deadline() {
     let mut storage = factory_provider();
     let notice = StorageHandle::enter(&mut storage, |s| {
         select_prod_profile(&s);
-        runtime::issue_intex(&s, sample(7)).unwrap();
+        runtime::open_intex_series(&s, sample(7)).unwrap();
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
         let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts)).expect("date step");
@@ -65,7 +65,7 @@ fn a_called_series_reports_its_settlement_deadline() {
             },
             s.clone(),
         );
-        assert_eq!(called::scan_and_call(&ctx).unwrap(), 1);
+        assert_eq!(call::scan_and_call(&ctx).unwrap(), 1);
         outbe_intex::api::get_series(&s, sid(7))
             .unwrap()
             .call_notice_period_seconds
@@ -96,7 +96,7 @@ fn scan_and_call_reads_daily_vwap_at_midnight() {
     // stays unfinalized. So a read of any other day, or of any other store, drops
     // below the threshold and fails the call.
     with_factory(|s| {
-        runtime::issue_intex(&s, sample(7)).unwrap();
+        runtime::open_intex_series(&s, sample(7)).unwrap();
         let oracle = OracleContract::new(s.clone());
         setup_pair(&oracle);
         // Exact midnight UTC, well past issuance.
@@ -133,7 +133,7 @@ fn scan_and_call_reads_daily_vwap_at_midnight() {
             },
             s.clone(),
         );
-        assert_eq!(called::scan_and_call(&ctx).unwrap(), 1);
+        assert_eq!(call::scan_and_call(&ctx).unwrap(), 1);
         assert_eq!(series_state(&s, sid(7)), outbe_intex::IntexState::Called);
     });
 }
@@ -145,7 +145,7 @@ fn scan_and_call_reads_daily_vwap_at_midnight() {
 #[test]
 fn call_scan_does_not_halt_on_overflow_vwap() {
     with_factory(|s| {
-        runtime::issue_intex(&s, sample(7)).unwrap();
+        runtime::open_intex_series(&s, sample(7)).unwrap();
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
         let scan_ts = ISSUED_AT + 60 * DAY;
@@ -168,7 +168,7 @@ fn call_scan_does_not_halt_on_overflow_vwap() {
             s.clone(),
         );
         // Must not halt: returns Ok(0) and leaves the series Issued.
-        assert_eq!(called::scan_and_call(&ctx).unwrap(), 0);
+        assert_eq!(call::scan_and_call(&ctx).unwrap(), 0);
         assert_eq!(series_state(&s, sid(7)), outbe_intex::IntexState::Issued);
     });
 }
@@ -180,7 +180,7 @@ fn a_node_local_failure_while_calling_fails_the_scan() {
     let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts)).expect("date step");
     StorageHandle::enter(&mut provider, |s| {
         select_prod_profile(&s);
-        runtime::issue_intex(&s, sample(7)).unwrap();
+        runtime::open_intex_series(&s, sample(7)).unwrap();
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
         fill_days(
@@ -213,7 +213,7 @@ fn a_node_local_failure_while_calling_fails_the_scan() {
             },
             s,
         );
-        called::process_call_pass(&ctx)
+        call::run_call_pass(&ctx)
     });
     provider.clear_mutation_failure();
     assert!(matches!(
@@ -228,8 +228,7 @@ fn a_node_local_failure_while_calling_fails_the_scan() {
     });
 }
 
-/// Seed a series directly in the registry + call-price index, bypassing issue()
-/// so tests can omit the OriginRouter stub.
+/// Seed a series directly in the registry + call-price index, bypassing issue().
 fn seed_issued(s: &StorageHandle<'_>, id: u32) {
     seed_issued_at(s, id, ISSUED_AT);
 }
@@ -277,10 +276,6 @@ fn the_issue_day_counts_only_for_a_series_issued_at_midnight() {
             crate::constants::INTEX_NFT1155_ADDRESS,
             alloy_primitives::Bytes::from(vec![0u8; 32]),
         );
-        storage.stub_sub_call_at(
-            crate::constants::ORIGIN_ROUTER_ADDRESS,
-            alloy_primitives::Bytes::from(vec![0u8; 32]),
-        );
         StorageHandle::enter(&mut storage, |s| {
             select_prod_profile(&s);
             seed_issued_at(&s, 7, issued_at);
@@ -308,7 +303,6 @@ fn the_issue_day_counts_only_for_a_series_issued_at_midnight() {
 
 #[test]
 fn call_survives_router_failure() {
-    // No OriginRouter stub: notify_called fails silently.
     // The Issued -> Called transition must still complete.
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(ISSUED_AT));
@@ -342,17 +336,17 @@ fn call_survives_router_failure() {
 fn a_registry_edit_does_not_move_the_cursor_onto_another_currency() {
     let currencies = [840u16, 978u16];
     assert_eq!(
-        crate::called::currency_position(&currencies, u32::from(EUR_ISO)),
+        crate::call::currency_position(&currencies, u32::from(EUR_ISO)),
         1,
         "the cursor names a currency, not a slot"
     );
     assert_eq!(
-        crate::called::currency_position(&currencies[1..], u32::from(EUR_ISO)),
+        crate::call::currency_position(&currencies[1..], u32::from(EUR_ISO)),
         0,
         "dropping the currency ahead of it does not shift the cursor onto a stranger"
     );
     assert_eq!(
-        crate::called::currency_position(&currencies, 392),
+        crate::call::currency_position(&currencies, 392),
         0,
         "a currency the registry no longer carries restarts at the head"
     );
@@ -475,7 +469,7 @@ fn sweep_expiry(s: &StorageHandle<'_>, at: u64) {
         },
         s.clone(),
     );
-    called::daily_pass(&ctx).unwrap();
+    call::daily_pass(&ctx).unwrap();
 }
 
 #[test]
@@ -491,12 +485,12 @@ fn a_group_due_sooner_is_retired_even_when_a_later_one_was_called_first() {
         let near_day = IntexContract::deadline_day(now + DAY);
         let far_day = IntexContract::deadline_day(now + 10 * DAY);
         assert_eq!(
-            f.forfeit_day_live.read(&near_day).unwrap(),
+            f.close_day_live.read(&near_day).unwrap(),
             0,
             "the group whose window closed leaves its day"
         );
         assert_eq!(
-            f.forfeit_day_live.read(&far_day).unwrap(),
+            f.close_day_live.read(&far_day).unwrap(),
             1,
             "the one still inside its window stays"
         );
@@ -521,21 +515,21 @@ fn a_group_waits_for_its_transit_close_before_it_forfeits() {
             "the deadline day closed inside the margin"
         );
         let f = IntexContract::new(s.clone());
-        assert!(!f.group_forfeited(group_of(&s, member)).unwrap());
+        assert!(!f.group_closed(group_of(&s, member)).unwrap());
 
         sweep_expiry(&s, IntexContract::day_end(deadline_day + 1));
         assert!(
             !queued(&s, member),
             "forfeited once the transit close passed"
         );
-        assert!(f.group_forfeited(group_of(&s, member)).unwrap());
+        assert!(f.group_closed(group_of(&s, member)).unwrap());
     });
 }
 
 #[test]
 fn an_uncalled_group_never_enters_the_deadline_queue() {
     with_factory(|s| {
-        runtime::issue_intex(&s, sample(7)).unwrap();
+        runtime::open_intex_series(&s, sample(7)).unwrap();
         sweep_expiry(&s, ISSUED_AT + 400 * DAY);
         let f = IntexContract::new(s.clone());
         assert_eq!(f.first_expiry_day().unwrap(), None);
@@ -557,7 +551,7 @@ fn every_failed_pass_write_rolls_back(
         let member = StorageHandle::enter(&mut provider, |s| {
             select_prod_profile(&s);
             let member = arm(&s);
-            called::prepare_daily_pass(&BlockRuntimeContext::new(
+            call::prepare_daily_pass(&BlockRuntimeContext::new(
                 BlockContext {
                     block_gas_limit: 0,
                     user_gas_used: 0,
@@ -578,7 +572,7 @@ fn every_failed_pass_write_rolls_back(
     };
     let pass = |provider: &mut HashMapStorageProvider| {
         StorageHandle::enter(provider, |s| {
-            called::daily_pass(&BlockRuntimeContext::new(
+            call::daily_pass(&BlockRuntimeContext::new(
                 BlockContext {
                     block_gas_limit: 0,
                     user_gas_used: 0,
@@ -656,7 +650,7 @@ fn a_node_local_failure_while_deferring_fails_the_pass() {
             assert!(queued(s, member));
             assert_eq!(
                 IntexContract::new(s.clone())
-                    .forfeit_day_live
+                    .close_day_live
                     .read(&day)
                     .unwrap(),
                 0
@@ -665,7 +659,7 @@ fn a_node_local_failure_while_deferring_fails_the_pass() {
         |s, member| {
             assert!(queued(s, member));
             let f = IntexContract::new(s.clone());
-            assert_eq!(f.forfeit_day_live.read(&day).unwrap(), 1);
+            assert_eq!(f.close_day_live.read(&day).unwrap(), 1);
             assert_eq!(f.first_expiry_day().unwrap(), Some(day));
         },
     );
@@ -685,7 +679,7 @@ fn a_day_the_sweep_cannot_finish_is_retired_rather_than_left_in_front() {
         sweep_expiry(&s, IntexContract::day_end(day));
 
         let later = IntexContract::deadline_day(now + 400 * DAY);
-        assert_eq!(f.forfeit_day_live.read(&day).unwrap(), 0);
+        assert_eq!(f.close_day_live.read(&day).unwrap(), 0);
         assert_eq!(
             f.first_expiry_day().unwrap(),
             Some(later),
@@ -695,7 +689,7 @@ fn a_day_the_sweep_cannot_finish_is_retired_rather_than_left_in_front() {
             queued(&s, member),
             "and its group waits in the day its deadline falls in"
         );
-        assert_eq!(f.forfeit_day_live.read(&later).unwrap(), 1);
+        assert_eq!(f.close_day_live.read(&later).unwrap(), 1);
     });
 }
 
@@ -755,34 +749,34 @@ fn a_day_wider_than_one_block_resumes_where_it_gave_out() {
         for index in 0..queued {
             called_series(&s, 20260101 + index, deadline);
         }
-        assert_eq!(f.forfeit_day_live.read(&day).unwrap(), queued);
+        assert_eq!(f.close_day_live.read(&day).unwrap(), queued);
 
         let due = IntexContract::day_end(day);
         sweep_expiry(&s, due);
-        let left = f.forfeit_day_live.read(&day).unwrap();
+        let left = f.close_day_live.read(&day).unwrap();
         assert!(
             left > 0 && left < queued,
             "one block takes what it is budgeted for and no more, got {left} of {queued}"
         );
         assert_eq!(
-            f.forfeit_pass_day.read().unwrap(),
+            f.close_pass_day.read().unwrap(),
             day,
             "the unfinished day is remembered"
         );
         assert!(
-            f.forfeit_cursor.read().unwrap() > 0,
+            f.close_cursor.read().unwrap() > 0,
             "along with the slot it stopped at"
         );
 
         sweep_expiry(&s, due + 1);
         assert_eq!(
-            f.forfeit_day_live.read(&day).unwrap(),
+            f.close_day_live.read(&day).unwrap(),
             0,
             "the next block finishes the tail rather than re-walking the head"
         );
         assert_eq!(f.first_expiry_day().unwrap(), None);
         assert_eq!(
-            f.forfeit_cursor.read().unwrap(),
+            f.close_cursor.read().unwrap(),
             0,
             "and the cursor is released with the day"
         );
@@ -847,14 +841,14 @@ fn the_cleanup_deletes_a_spent_series_and_keeps_one_with_settled_units() {
             },
             s.clone(),
         );
-        let block = called::daily_pass(&ctx).unwrap();
-        crate::hooks::cleanup(&block).unwrap();
+        let block = call::daily_pass(&ctx).unwrap();
+        crate::hooks::forfeit_through(&block).unwrap();
 
         let f = IntexContract::new(s.clone());
         assert!(!outbe_intex::api::series_exists(&s, spent).unwrap());
         assert!(outbe_intex::api::series_exists(&s, kept).unwrap());
         assert_eq!(f.group_members(group).unwrap(), vec![kept]);
-        assert_eq!(f.first_cleanup_day().unwrap(), None);
+        assert_eq!(f.first_forfeit_day().unwrap(), None);
         let record = outbe_intex::api::get_series(&s, kept).unwrap();
         assert_eq!(
             outbe_intex::api::call_stamp(&s, &record)
@@ -896,10 +890,7 @@ fn an_unindexable_window_price_marks_the_currency_for_the_day() {
         let day = previous_date_key(timestamp_to_date_key(MATURE_TS)).expect("date step");
         fill_days(&oracle, day, pair, 30, U256::MAX);
 
-        assert_eq!(
-            called::scan_and_call(&block_at(&s, 1, MATURE_TS)).unwrap(),
-            0
-        );
+        assert_eq!(call::scan_and_call(&block_at(&s, 1, MATURE_TS)).unwrap(), 0);
         assert_eq!(series_state(&s, sid(7)), outbe_intex::IntexState::Issued);
         assert_eq!(
             IntexContract::new(s.clone())

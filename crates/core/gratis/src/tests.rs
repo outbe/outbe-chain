@@ -5,7 +5,6 @@
 
 use alloy_primitives::{address, Address, Bytes, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent, SolInterface};
-use outbe_fidelity::{FidelityCohortOp, FidelityOpSection};
 
 use crate::engine::{
     decrypt_balance, decrypt_pledged, derive_account_keys, derive_view_key, modify_mac,
@@ -245,53 +244,6 @@ fn precompile_balance_of_returns_ciphertext() {
     test_enclave::uninstall();
 }
 
-#[test]
-fn folded_fidelity_section_failure_reverts_the_whole_op() {
-    with_env(|storage| {
-        let amount = U256::from(1_000u64);
-        // A folded mint whose fidelity section carries an UNDECRYPTABLE cohort
-        // blob. The gratis mint half would succeed, but the enclave rejects the
-        // WHOLE op when the section fails. So nothing is committed.
-        let bad_section = FidelityOpSection {
-            op: FidelityCohortOp::In,
-            timestamp: 1_000_000,
-            first_qualified_start: 0,
-            current_blob: vec![0xAB; 56], // valid length, garbage ciphertext/tag
-        };
-        let err = api::mint_with_fidelity(
-            storage.clone(),
-            alice(),
-            amount,
-            auth(GratisOp::Mint, alice(), amount, 0),
-            bad_section,
-        )
-        .unwrap_err();
-        let outbe_primitives::error::PrecompileError::RevertBytes(bytes) = &err else {
-            panic!("expected RevertBytes, got: {err:?}");
-        };
-        let decoded = <IGratis::Rejected as alloy_sol_types::SolError>::abi_decode(bytes)
-            .expect("expected IGratis::Rejected");
-        assert!(
-            decoded.value.contains("fidelity section failed"),
-            "expected a fidelity-section rejection, got: {}",
-            decoded.value
-        );
-
-        // Atomic revert: no gratis state was written (balance, op_nonce).
-        assert_eq!(view_balance(storage.clone(), alice()), U256::ZERO);
-        assert_eq!(api::op_nonce(storage.clone(), alice()).unwrap(), 0);
-    });
-}
-
-fn probe() -> FidelityOpSection {
-    FidelityOpSection {
-        op: FidelityCohortOp::Probe,
-        timestamp: 1_700_000_000,
-        first_qualified_start: 0,
-        current_blob: Vec::new(),
-    }
-}
-
 fn view_pledged(storage: StorageHandle<'_>, account: Address) -> U256 {
     let vk = derive_view_key(&test_enclave::state_key(), account).unwrap();
     let blob = api::pledged_ct(storage, account).unwrap();
@@ -310,18 +262,17 @@ fn pledge_release_and_burn_move_only_the_pledged_balance() {
         )
         .unwrap();
         let pledged = U256::from(600u64);
-        api::pledge_with_fidelity(
-            storage.clone(),
-            alice(),
+        api::pledge_sealed(
+            &storage,
+            &test_enclave::sealed_pledge(alice(), pledged, U256::from(1u64), CHAIN_ID),
+            U256::from(1u64),
             pledged,
-            auth(GratisOp::Pledge, alice(), pledged, 1),
-            probe(),
         )
         .unwrap();
         assert_eq!(view_balance(storage.clone(), alice()), U256::from(400u64));
         assert_eq!(view_pledged(storage.clone(), alice()), pledged);
         assert_eq!(api::pledged_total_supply(storage.clone()).unwrap(), pledged);
-        assert_eq!(api::op_nonce(storage.clone(), alice()).unwrap(), 2);
+        assert_eq!(api::op_nonce(storage.clone(), alice()).unwrap(), 1);
 
         api::release_pledged(&storage, alice(), U256::from(100u64)).unwrap();
         assert_eq!(view_balance(storage.clone(), alice()), U256::from(500u64));
@@ -338,7 +289,7 @@ fn pledge_release_and_burn_move_only_the_pledged_balance() {
             api::pledged_total_supply(storage.clone()).unwrap(),
             U256::from(300u64)
         );
-        assert_eq!(api::op_nonce(storage.clone(), alice()).unwrap(), 2);
+        assert_eq!(api::op_nonce(storage.clone(), alice()).unwrap(), 1);
 
         assert!(api::release_pledged(&storage, alice(), U256::from(301u64)).is_err());
         assert!(api::burn_pledged(&storage, alice(), U256::from(301u64)).is_err());
@@ -351,7 +302,7 @@ fn pledge_release_and_burn_move_only_the_pledged_balance() {
 }
 
 #[test]
-fn pledge_needs_the_liquid_amount_and_a_fresh_authorization() {
+fn pledge_needs_the_liquid_amount_and_an_authorization_for_its_reservation() {
     with_env(|storage| {
         let amount = U256::from(100u64);
         api::mint(
@@ -362,22 +313,16 @@ fn pledge_needs_the_liquid_amount_and_a_fresh_authorization() {
         )
         .unwrap();
         let too_much = U256::from(101u64);
-        assert!(api::pledge_with_fidelity(
-            storage.clone(),
-            alice(),
+        assert!(api::pledge_sealed(
+            &storage,
+            &test_enclave::sealed_pledge(alice(), too_much, U256::from(1u64), CHAIN_ID),
+            U256::from(1u64),
             too_much,
-            auth(GratisOp::Pledge, alice(), too_much, 1),
-            probe(),
         )
         .is_err());
-        assert!(api::pledge_with_fidelity(
-            storage.clone(),
-            alice(),
-            amount,
-            auth(GratisOp::Burn, alice(), amount, 1),
-            probe(),
-        )
-        .is_err());
+        let other_reservation =
+            test_enclave::sealed_pledge(alice(), amount, U256::from(2u64), CHAIN_ID);
+        assert!(api::pledge_sealed(&storage, &other_reservation, U256::ONE, amount).is_err());
         assert_eq!(view_balance(storage.clone(), alice()), amount);
         assert_eq!(view_pledged(storage.clone(), alice()), U256::ZERO);
         assert_eq!(
@@ -399,12 +344,11 @@ fn precompile_pledged_of_returns_ciphertext() {
             auth(GratisOp::Mint, alice(), amount, 0),
         )
         .unwrap();
-        api::pledge_with_fidelity(
-            storage.clone(),
-            alice(),
+        api::pledge_sealed(
+            &storage,
+            &test_enclave::sealed_pledge(alice(), amount, U256::from(1u64), CHAIN_ID),
+            U256::from(1u64),
             amount,
-            auth(GratisOp::Pledge, alice(), amount, 1),
-            probe(),
         )
         .unwrap();
         let call = Bytes::from(
@@ -419,7 +363,7 @@ fn precompile_pledged_of_returns_ciphertext() {
 }
 
 #[test]
-fn burning_pledged_collateral_reports_the_supply_drop() {
+fn pledge_and_pledged_burn_emit_no_gratis_event() {
     test_enclave::install();
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut provider, |storage| {
@@ -431,36 +375,19 @@ fn burning_pledged_collateral_reports_the_supply_drop() {
             auth(GratisOp::Mint, alice(), amount, 0),
         )
         .unwrap();
-        api::pledge_with_fidelity(
-            storage.clone(),
-            alice(),
+        api::pledge_sealed(
+            &storage,
+            &test_enclave::sealed_pledge(alice(), amount, U256::ONE, CHAIN_ID),
+            U256::ONE,
             amount,
-            auth(GratisOp::Pledge, alice(), amount, 1),
-            probe(),
         )
         .unwrap();
         api::burn_pledged(&storage, alice(), U256::from(40u64)).unwrap();
     });
-    let vk = derive_view_key(&test_enclave::state_key(), alice()).unwrap();
     test_enclave::uninstall();
-    let liquid_burned: Vec<_> = provider
+    assert!(provider
         .get_events(outbe_system_common::addresses::GRATIS_ADDRESS)
-        .iter()
-        .filter_map(|log| IGratis::GratisBurned::decode_log_data(log).ok())
-        .collect();
-    assert!(liquid_burned.is_empty());
-
-    let burned: Vec<_> = provider
-        .get_events(outbe_system_common::addresses::GRATIS_ADDRESS)
-        .iter()
-        .filter_map(|log| IGratis::GratisBurnedFromPledge::decode_log_data(log).ok())
-        .collect();
-    assert_eq!(burned.len(), 1);
-    assert_eq!(burned[0].account, alice());
-    assert_eq!(
-        decrypt_balance(&vk, alice(), &burned[0].encryptedAmountMinor).unwrap(),
-        U256::from(40u64)
-    );
+        .is_empty());
 }
 
 #[test]
@@ -474,9 +401,9 @@ fn an_owner_result_that_differs_from_the_request_is_refused() {
         event_amount: U256::from(event_amount),
         encrypted_event_amount: vec![1],
         next_op_nonce,
-        fidelity: None,
         inputs_canonical_hash: B256::ZERO,
         attestation_tag: Vec::new(),
+        pledge_account: None,
     };
     let amount = U256::from(5u64);
     assert!(ensure_owner_result(amount, 3, &result(5, 4)).is_ok());
@@ -534,19 +461,6 @@ fn encrypted_nod(
     .unwrap()
 }
 
-fn acquisition(
-    timestamp: u64,
-    first_qualified_start: u64,
-    current_blob: Vec<u8>,
-) -> FidelityOpSection {
-    FidelityOpSection {
-        op: FidelityCohortOp::In,
-        timestamp,
-        first_qualified_start,
-        current_blob,
-    }
-}
-
 /// The first NOD mint seals the event amount apart from the stored balance.
 /// A later mint's event opens to the operation delta, not the cumulative balance.
 #[test]
@@ -556,11 +470,10 @@ fn nod_mint_event_amount_differs_from_balance_and_opens_to_the_delta() {
     let first_amount = U256::from(1_000u64);
     let second_amount = U256::from(250u64);
     let (first_balance, second_balance) = StorageHandle::enter(&mut provider, |storage| {
-        let outcome = api::mint_encrypted_nod(
+        api::mint_encrypted_nod(
             storage.clone(),
             &encrypted_nod(first_amount, 7),
             auth(GratisOp::Mint, alice(), first_amount, 0),
-            acquisition(1_700_000_000, 0, Vec::new()),
         )
         .unwrap();
         let first_balance = api::balance_ct(storage.clone(), alice()).unwrap();
@@ -568,11 +481,6 @@ fn nod_mint_event_amount_differs_from_balance_and_opens_to_the_delta() {
             storage.clone(),
             &encrypted_nod(second_amount, 8),
             auth(GratisOp::Mint, alice(), second_amount, 1),
-            acquisition(
-                1_700_086_400,
-                outcome.qualified_start_initialized.unwrap_or(0),
-                outcome.new_blob,
-            ),
         )
         .unwrap();
         let second_balance = api::balance_ct(storage, alice()).unwrap();
@@ -608,4 +516,82 @@ fn nod_mint_event_amount_differs_from_balance_and_opens_to_the_delta() {
         decrypt_balance(&vk, alice(), &second_balance).unwrap(),
         first_amount + second_amount
     );
+}
+
+#[test]
+fn pledge_authorization_binds_one_reservation() {
+    with_env(|storage| {
+        let amount = U256::from(100u64);
+        api::mint(
+            storage.clone(),
+            alice(),
+            amount,
+            auth(GratisOp::Mint, alice(), amount, 0),
+        )
+        .unwrap();
+        let sealed = test_enclave::sealed_pledge(alice(), amount, U256::ONE, CHAIN_ID);
+        let rejected = |bytes: &[u8], reservation: U256, quantity: U256| {
+            api::pledge_sealed(&storage, bytes, reservation, quantity).unwrap_err()
+        };
+        let reason = |sentence: &str| {
+            outbe_primitives::error::PrecompileError::from(crate::errors::GratisError::Rejected(
+                sentence.into(),
+            ))
+            .to_string()
+        };
+        let invalid = reason("invalid pledge authorization");
+        let malformed = reason("malformed sealed pledge");
+        assert_eq!(
+            rejected(&sealed, U256::from(2u64), amount).to_string(),
+            invalid
+        );
+        assert_eq!(
+            rejected(&sealed, U256::ONE, amount - U256::ONE).to_string(),
+            invalid
+        );
+        // A cash account cannot name the main account with a MAC of another key.
+        let forged = test_enclave::sealed_pledge_by(
+            address!("0x00000000000000000000000000000000000000b0"),
+            alice(),
+            amount,
+            U256::ONE,
+            CHAIN_ID,
+        );
+        assert_eq!(rejected(&forged, U256::ONE, amount).to_string(), invalid);
+        let other_chain = test_enclave::sealed_pledge(alice(), amount, U256::ONE, CHAIN_ID + 1);
+        assert_eq!(
+            rejected(&other_chain, U256::ONE, amount).to_string(),
+            invalid
+        );
+        // A Nod offer sealed to the same key does not open as a pledge.
+        let (cipher, nonce, ephemeral) = outbe_core_common::confidential_tee::encrypt_offer(
+            &outbe_core_common::confidential_tee::offer_public_key(),
+            &[0x11; crate::engine::PLEDGE_PLAINTEXT_LEN],
+        )
+        .unwrap();
+        let offer = [ephemeral.as_slice(), nonce.as_slice(), cipher.as_slice()].concat();
+        assert_eq!(rejected(&offer, U256::ONE, amount).to_string(), malformed);
+        assert_eq!(
+            rejected(&sealed[..sealed.len() - 1], U256::ONE, amount).to_string(),
+            malformed
+        );
+        assert_eq!(view_pledged(storage.clone(), alice()), U256::ZERO);
+
+        // Another Gratis operation of the main account between the MAC and the issue.
+        api::burn(
+            storage.clone(),
+            alice(),
+            U256::ONE,
+            auth(GratisOp::Burn, alice(), U256::ONE, 1),
+        )
+        .unwrap();
+        let pledged = amount - U256::ONE;
+        let sealed = test_enclave::sealed_pledge(alice(), pledged, U256::ONE, CHAIN_ID);
+        assert_eq!(
+            api::pledge_sealed(&storage, &sealed, U256::ONE, pledged).unwrap(),
+            alice()
+        );
+        assert_eq!(view_pledged(storage.clone(), alice()), pledged);
+        assert_eq!(api::op_nonce(storage.clone(), alice()).unwrap(), 2);
+    });
 }

@@ -152,7 +152,7 @@ fn a_failed_allocation_day_still_adds_base_fees_and_burn_addresses() {
         );
         account_parent(&ctx, 2);
         let mut ar = outbe_agentreward::AgentRewardContract::new(handle.clone());
-        ar.increment_waa_tribute(20_240_101u32.into(), Address::repeat_byte(0x44))
+        ar.increment_waa_offer(20_240_101u32.into(), Address::repeat_byte(0x44))
             .unwrap();
         ar.pending_total_minor
             .write(
@@ -216,7 +216,7 @@ fn catchup_horizon_bounds_backward_scan_to_max_reward_catchup_days() {
             .read(&20_240_101)
             .unwrap());
         assert!(outbe_agentreward::AgentRewardContract::new(handle)
-            .increment_waa_tribute(20_240_101u32.into(), Address::repeat_byte(0x46))
+            .increment_waa_offer(20_240_101u32.into(), Address::repeat_byte(0x46))
             .is_err());
     });
 }
@@ -293,7 +293,7 @@ fn a_failed_allocation_whose_limit_cannot_reach_the_promis_limit_fails_the_block
         account_parent(&ctx, 2);
         let mut agents = outbe_agentreward::AgentRewardContract::new(handle.clone());
         agents
-            .increment_waa_tribute(20_240_101u32.into(), Address::repeat_byte(0x47))
+            .increment_waa_offer(20_240_101u32.into(), Address::repeat_byte(0x47))
             .unwrap();
         agents
             .pending_total_minor
@@ -337,7 +337,7 @@ fn isolated_step_checkpoints_route_failed_allocation_and_failed_metadosis_to_pro
         let ctx = runtime_context(block_ctx(2, fire_ts), handle.clone());
         account_parent(&ctx, 2);
         let mut ar = outbe_agentreward::AgentRewardContract::new(handle.clone());
-        ar.increment_waa_tribute(20_240_101u32.into(), Address::repeat_byte(0x44))
+        ar.increment_waa_offer(20_240_101u32.into(), Address::repeat_byte(0x44))
             .unwrap();
         ar.pending_total_minor
             .write(
@@ -354,11 +354,11 @@ fn isolated_step_checkpoints_route_failed_allocation_and_failed_metadosis_to_pro
         let expected_cap = outbe_emission::day_emission::emission_limit_of_day(0);
         assert_eq!(
             rec.state,
-            outbe_emission::schema::emission_day_state::COMPLETED
+            outbe_emission::schema::emission_day_state::PROCESSING
         );
         assert_eq!(
             rec.metadosis_state,
-            outbe_emission::schema::metadosis_state::CANCELLED
+            outbe_emission::schema::metadosis_state::PENDING
         );
         assert_eq!(U256::from(rec.promis_limit), expected_cap);
         assert_eq!(
@@ -370,7 +370,7 @@ fn isolated_step_checkpoints_route_failed_allocation_and_failed_metadosis_to_pro
                 .unwrap()
         );
         assert!(ar
-            .increment_waa_tribute(20_240_101u32.into(), Address::repeat_byte(0x45))
+            .increment_waa_offer(20_240_101u32.into(), Address::repeat_byte(0x45))
             .is_err());
         crate::handler::process_agent_rewards(&ctx).unwrap();
         assert_eq!(ar.waa_address_count.read(&20_240_101u32.into()).unwrap(), 0);
@@ -403,15 +403,10 @@ fn isolated_step_checkpoints_route_failed_allocation_and_failed_metadosis_to_pro
     assert_eq!(alloc_failed[0].emissionLimitMinor, expected_cap);
     assert_eq!(alloc_failed[0].reason, 1);
 
-    let metadosis_canceled: Vec<_> = storage
+    assert!(storage
         .get_ordered_events()
         .iter()
-        .filter_map(|log| IMetadosis::MetadosisCanceled::decode_log(log).ok())
-        .map(|ev| ev.data)
-        .collect();
-    assert_eq!(metadosis_canceled.len(), 1);
-    assert_eq!(metadosis_canceled[0].emissionDay, 20_240_101);
-    assert_eq!(metadosis_canceled[0].reason, 1);
+        .all(|log| IMetadosis::MetadosisCanceled::decode_log(log).is_err()));
 
     assert!(storage
         .get_ordered_events()
@@ -436,6 +431,12 @@ fn isolated_step_checkpoints_route_failed_allocation_and_failed_metadosis_to_pro
                 U256::ZERO,
             )
             .unwrap();
+        // The fixture starts no auction, so the auction of the failed day is scheduled here.
+        outbe_desis::api::schedule_auction(
+            handle.clone(),
+            outbe_system_common::time::EmissionDate::new(20_240_101),
+        )
+        .unwrap();
         let desis = outbe_desis::schema::DesisContract::new(handle.clone());
         let day2 = outbe_system_common::time::EmissionDate::new(20_240_102);
         desis.sched_active_slot.write(&day2, 1).unwrap();
@@ -478,4 +479,37 @@ fn isolated_step_checkpoints_route_failed_allocation_and_failed_metadosis_to_pro
     assert_eq!(metadosis_failed.len(), 1);
     assert_eq!(metadosis_failed[0].emissionDay, 20_240_102);
     assert_eq!(metadosis_failed[0].reason, 1);
+
+    // The day of the failed allocation closes at its Metadosis time and cancels its auction.
+    let failed_allocation = storage.enter(|handle| {
+        outbe_emission::api::get_emission_day_record(handle, 20_240_101)
+            .unwrap()
+            .unwrap()
+    });
+    assert_eq!(
+        failed_allocation.state,
+        outbe_emission::schema::emission_day_state::COMPLETED
+    );
+    assert_eq!(
+        failed_allocation.metadosis_state,
+        outbe_emission::schema::metadosis_state::CANCELED
+    );
+    let metadosis_canceled: Vec<_> = storage
+        .get_ordered_events()
+        .iter()
+        .filter_map(|log| IMetadosis::MetadosisCanceled::decode_log(log).ok())
+        .map(|ev| (ev.data.emissionDay, ev.data.reason))
+        .collect();
+    assert_eq!(metadosis_canceled, vec![(20_240_101, 1)]);
+    let desis_canceled: Vec<_> = storage
+        .get_ordered_events()
+        .iter()
+        .filter_map(|log| IDesis::DesisCanceled::decode_log(log).ok())
+        .filter(|ev| ev.data.emissionDay == 20_240_101)
+        .map(|ev| ev.data.reason)
+        .collect();
+    assert_eq!(
+        desis_canceled,
+        vec![outbe_desis::constants::CANCELED_NO_LIMIT]
+    );
 }

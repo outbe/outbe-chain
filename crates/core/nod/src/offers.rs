@@ -25,17 +25,17 @@ fn day_sum_scope(domain: &[u8], wwd: WorldwideDay) -> B256 {
 }
 
 /// The scope of the encrypted nominal sum of the Nods of `wwd`.
-pub fn day_nominal_scope(wwd: WorldwideDay) -> B256 {
+pub fn worldwide_day_nominal_scope(wwd: WorldwideDay) -> B256 {
     day_sum_scope(b"outbe/nod/day-nominal/v1", wwd)
 }
 
 /// The scope of the encrypted load sum of the Nods of `wwd`.
-pub fn day_load_scope(wwd: WorldwideDay) -> B256 {
+pub fn worldwide_day_load_scope(wwd: WorldwideDay) -> B256 {
     day_sum_scope(b"outbe/nod/day-load/v1", wwd)
 }
 
 /// Decodes a stored day sum. An empty sum has no record.
-pub fn decode_day_sum(bytes: &[u8]) -> Result<Option<EncryptedNodGroupLoadV1>> {
+pub fn decode_worldwide_day_sum(bytes: &[u8]) -> Result<Option<EncryptedNodGroupLoadV1>> {
     if bytes.is_empty() {
         return Ok(None);
     }
@@ -44,19 +44,23 @@ pub fn decode_day_sum(bytes: &[u8]) -> Result<Option<EncryptedNodGroupLoadV1>> {
         .map_err(|_| NodError::EncryptedTermsMismatch.into())
 }
 
-pub fn encode_day_sum(record: &EncryptedNodGroupLoadV1) -> Result<Vec<u8>> {
+pub fn encode_worldwide_day_sum(record: &EncryptedNodGroupLoadV1) -> Result<Vec<u8>> {
     postcard::to_allocvec(record).map_err(|_| NodError::EncryptedTermsMismatch.into())
 }
 
 /// The plain sum a stored day sum of `scope` holds, read in the enclave. Zero when empty.
-pub fn read_day_sum(storage: &StorageHandle<'_>, scope: B256, bytes: &[u8]) -> Result<U256> {
-    let Some(record) = decode_day_sum(bytes)? else {
+pub fn read_worldwide_day_sum(
+    storage: &StorageHandle<'_>,
+    scope: B256,
+    bytes: &[u8],
+) -> Result<U256> {
+    let Some(record) = decode_worldwide_day_sum(bytes)? else {
         return Ok(U256::ZERO);
     };
     if record.scope != scope || record.chain_id != storage.chain_id()? {
         return Err(NodError::EncryptedTermsMismatch.into());
     }
-    crate::api::read_day_sum(storage, &record)
+    crate::api::read_worldwide_day_sum(storage, &record)
 }
 
 fn offer_mark_key(worldwide_day: WorldwideDay, owner: Address) -> B256 {

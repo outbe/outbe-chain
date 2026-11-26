@@ -1,7 +1,4 @@
 //! Stateless NOD encryption under the `NOD` confidential domain.
-//!
-//! Tribute-day issuance (`encrypt_nod_for_tribute`, `issue_nod_from_tribute`)
-//! stays out of this crate. Callers in Tribute use the primitives below.
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_core_common::confidential_tee::{attestation, hash, SlotCipherDomain, TeeError, NOD};

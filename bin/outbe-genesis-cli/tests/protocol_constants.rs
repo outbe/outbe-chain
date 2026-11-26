@@ -11,6 +11,7 @@ use outbe_genesis_cli::seed_codec::{
     address_as_u256, address_bytes, asset_address, data_slot, first_worldwide_day, hex32,
     mapping_key, u32_bytes, StorageBuilder,
 };
+use outbe_genesis_cli::seed_intex::{seed_intex_targets, INTEX_FACTORY_TARGET_CHAINS_SLOT};
 use outbe_genesis_cli::seed_oracle::seed_oracle;
 use outbe_genesis_cli::seed_validators::{seed_staking, seed_validator_set};
 use serde_json::{json, Value};
@@ -348,4 +349,47 @@ fn founder_radicle_bindings_are_complete_unique_and_bidirectional() {
             .contains("unknown validator_set key `owner`"),
         "unexpected error: {err}"
     );
+}
+
+#[test]
+fn intex_seed_writes_the_target_chains_and_their_modes_to_slot_1() {
+    let mut storage = StorageBuilder::new();
+    let cfg = json!({ "target_chains": [
+        { "chain_id": 97, "mode": "auctions" },
+        { "chain_id": 11155111, "mode": "series" },
+        { "chain_id": "own", "mode": "auctions" }
+    ] });
+    seed_intex_targets(&mut storage, &cfg, 54_322_345).expect("seed_intex_targets");
+
+    let slot = INTEX_FACTORY_TARGET_CHAINS_SLOT;
+    assert_eq!(storage.entries[&hex32(slot)], hex32(3u64));
+    for (index, word) in [
+        97u64 | (2 << 32),
+        11_155_111 | (1 << 32),
+        54_322_345 | (2 << 32),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        assert_eq!(
+            storage.entries[&hex32(data_slot(slot) + U256::from(index))],
+            hex32(word)
+        );
+    }
+}
+
+#[test]
+fn intex_seed_rejects_a_duplicate_an_off_chain_and_a_seventeenth_chain() {
+    let seed = |cfg: Value| seed_intex_targets(&mut StorageBuilder::new(), &cfg, 1);
+    assert!(seed(json!({ "target_chains": [
+        { "chain_id": 97, "mode": "auctions" },
+        { "chain_id": 97, "mode": "series" }
+    ] }))
+    .is_err());
+    assert!(seed(json!({ "target_chains": [{ "chain_id": 97, "mode": "off" }] })).is_err());
+    let seventeen: Vec<Value> = (1..=17)
+        .map(|chain| json!({ "chain_id": chain, "mode": "series" }))
+        .collect();
+    assert!(seed(json!({ "target_chains": seventeen })).is_err());
+    assert!(seed(json!({})).is_ok());
 }

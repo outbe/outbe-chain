@@ -9,10 +9,7 @@ publish.workspace = true
 outbe-system-common.workspace = true
 outbe-tee = { workspace = true, default-features = false }
 alloy-primitives = { workspace = true, features = ["serde"] }
-ark-bn254.workspace = true
-ark-ff.workspace = true
 base64.workspace = true
-outbe-poseidon.workspace = true
 outbe-primitives.workspace = true
 ring = { workspace = true, features = ["std"] }
 serde.workspace = true

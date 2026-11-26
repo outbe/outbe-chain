@@ -40,6 +40,8 @@ fn proposer_injects_tee_bootstrap_after_boundary_when_payload_pending() {
             SystemTxStepId::begin_block(6),
             SystemTxStepId::begin_block(7),
             SystemTxStepId::begin_block(8),
+            SystemTxStepId::begin_block(9),
+            SystemTxStepId::begin_block(10),
         ],
         "proposer must inject TeeBootstrap in CONSENSUS_ORDER before ValidatorLiveness and BEGIN_BLOCK_ORDER",
     );
@@ -171,7 +173,7 @@ fn boundary_activation_allows_registered_next_epoch_proposer() {
             .expect("activation block begin-zone system tx should execute");
     }
 
-    assert_eq!(executor.receipts().len(), 12);
+    assert_eq!(executor.receipts().len(), 14);
     assert!(executor.receipts().iter().all(|receipt| receipt.success));
 
     let read_ctx = BlockContext {
@@ -311,8 +313,8 @@ fn full_begin_phases_then_user_tx_observes_boundary_activation() {
         },
     );
     // 4 CONSENSUS_ORDER txs (CPA + LateFinalizeCredits + BoundaryOutcome + ValidatorLiveness)
-    // + 9 BEGIN_BLOCK_ORDER txs = 13 receipts.
-    assert_eq!(executor.receipts().len(), 13);
+    // + 11 BEGIN_BLOCK_ORDER txs = 15 receipts.
+    assert_eq!(executor.receipts().len(), 15);
     assert!(executor.receipts().iter().all(|receipt| receipt.success));
     assert!(
         visible_system_gas_used < 30_000_000,
@@ -341,9 +343,9 @@ fn full_begin_phases_then_user_tx_observes_boundary_activation() {
         .execute_transaction(recovered_deactivate)
         .expect("same-block user tx should see joining validator as active");
 
-    // 13 begin-zone receipts + 1 user (deactivate) tx.
-    assert_eq!(executor.receipts().len(), 14);
-    assert!(executor.receipts()[13].success);
+    // 15 begin-zone receipts + 1 user (deactivate) tx.
+    assert_eq!(executor.receipts().len(), 16);
+    assert!(executor.receipts()[15].success);
 
     let read_ctx = BlockContext {
         block_gas_limit: 0,
@@ -493,7 +495,7 @@ fn oracle_slash_window_runs_after_boundary_activation() {
         },
     );
 
-    assert_eq!(executor.receipts().len(), 12);
+    assert_eq!(executor.receipts().len(), 14);
     assert!(executor.receipts().iter().all(|receipt| receipt.success));
     let oracle_forced_exit = keccak256("ValidatorForcedExit(address)");
     assert!(

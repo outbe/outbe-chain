@@ -27,8 +27,6 @@ outbe-core-common.workspace = true
 outbe-nod = { workspace = true, features = ["test-enclave"] }
 k256.workspace = true
 proptest.workspace = true
-# Drive the confidential Fidelity league snapshot in tests via the in-process engine.
-outbe-fidelity = { workspace = true, features = ["test-enclave"] }
 
 [features]
 default = []

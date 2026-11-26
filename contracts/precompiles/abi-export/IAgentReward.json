@@ -1,7 +1,136 @@
 [
   {
     "type": "function",
-    "name": "claimReward",
+    "name": "agentRewardDeadline",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "pool",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "deadline",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "agentRewardTotal",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "promisLoadMinor",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "expireAgentReward",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "pool",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "promisLoadMinor",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "getAgentReward",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "pool",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "promisLoadMinor",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "poolAgentRewardTotal",
+    "inputs": [
+      {
+        "name": "pool",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "promisLoadMinor",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "poolPendingAgentRewardTotal",
+    "inputs": [
+      {
+        "name": "pool",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "promisLoadMinor",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "redeemAgentReward",
     "inputs": [
       {
         "name": "pool",
@@ -34,133 +163,35 @@
     "stateMutability": "nonpayable"
   },
   {
-    "type": "function",
-    "name": "getClaimableBalance",
+    "type": "event",
+    "name": "AgentRewardAdded",
     "inputs": [
       {
         "name": "account",
         "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "promisLoadMinor",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getPoolBalanceDeadline",
-    "inputs": [
-      {
-        "name": "account",
-        "type": "address",
+        "indexed": true,
         "internalType": "address"
       },
       {
         "name": "pool",
         "type": "uint8",
+        "indexed": true,
         "internalType": "uint8"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "deadline",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getPoolClaimableBalance",
-    "inputs": [
-      {
-        "name": "account",
-        "type": "address",
-        "internalType": "address"
       },
       {
-        "name": "pool",
-        "type": "uint8",
-        "internalType": "uint8"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "promisLoadMinor",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getPoolClaimableTotal",
-    "inputs": [
-      {
-        "name": "pool",
-        "type": "uint8",
-        "internalType": "uint8"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "promisLoadMinor",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getPoolPendingTotal",
-    "inputs": [
-      {
-        "name": "pool",
-        "type": "uint8",
-        "internalType": "uint8"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "promisLoadMinor",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "returnExpiredReward",
-    "inputs": [
-      {
-        "name": "account",
-        "type": "address",
-        "internalType": "address"
+        "name": "emissionDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
       },
       {
-        "name": "pool",
-        "type": "uint8",
-        "internalType": "uint8"
-      }
-    ],
-    "outputs": [
-      {
         "name": "promisLoadMinor",
         "type": "uint256",
+        "indexed": false,
         "internalType": "uint256"
       }
     ],
-    "stateMutability": "nonpayable"
+    "anonymous": false
   },
   {
     "type": "event",
@@ -189,38 +220,7 @@
   },
   {
     "type": "event",
-    "name": "RewardAccrued",
-    "inputs": [
-      {
-        "name": "account",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "pool",
-        "type": "uint8",
-        "indexed": true,
-        "internalType": "uint8"
-      },
-      {
-        "name": "utcDay",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "promisLoadMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "RewardLimitReturned",
+    "name": "AgentRewardLimitReturned",
     "inputs": [
       {
         "name": "emissionDay",
@@ -245,7 +245,7 @@
   },
   {
     "type": "event",
-    "name": "RewardsClaimed",
+    "name": "AgentRewardRedeemed",
     "inputs": [
       {
         "name": "account",
@@ -287,7 +287,7 @@
   },
   {
     "type": "error",
-    "name": "ClaimDeadlinePassed",
+    "name": "AgentRewardDeadlinePassed",
     "inputs": [
       {
         "name": "deadline",
@@ -298,23 +298,23 @@
   },
   {
     "type": "error",
-    "name": "ClaimPriceUnavailable",
+    "name": "AgentRewardNotExpired",
     "inputs": [
       {
-        "name": "isoCode",
-        "type": "uint16",
-        "internalType": "uint16"
+        "name": "deadline",
+        "type": "uint64",
+        "internalType": "uint64"
       }
     ]
   },
   {
     "type": "error",
-    "name": "ClaimableRewardsOverflow",
+    "name": "AgentRewardOverflow",
     "inputs": []
   },
   {
     "type": "error",
-    "name": "ClaimableTotalOverflow",
+    "name": "AgentRewardTotalOverflow",
     "inputs": []
   },
   {
@@ -334,12 +334,17 @@
   },
   {
     "type": "error",
-    "name": "InsufficientClaimableBalance",
+    "name": "InsufficientAgentReward",
     "inputs": []
   },
   {
     "type": "error",
-    "name": "NoClaimableBalance",
+    "name": "NoAgentReward",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "OfferCounterOverflow",
     "inputs": []
   },
   {
@@ -349,12 +354,12 @@
   },
   {
     "type": "error",
-    "name": "RewardBalanceNotExpired",
+    "name": "RedeemPriceUnavailable",
     "inputs": [
       {
-        "name": "deadline",
-        "type": "uint64",
-        "internalType": "uint64"
+        "name": "isoCode",
+        "type": "uint16",
+        "internalType": "uint16"
       }
     ]
   },
@@ -366,11 +371,6 @@
   {
     "type": "error",
     "name": "RewardDeadlineOverflow",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TributeCounterOverflow",
     "inputs": []
   },
   {

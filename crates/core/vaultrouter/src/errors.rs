@@ -38,6 +38,8 @@ pub enum VaultRouterError {
     ReserveVaultNotFound,
     #[error("reserve vault has router shares: vault={vault}, shares={shares}")]
     ReserveVaultHasShares { vault: Address, shares: U256 },
+    #[error("reserve vault holds the escrow of open reservations: vault={vault}, reservations={reservations}")]
+    ReserveVaultHasReservations { vault: Address, reservations: u32 },
     #[error("reserve vault removal pending: vault={vault}, proposal_id={proposal_id}")]
     ReserveVaultRemovalPending { vault: Address, proposal_id: U256 },
     #[error("reserve vault owner not renounced: {0}")]
@@ -70,10 +72,6 @@ pub enum VaultRouterError {
     ReservationNotFound(U256),
     #[error("reservation expired: {0}")]
     ReservationExpired(U256),
-    #[error("Credis owner mismatch")]
-    CredisOwnerMismatch,
-    #[error("reservation amount exceeds hold: available={available}, required={required}")]
-    ReservationInsufficient { available: U256, required: U256 },
     #[error("block timestamp does not fit unix seconds")]
     TimestampOverflow,
     #[error("{0} undecodable")]
@@ -138,6 +136,13 @@ impl From<VaultRouterError> for PrecompileError {
             VaultRouterError::ReserveVaultHasShares { vault, shares } => {
                 revert_with(I::ReserveVaultHasShares { vault, shares })
             }
+            VaultRouterError::ReserveVaultHasReservations {
+                vault,
+                reservations,
+            } => revert_with(I::ReserveVaultHasReservations {
+                vault,
+                reservations,
+            }),
             VaultRouterError::ReserveVaultRemovalPending { vault, proposal_id } => {
                 revert_with(I::ReserveVaultRemovalPending {
                     vault,
@@ -180,14 +185,6 @@ impl From<VaultRouterError> for PrecompileError {
             VaultRouterError::ReservationExists(id) => revert_with(I::ReservationExists { id }),
             VaultRouterError::ReservationNotFound(id) => revert_with(I::ReservationNotFound { id }),
             VaultRouterError::ReservationExpired(id) => revert_with(I::ReservationExpired { id }),
-            VaultRouterError::CredisOwnerMismatch => revert_with(I::CredisOwnerMismatch {}),
-            VaultRouterError::ReservationInsufficient {
-                available,
-                required,
-            } => revert_with(I::ReservationInsufficient {
-                availableMinor: available,
-                requiredMinor: required,
-            }),
             VaultRouterError::InvalidReservationAmount => {
                 revert_with(I::InvalidReservationAmount {})
             }

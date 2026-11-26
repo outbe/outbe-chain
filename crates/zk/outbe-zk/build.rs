@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-//! Compile L2 tribute circuits in `OUT_DIR`, check VK pins, and generate Rust types.
+//! Compile L2 offer circuits in `OUT_DIR`, check VK pins, and generate Rust types.
 //! Smell findings for this file are ignored in `.qlty/qlty.toml`.
 //! Install pinned tools with `mise install`. NARGO/BB override optional mise
 //! lookup and PATH, so tools installed without mise work as well.
@@ -415,7 +415,7 @@ fn load_l2_circuits(
     registry
 }
 
-/// Chain selections the node looks up by offerTribute version.
+/// Chain selections the node looks up by issueNod version.
 fn generate_l2_registry(registry: &L2Registry, proof_system: &str) -> String {
     let mut chains: Vec<(u64, Vec<(&str, usize)>)> = Vec::new();
     for ((chain_id, selector), indices) in &registry.versions {
@@ -501,7 +501,7 @@ fn hex_lit(bytes: &[u8; 32]) -> String {
     format!("::hex_literal::hex!({:?})", hex_str(bytes))
 }
 
-/// Marker (unit) type name: `demo_tribute` -> `DemoTribute`.
+/// Marker (unit) type name: `demo_offer` -> `DemoOffer`.
 fn marker_ident(module: &str) -> String {
     module
         .split('_')

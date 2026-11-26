@@ -18,8 +18,6 @@ pub const FIELD_BALANCE: u8 = 0;
 pub enum Ledger {
     Gratis,
     Promis,
-    Fidelity,
-    Tribute,
     Nod,
 }
 
@@ -132,32 +130,6 @@ pub const PROMIS: Domain = Domain {
     },
 };
 
-/// Fidelity ledger labels.
-pub const FIDELITY: Domain = Domain {
-    ledger: Ledger::Fidelity,
-    state_info: b"outbe/fidelity/state-key/v1/",
-    account_keys: AccountKeyDerivation {
-        view_info: b"outbe/fidelity/view-key/v1",
-        modify_info: b"outbe/fidelity/modify-key/v1",
-    },
-    authorization: ModifyDomain {
-        modify_tag: b"outbe/fidelity/modify/v1",
-    },
-};
-
-/// Tribute ledger labels.
-pub const TRIBUTE: Domain = Domain {
-    ledger: Ledger::Tribute,
-    state_info: b"outbe/tribute/state-key/v1/",
-    account_keys: AccountKeyDerivation {
-        view_info: b"outbe/tribute/view-key/v1",
-        modify_info: b"outbe/tribute/modify-key/v1",
-    },
-    authorization: ModifyDomain {
-        modify_tag: b"outbe/tribute/modify/v1",
-    },
-};
-
 /// NOD ledger labels.
 pub const NOD: Domain = Domain {
     ledger: Ledger::Nod,
@@ -187,22 +159,12 @@ pub const PROMIS_BALANCE_ENVELOPE: EnvelopeCipherSpec = EnvelopeCipherSpec {
     nonce_info: b"outbe/promis/amount-nonce/v2",
 };
 
-/// Fidelity cohort envelope (`FID2`).
-pub const FIDELITY_COHORT_ENVELOPE: EnvelopeCipherSpec = EnvelopeCipherSpec {
-    marker: b"FID2",
-    binding_tag: b"outbe/fidelity/cohort-transition-binding/v2",
-    key_info: b"outbe/fidelity/cohort-key/v2",
-    nonce_info: b"outbe/fidelity/cohort-nonce/v2",
-};
-
 /// Ledger labels for `ledger`.
 #[must_use]
 pub fn domain_for(ledger: Ledger) -> &'static Domain {
     match ledger {
         Ledger::Gratis => &GRATIS,
         Ledger::Promis => &PROMIS,
-        Ledger::Fidelity => &FIDELITY,
-        Ledger::Tribute => &TRIBUTE,
         Ledger::Nod => &NOD,
     }
 }
@@ -217,8 +179,6 @@ pub fn derive_account_keys_message(
     let tag: &[u8] = match ledger {
         Ledger::Gratis => b"outbe/gratis/derive-keys/v1",
         Ledger::Promis => b"outbe/promis/derive-keys/v1",
-        Ledger::Fidelity => b"outbe/fidelity/derive-keys/v1",
-        Ledger::Tribute => b"outbe/tribute/derive-keys/v1",
         Ledger::Nod => b"outbe/nod/derive-keys/v1",
     };
     let mut message = Vec::with_capacity(tag.len() + 20 + 32);
@@ -427,7 +387,7 @@ const BALANCE_BLOB_LEN: usize = ENVELOPE_HEADER_LEN + 32 + ENVELOPE_TAG_LEN;
 
 /// Domain constants for a rollback-safe V2 bound envelope.
 pub struct EnvelopeCipherSpec {
-    /// Four-byte envelope marker (`GRA2`, `PRO2`, `FID2`).
+    /// Four-byte envelope marker (`GRA2`, `PRO2`).
     pub marker: &'static [u8; 4],
     /// Binding tag mixed into the transition MAC.
     pub binding_tag: &'static [u8],

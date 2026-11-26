@@ -16,7 +16,6 @@ path = "src/main.rs"
 [dependencies]
 outbe-system-common.workspace = true
 # Alloy (ABI encoding + primitives)
-alloy-consensus.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 alloy-eips.workspace = true
@@ -26,11 +25,8 @@ blst.workspace = true
 commonware-codec.workspace = true
 commonware-cryptography.workspace = true
 radicle-crypto = { workspace = true, features = ["ssh"] }
-outbe-zerofee.workspace = true
-outbe-zk.workspace = true
 # TEE public status and owner-local offer encryption.
 outbe-tee.workspace = true
-outbe-core-common.workspace = true
 outbe-update.workspace = true
 
 # CLI

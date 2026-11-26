@@ -29,6 +29,3 @@ pub const METADOSIS_CANCELED_NO_LIMIT: u8 = 1;
 
 /// `IMetadosis.MetadosisFailed.reason`: the Metadosis step reverted.
 pub const METADOSIS_FAILED_STEP_REVERTED: u8 = 1;
-
-/// The sum of the loads of the Nods of the day is above the Metadosis Limit.
-pub const METADOSIS_FAILED_LOADS_ABOVE_LIMIT: u8 = 2;

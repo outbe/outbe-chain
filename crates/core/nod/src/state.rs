@@ -33,7 +33,7 @@ impl NodContract<'_> {
 
     // --- Group member index ------------------------------------------------
     //
-    // The cleanup enumerates unsettled members with a count, positional map
+    // The forfeit pass enumerates unsettled members with a count, positional map
     // and reverse map for O(1) swap removal.
 
     /// Appends `nod_id` and increments the group's authoritative unsettled count.
@@ -116,11 +116,11 @@ impl NodContract<'_> {
 
     /// Queues a called group on the deadline its notice period closes at.
     pub fn push_called(&mut self, group_key: B256, deadline: u64) -> Result<()> {
-        deadline_queue::push(&ForfeitQueue(self), group_key, deadline)
+        deadline_queue::push(&CloseQueue(self), group_key, deadline)
     }
 
     /// Records every unsettled member called at once: the group leaves the trie for the
-    /// forfeit queue, where it waits on `deadline` as one entry.
+    /// close queue, where it waits on `deadline` as one entry.
     pub fn record_group_called(&mut self, group_key: B256, now: u64, deadline: u64) -> Result<()> {
         self.remove_call_bin(group_key)?;
         self.group_called_at.write(&group_key, now)?;
@@ -141,7 +141,7 @@ impl NodContract<'_> {
 
     /// No-op for a group the queue does not hold.
     pub fn remove_called(&mut self, group_key: B256) -> Result<()> {
-        deadline_queue::remove(&ForfeitQueue(self), group_key)
+        deadline_queue::remove(&CloseQueue(self), group_key)
     }
 
     /// No-op for a group the call index never held, so the removal funnel can call it
@@ -159,13 +159,13 @@ impl NodContract<'_> {
         self.group_unsettled_load_minor_ct
             .bytes(&group_key)
             .clear()?;
-        self.group_is_forfeited.clear(&group_key)?;
-        self.group_forfeiting.clear(&group_key)?;
-        self.group_forfeit_load_minor.clear(&group_key)?;
+        self.group_is_closed.clear(&group_key)?;
+        self.group_closing.clear(&group_key)?;
+        self.group_close_load_minor.clear(&group_key)?;
         for sub_series in self.group_series.list(&group_key).read_all()? {
             let gs_key = crate::index_keys::group_series_key(group_key, sub_series);
             self.group_series_present.clear(&gs_key)?;
-            self.group_series_forfeited.clear(&gs_key)?;
+            self.group_series_closed.clear(&gs_key)?;
             self.group_series_nod_count.clear(&gs_key)?;
             self.group_series_unsettled_load_minor_ct
                 .bytes(&gs_key)
@@ -178,11 +178,11 @@ impl NodContract<'_> {
             self.sub_series_group.clear(&sub_series)?;
         }
         self.group_series.list(&group_key).clear()?;
-        deadline_queue::remove(&CleanupQueue(self), group_key)
+        deadline_queue::remove(&ForfeitQueue(self), group_key)
     }
 
     /// Closes a called group after `NodSeriesClosed` once nothing settled remains.
-    pub fn close_group_if_empty_after_forfeit(&mut self, group_key: B256) -> Result<()> {
+    pub fn close_group_if_empty(&mut self, group_key: B256) -> Result<()> {
         let Some(group) = self.groups.get(group_key)? else {
             return Ok(());
         };
@@ -449,17 +449,17 @@ impl NodContract<'_> {
         )
     }
 
-    /// Moves a forfeited group from the forfeit queue to the cleanup, which deletes its
+    /// Moves a closed group from the close queue to the forfeit pass, which deletes its
     /// unsettled Nods. Done with the group's credit, so a retry never credits it twice.
-    pub fn hand_to_cleanup(&mut self, group_key: B256) -> Result<()> {
+    pub fn hand_to_forfeit(&mut self, group_key: B256) -> Result<()> {
         let deadline = self.called_deadline.read(&group_key)?;
-        deadline_queue::remove(&ForfeitQueue(self), group_key)?;
-        deadline_queue::push(&CleanupQueue(self), group_key, deadline)
+        deadline_queue::remove(&CloseQueue(self), group_key)?;
+        deadline_queue::push(&ForfeitQueue(self), group_key, deadline)
     }
 
     #[cfg(any(test, feature = "test-utils"))]
-    pub fn first_cleanup_day(&self) -> Result<Option<u32>> {
-        deadline_queue::first_day(&CleanupQueue(self))
+    pub fn first_forfeit_day(&self) -> Result<Option<u32>> {
+        deadline_queue::first_day(&ForfeitQueue(self))
     }
 }
 
@@ -482,20 +482,20 @@ fn open_load_error(group_key: B256, err: outbe_tee::TransportError) -> NodError 
     }
 }
 
-/// Forfeited groups whose unsettled Nods wait to be deleted.
-pub struct CleanupQueue<'a, 'storage>(pub &'a NodContract<'storage>);
+/// Closed groups whose unsettled Nods wait to be deleted.
+pub struct ForfeitQueue<'a, 'storage>(pub &'a NodContract<'storage>);
 
-outbe_core_common::impl_deadline_queue!(CleanupQueue<B256> {
-    root: cleanup_tree_root,
-    mid: cleanup_tree_mid,
-    leaf: cleanup_tree_leaf,
-    len: cleanup_day_len,
-    live: cleanup_day_live,
-    at: cleanup_day_at,
-    slot: cleanup_group_slot,
-    deadline: cleanup_deadline,
-    sweep_day: cleanup_sweep_day,
-    cursor: cleanup_cursor,
+outbe_core_common::impl_deadline_queue!(ForfeitQueue<B256> {
+    root: forfeit_tree_root,
+    mid: forfeit_tree_mid,
+    leaf: forfeit_tree_leaf,
+    len: forfeit_day_len,
+    live: forfeit_day_live,
+    at: forfeit_day_at,
+    slot: forfeit_group_slot,
+    deadline: forfeit_deadline,
+    sweep_day: forfeit_sweep_day,
+    cursor: forfeit_cursor,
 });
 
 /// One currency's call-price trie, like `outbe_gem::state::CallBins`.
@@ -513,17 +513,17 @@ outbe_system_common::impl_call_bins!(CallBins<B256> {
 });
 
 /// This queue orders called groups by the UTC day when their notice period closes.
-pub struct ForfeitQueue<'a, 'storage>(pub &'a NodContract<'storage>);
+pub struct CloseQueue<'a, 'storage>(pub &'a NodContract<'storage>);
 
-outbe_core_common::impl_deadline_queue!(ForfeitQueue<B256> {
-    root: forfeit_tree_root,
-    mid: forfeit_tree_mid,
-    leaf: forfeit_tree_leaf,
-    len: forfeit_day_len,
-    live: forfeit_day_live,
-    at: forfeit_day_at,
+outbe_core_common::impl_deadline_queue!(CloseQueue<B256> {
+    root: close_tree_root,
+    mid: close_tree_mid,
+    leaf: close_tree_leaf,
+    len: close_day_len,
+    live: close_day_live,
+    at: close_day_at,
     slot: called_group_slot,
     deadline: called_deadline,
-    sweep_day: forfeit_pass_day,
-    cursor: forfeit_cursor,
+    sweep_day: close_pass_day,
+    cursor: close_cursor,
 });

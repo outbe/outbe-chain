@@ -141,6 +141,7 @@ exec {q_binary} node \\\n\
   --consensus.signing-key \"$KEYS/signing-key.hex\" \\\n\
   --validator.evm-key \"$KEYS/evm-key.hex\" \\\n\
   --consensus.listen-addr 0.0.0.0:{consensus_port} \\\n\
+  --tee-bootstrap-timeout-secs 300 \\\n\
 {local_consensus_defaults}\
   --consensus.storage-dir {q_consensus} \\\n\
   --radicle.control-socket {q_radicle_sock} \\\n\
@@ -165,7 +166,7 @@ exec {q_binary} node \\\n\
         q_genesis = quote(&format!("{base_dir}/genesis.json")),
         q_consensus = quote(&format!("{validator_dir}/consensus")),
         q_radicle_sock = quote(&format!("{radicle_home}/node/outbe-control.sock")),
-        q_bootnodes = quote(&format!("{base_dir}/reth-bootnodes.txt")),
+        q_bootnodes = quote(&format!("{validator_dir}/reth-bootnodes.txt")),
     ))
 }
 

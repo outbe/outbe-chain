@@ -499,8 +499,8 @@ fn v3_envelope_with_unknown_selector_rejects() {
 // ---------------------------------------------------------------------------
 
 /// Build the canonical block-2 system set with a chosen LateFinalizeCredits
-/// body artifact (ordinals 0..=11): CPA, LateFinalizeCredits, ValidatorLiveness,
-/// and the 9 BEGIN_BLOCK_ORDER transactions, followed by the 5 END_BLOCK_ORDER transactions.
+/// body artifact (ordinals 0..=13): CPA, LateFinalizeCredits, ValidatorLiveness,
+/// and the 11 BEGIN_BLOCK_ORDER transactions, followed by the 5 END_BLOCK_ORDER transactions.
 fn system_txs_block2(
     signer: &OutbeEvmSigner,
     parent_hash: B256,
@@ -531,6 +531,8 @@ fn system_txs_block2(
         SystemTx::BeginBlock { step_index: 6 },
         SystemTx::BeginBlock { step_index: 7 },
         SystemTx::BeginBlock { step_index: 8 },
+        SystemTx::BeginBlock { step_index: 9 },
+        SystemTx::BeginBlock { step_index: 10 },
     ];
     let mut transactions = begin_inputs
         .into_iter()
@@ -629,7 +631,7 @@ fn mandatory_late_phase_cannot_be_skipped() {
     let parent_hash = B256::with_last_byte(0xA4);
     let mut txs = system_txs_block2(&signer, parent_hash, LateFinalizeCreditsArtifact::default());
     // Drop the LateFinalizeCredits tx (ordinal 1). This leaves CPA, ValidatorLiveness,
-    // the 9 BEGIN_BLOCK_ORDER transactions, and the 5 END_BLOCK_ORDER transactions.
+    // the 11 BEGIN_BLOCK_ORDER transactions, and the 5 END_BLOCK_ORDER transactions.
     txs.remove(1);
     let header = header_for_transactions(2, parent_hash, &txs);
     let err = validate_system_tx_consensus_boundary(&body(txs), &header, &TEST_BLOCK_ORDER)

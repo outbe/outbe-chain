@@ -8,7 +8,7 @@ fn issue_keeps_a_timestamp_past_u32() {
         for timestamp in [U256::from(u64::MAX) + U256::ONE, U256::MAX] {
             storage.set_block_timestamp(timestamp).unwrap();
             assert_eq!(
-                runtime::issue_intex(&storage, sample(7))
+                runtime::open_intex_series(&storage, sample(7))
                     .err()
                     .unwrap()
                     .to_string(),
@@ -19,7 +19,7 @@ fn issue_keeps_a_timestamp_past_u32() {
         }
         let past_u32 = u64::from(u32::MAX) + 1;
         storage.set_block_timestamp(U256::from(past_u32)).unwrap();
-        runtime::issue_intex(&storage, sample(7)).unwrap();
+        runtime::open_intex_series(&storage, sample(7)).unwrap();
         assert_eq!(
             outbe_intex::api::get_series(&storage, sid(7))
                 .unwrap()
@@ -36,7 +36,7 @@ fn issue_creates_series_in_registry() {
     let mut storage = factory_provider();
     StorageHandle::enter(&mut storage, |s| {
         select_prod_profile(&s);
-        runtime::issue_intex(&s, sample(7)).unwrap();
+        runtime::open_intex_series(&s, sample(7)).unwrap();
 
         // The series is captured in Intex with the issuance identity.
         let r = outbe_intex::api::get_series(&s, sid(7)).unwrap();
@@ -131,7 +131,7 @@ fn issuance_seals_the_given_conditions_not_the_live_profile() {
     with_factory(|s| {
         select_dev_profile(&s);
         let params = sample(7);
-        let legs = runtime::issue_intex(&s, params.clone()).unwrap();
+        let legs = runtime::open_intex_series(&s, params.clone()).unwrap();
 
         let r = outbe_intex::api::get_series(&s, sid(7)).unwrap();
         assert_eq!(r.promis_load_minor, U256::from(params.promis_load_minor));
@@ -161,9 +161,9 @@ fn issuance_seals_the_given_conditions_not_the_live_profile() {
 #[test]
 fn issue_rejects_duplicate_series() {
     with_factory(|s| {
-        runtime::issue_intex(&s, sample(7)).unwrap();
+        runtime::open_intex_series(&s, sample(7)).unwrap();
         // The registry record-create rejects a duplicate series id.
-        assert!(runtime::issue_intex(&s, sample(7)).is_err());
+        assert!(runtime::open_intex_series(&s, sample(7)).is_err());
     });
 }
 
@@ -172,18 +172,18 @@ fn issue_zero_winners_leaves_the_day_untouched() {
     with_factory(|s| {
         let mut p = sample(7);
         p.issued_units = 0;
-        runtime::issue_intex(&s, p).unwrap();
+        runtime::open_intex_series(&s, p).unwrap();
 
         assert!(!outbe_intex::api::series_exists(&s, sid(7)).unwrap());
     });
 }
 
 #[test]
-fn issue_sends_every_snapshot_chain_the_series() {
+fn issue_sends_every_target_chain_the_series() {
     with_factory(|s| {
         let mut p = sample(7);
-        p.snapshot_chains = vec![10, 20, 30];
-        let legs = runtime::issue_intex(&s, p).unwrap();
+        p.target_chains = vec![10, 20, 30];
+        let legs = runtime::open_intex_series(&s, p).unwrap();
 
         let chains: Vec<u32> = legs.iter().map(|leg| leg.chain_id).collect();
         assert_eq!(chains, vec![10, 20, 30]);
@@ -197,8 +197,8 @@ fn issue_sends_every_snapshot_chain_the_series() {
 #[test]
 fn issue_enrolls_series_in_dense_enumeration() {
     with_factory(|s| {
-        runtime::issue_intex(&s, sample(11)).unwrap();
-        runtime::issue_intex(&s, sample(22)).unwrap();
+        runtime::open_intex_series(&s, sample(11)).unwrap();
+        runtime::open_intex_series(&s, sample(22)).unwrap();
         assert_eq!(outbe_intex::api::total_series(&s).unwrap(), 2);
         assert_eq!(outbe_intex::api::series_id_at(&s, 0).unwrap(), sid(11));
         assert_eq!(outbe_intex::api::series_id_at(&s, 1).unwrap(), sid(22));
@@ -240,7 +240,7 @@ fn coen_iso_wire_price_preserves_the_six_decimal_integer() {
 }
 
 fn leg(chain_id: u32, day: u32, series: u32) -> runtime::IssuanceLeg {
-    let payload = crate::sol_ext::IOriginRouter::IntexSeriesParams {
+    let payload = crate::transport::wire::IntexSeriesPayload {
         seriesId: sid(series).into(),
         emissionDay: day,
         issuedAt: ISSUED_AT,
@@ -258,9 +258,7 @@ fn leg(chain_id: u32, day: u32, series: u32) -> runtime::IssuanceLeg {
     runtime::IssuanceLeg { chain_id, payload }
 }
 
-fn shape(
-    messages: &[(u32, Vec<crate::sol_ext::IOriginRouter::IntexSeriesParams>)],
-) -> Vec<(u32, usize)> {
+fn shape(messages: &[(u32, Vec<crate::transport::wire::IntexSeriesPayload>)]) -> Vec<(u32, usize)> {
     messages
         .iter()
         .map(|(chain, series)| (*chain, series.len()))
@@ -303,7 +301,7 @@ fn a_chains_chunks_form_one_run_even_when_another_chain_interleaves() {
     let mut legs: Vec<_> = (1..=full).map(|s| leg(10, 1, s)).collect();
     legs.push(leg(20, 1, 1));
     legs.push(leg(10, 1, full + 1));
-    let runs = runtime::chunk_issuance_messages(runtime::pack_issuance_messages(legs));
+    let runs = runtime::page_intex_series_messages(runtime::pack_issuance_messages(legs));
     assert_eq!(
         run_shape(&runs),
         vec![
@@ -319,7 +317,7 @@ fn a_chains_days_are_numbered_as_separate_runs() {
         (10, vec![leg(10, 1, 1).payload]),
         (10, vec![leg(10, 2, 2).payload]),
     ];
-    let runs = runtime::chunk_issuance_messages(packed);
+    let runs = runtime::page_intex_series_messages(packed);
     assert_eq!(
         run_shape(&runs),
         vec![((10, 1), vec![1]), ((10, 2), vec![1])]
@@ -329,7 +327,7 @@ fn a_chains_days_are_numbered_as_separate_runs() {
 #[test]
 fn a_single_message_day_is_chunk_zero_of_one() {
     let runs =
-        runtime::chunk_issuance_messages(runtime::pack_issuance_messages(vec![leg(7, 1, 3)]));
+        runtime::page_intex_series_messages(runtime::pack_issuance_messages(vec![leg(7, 1, 3)]));
     assert_eq!(run_shape(&runs), vec![((7, 1), vec![1])]);
 }
 
@@ -360,7 +358,6 @@ pub(super) fn dual_currency_series(iso: u64) -> HashMapStorageProvider {
         IERC1155::balanceOfCall::SELECTOR,
         word(2),
     );
-    storage.stub_sub_call_at(crate::constants::ORIGIN_ROUTER_ADDRESS, word(0));
     storage.stub_sub_call_at_selector(
         outbe_system_common::addresses::VAULT_ROUTER_ADDRESS,
         IVaultRouter::assetVaultsCountCall::SELECTOR,
@@ -378,7 +375,7 @@ pub(super) fn dual_currency_series(iso: u64) -> HashMapStorageProvider {
             issuance_currency: EUR_ISO,
             ..sample(7)
         };
-        runtime::issue_intex(&s, params).unwrap();
+        runtime::open_intex_series(&s, params).unwrap();
     });
     storage
 }

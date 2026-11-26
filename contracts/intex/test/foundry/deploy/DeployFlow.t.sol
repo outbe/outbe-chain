@@ -7,7 +7,7 @@ import {Create3Factory} from "@shared/Create3Factory.sol";
 import {Create3Deploy} from "../../../deploy/Create3Deploy.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
-import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
+import {IntexAuctionTargetRouter} from "@contracts/target/IntexAuctionTargetRouter.sol";
 
 /// @dev Verifies the CREATE3 proxy deployment path that the deploy scripts use:
 ///      - deterministic addresses
@@ -46,16 +46,22 @@ contract DeployFlowTest is CrossChainTest {
     }
 
     function test_DeployBridgeClientProxy_Deterministic() public {
-        address predicted = Create3Deploy.predictProxy(factory, address(this), "OriginRouter", VERSION);
-        address impl = address(new OriginRouter(address(bridge)));
+        address predicted = Create3Deploy.predictProxy(factory, address(this), "IntexAuctionTargetRouter", VERSION);
+        address impl = address(new IntexAuctionTargetRouter(address(bridge), B_CHAIN_ID, makeAddr("erc20Router")));
         address proxy = Create3Deploy.deployProxy(
-            factory, address(this), "OriginRouter", VERSION, impl, abi.encodeCall(OriginRouter.initialize, (admin))
+            factory,
+            address(this),
+            "IntexAuctionTargetRouter",
+            VERSION,
+            impl,
+            abi.encodeCall(IntexAuctionTargetRouter.initialize, (admin))
         );
 
         assertEq(proxy, predicted, "predict != deploy");
         assertEq(_implSlot(proxy), impl, "impl pointer wrong");
         assertTrue(
-            OriginRouter(payable(proxy)).hasRole(OriginRouter(payable(proxy)).DEFAULT_ADMIN_ROLE(), admin),
+            IntexAuctionTargetRouter(payable(proxy))
+                .hasRole(IntexAuctionTargetRouter(payable(proxy)).DEFAULT_ADMIN_ROLE(), admin),
             "admin not set"
         );
     }

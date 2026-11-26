@@ -75,14 +75,10 @@ pub enum RecordedRpcCall {
     },
     NetPeerCount,
     OutbeConsensusStatus,
-    OutbeGetEpochInfo,
     EthGetBlockByNumber {
         block: u64,
     },
     EthGetLatestBlock,
-    OutbeGetVrfSeed,
-    OutbeGetEmissionInfo,
-    OutbeGetSlashConfig,
     EthGetLogs {
         address: Address,
         topics: Vec<Option<String>>,

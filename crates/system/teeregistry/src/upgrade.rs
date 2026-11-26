@@ -249,7 +249,7 @@ impl TeeRegistry<'_> {
         Ok(self.strict_upgrade_successor.read()? == context.policy_hash
             && self.offer_public_key()?.0 == context.network_encryption_public
             && self.key_epoch()? == context.key_epoch
-            && self.tribute_offer_epoch()? == context.network_encryption_epoch)
+            && self.offer_epoch()? == context.network_encryption_epoch)
     }
 }
 

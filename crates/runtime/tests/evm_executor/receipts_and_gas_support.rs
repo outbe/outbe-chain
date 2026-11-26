@@ -75,8 +75,8 @@ pub(super) fn seed_dense_agent_recipients(
     for n in 0..address_count {
         let waa = numbered_test_address(0x10, n);
         let sra = numbered_test_address(0x11, n);
-        agent.increment_waa_tribute(prev_day.into(), waa)?;
-        agent.increment_sra_tribute(prev_day.into(), sra)?;
+        agent.increment_waa_offer(prev_day.into(), waa)?;
+        agent.increment_sra_offer(prev_day.into(), sra)?;
     }
     assert_eq!(
         agent.get_all_waa_counts(prev_day.into()).unwrap().len(),
@@ -112,8 +112,8 @@ pub(super) fn assert_dense_agent_accrual_pending(
     for n in 0..address_count {
         let waa = numbered_test_address(0x10, n);
         let sra = numbered_test_address(0x11, n);
-        let waa_claimable = agent.get_claimable_reward(waa)?;
-        let sra_claimable = agent.get_claimable_reward(sra)?;
+        let waa_claimable = agent.agent_reward_total(waa)?;
+        let sra_claimable = agent.agent_reward_total(sra)?;
         assert_eq!(
             waa_claimable,
             U256::ZERO,
@@ -177,7 +177,7 @@ pub(super) fn assert_dense_validator_settlement(
     for index in 0..validator_count {
         let voter = numbered_test_address(0x12, u64::from(index));
         let claimable = agent_reward
-            .get_pool_claimable_reward(outbe_agentreward::schema::RewardPool::Validator, voter)?;
+            .get_agent_reward(outbe_agentreward::schema::RewardPool::Validator, voter)?;
         assert!(
             !claimable.is_zero(),
             "GAS-05: dense validator {voter} received zero claimable reward"
@@ -443,7 +443,7 @@ pub(super) fn run_prefix_checked(
         .flat_map(|receipt| receipt.logs.clone())
         .collect();
     if verify_deferred {
-        assert_deferred_task_logs(&logs, &samples, block, executor.system_tx_gross_gas);
+        assert_deferred_task_logs(&logs, &samples, executor.system_tx_gross_gas);
         let receipts_before = executor.receipts().len();
         let gross_before = executor.system_tx_gross_gas;
         executor
@@ -469,7 +469,7 @@ pub(super) fn run_prefix_checked(
             proposer,
             validators: vec![proposer],
         };
-        Some(assert_deferred_state(&mut state, &bundle, &logs, read_ctx))
+        Some(assert_deferred_state(&mut state, &bundle, read_ctx))
     } else {
         None
     };
@@ -530,8 +530,58 @@ pub(super) fn returning_contract(routes: Vec<([u8; 4], Vec<u8>)>) -> Bytecode {
     Bytecode::new_legacy(code.into())
 }
 
-pub(super) mod router_abi {
-    alloy_sol_types::sol!("../../contracts/intex/src/origin/interfaces/IOriginRouter.sol");
+/// Registers `chains` in Auctions in IntexFactory and as the chains of `days`, as the genesis and
+/// a START do.
+pub(super) fn seed_intex_targets(
+    storage: &StorageHandle<'_>,
+    chains: &[u32],
+    days: &[EmissionDate],
+) {
+    use outbe_intexfactory::targets::{pack_target, TargetMode};
+    let factory = outbe_intexfactory::IntexFactoryContract::new(storage.clone());
+    for &chain in chains {
+        factory
+            .target_chains
+            .push(pack_target(chain, TargetMode::Auctions))
+            .unwrap();
+    }
+    for day in days {
+        let list = factory.day_targets.list(day);
+        for &chain in chains {
+            list.push(chain).unwrap();
+        }
+    }
+}
+
+/// `InteroperableAddress.formatEvmV1(chain, IntexAuctionTargetRouter)`, the sender of the bids at the hub.
+fn intex_auction_target_router_sender(chain: u32) -> Vec<u8> {
+    let reference: Vec<u8> = chain
+        .to_be_bytes()
+        .into_iter()
+        .skip_while(|byte| *byte == 0)
+        .collect();
+    let mut out = vec![0x00, 0x01, 0x00, 0x00, reference.len() as u8];
+    out.extend_from_slice(&reference);
+    out.push(20);
+    out.extend_from_slice(
+        outbe_core_common::addresses::INTEX_AUCTION_TARGET_ROUTER_ADDRESS.as_slice(),
+    );
+    out
+}
+
+fn deliver_bids_message(storage: &StorageHandle<'_>, chain: u32, payload: Vec<u8>) {
+    let call = outbe_desis::precompile::IDesis::receiveMessageCall {
+        receiveId: alloy_primitives::B256::ZERO,
+        sender: intex_auction_target_router_sender(chain).into(),
+        payload: payload.into(),
+    };
+    outbe_desis::precompile::dispatch(
+        storage.clone(),
+        &call.abi_encode(),
+        outbe_core_common::addresses::ERC7786_HUB_ADDRESS,
+        U256::ZERO,
+    )
+    .unwrap();
 }
 
 pub(super) fn accept_auction_batches(
@@ -540,53 +590,36 @@ pub(super) fn accept_auction_batches(
     chain: u32,
     batches: u16,
 ) {
+    use alloy_sol_types::SolValue;
+    seed_intex_targets(&storage, &[chain], &[day]);
     for batch in 0..batches {
         let indices = (0..64u32).map(|offset| u32::from(batch) * 64 + offset);
-        let call = outbe_desis::precompile::IDesis::collectIntexAuctionBidsCall {
-            receiveId: alloy_primitives::B256::ZERO,
-            emissionDay: day.value(),
-            srcChainId: chain,
-            pageIndex: batch,
-            totalPages: batches,
-            bidders: indices
-                .clone()
-                .map(|index| {
-                    numbered_test_address(0xa3, u64::from(chain) * 16384 + u64::from(index + 1))
-                })
-                .collect(),
-            packedBids: indices
-                .map(|index| {
-                    U256::from_limbs([
-                        840 | (840 << 16) | (u64::from(index) << 32),
-                        2_000_000 | (1 << 32),
-                        0,
-                        0,
-                    ])
-                })
-                .collect(),
-        };
-        outbe_desis::precompile::dispatch(
-            storage.clone(),
-            &call.abi_encode(),
-            outbe_core_common::addresses::ORIGIN_ROUTER_ADDRESS,
-            U256::ZERO,
-        )
-        .unwrap();
+        let bidders: Vec<Address> = indices
+            .clone()
+            .map(|index| {
+                numbered_test_address(0xa3, u64::from(chain) * 16384 + u64::from(index + 1))
+            })
+            .collect();
+        let packed: Vec<U256> = indices
+            .map(|index| {
+                U256::from_limbs([
+                    840 | (840 << 16) | (u64::from(index) << 32),
+                    2_000_000 | (1 << 32),
+                    0,
+                    0,
+                ])
+            })
+            .collect();
+        let mut page = vec![1u8, outbe_intexfactory::transport::wire::MSG_BIDS_PAGE];
+        page.extend((day.value(), chain, batch, batches, bidders, packed).abi_encode_params());
+        deliver_bids_message(&storage, chain, page);
     }
-    let done = outbe_desis::precompile::IDesis::completeIntexAuctionBidsCall {
-        receiveId: alloy_primitives::B256::ZERO,
-        emissionDay: day.value(),
-        srcChainId: chain,
-        totalPages: batches,
-        totalBids: u32::from(batches) * 64,
-    };
-    outbe_desis::precompile::dispatch(
-        storage.clone(),
-        &done.abi_encode(),
-        outbe_core_common::addresses::ORIGIN_ROUTER_ADDRESS,
-        U256::ZERO,
-    )
-    .unwrap();
+    let mut totals = vec![1u8, outbe_intexfactory::transport::wire::MSG_BIDS_TOTALS];
+    totals.extend_from_slice(&day.value().to_be_bytes());
+    totals.extend_from_slice(&chain.to_be_bytes());
+    totals.extend_from_slice(&batches.to_be_bytes());
+    totals.extend_from_slice(&(u32::from(batches) * 64).to_be_bytes());
+    deliver_bids_message(&storage, chain, totals);
     let auction = outbe_desis::DesisContract::new(storage);
     let key = outbe_desis::DesisContract::chain_key(day, chain);
     assert_eq!(
@@ -618,53 +651,36 @@ pub(crate) fn queue_accepted_cleanup(storage: StorageHandle<'_>, chains: u32) {
     auction.queue_intake_cleanup(day).unwrap();
 }
 
-fn assert_deferred_task_logs(
-    logs: &[Log],
-    samples: &[(u32, u64)],
-    block: u64,
-    system_gross_gas: u64,
-) {
-    let over: Vec<_> = logs
-        .iter()
-        .filter_map(|log| outbe_cycle::ICycle::CycleTaskOverBudget::decode_log(log).ok())
-        .collect();
-    assert_eq!(over.len(), 1);
-    let over = &over[0].data;
-    assert_eq!(over.id, 4);
-    assert_eq!(over.blockNumber, block);
+pub(super) fn cycle_task_completed(logs: &[Log], task: outbe_cycle::tasks::TaskId) -> bool {
+    logs.iter().any(|log| {
+        outbe_cycle::ICycle::CycleTaskCompleted::decode_log(log)
+            .is_ok_and(|event| u32::from(event.data.task as u8) == task.as_u32())
+    })
+}
+
+fn assert_deferred_task_logs(logs: &[Log], samples: &[(u32, u64)], system_gross_gas: u64) {
+    use outbe_cycle::tasks::TaskId;
     let budget = outbe_cycle::tasks::ACTIVE_TASKS
         .iter()
         .find(|spec| spec.id == 4)
         .unwrap()
         .work_budget_gas();
-    assert_eq!(over.budgetGas, budget);
-    assert_eq!(
-        samples.iter().find(|(id, _)| *id == 4).unwrap().1,
-        over.consumedGas
-    );
-    assert!(over.consumedGas > budget / 2 && over.consumedGas <= budget);
-    assert!(system_gross_gas > over.consumedGas);
-    assert!(!logs.iter().any(
-        |log| outbe_cycle::ICycle::CycleTaskExecuted::decode_log(log)
-            .is_ok_and(|event| event.data.id == 4)
-            || outbe_cycle::ICycle::CycleTaskFailed::decode_log(log)
-                .is_ok_and(|event| event.data.id == 4)
-    ));
-    for id in [5, 6] {
-        assert!(logs.iter().any(
-            |log| outbe_cycle::ICycle::CycleTaskExecuted::decode_log(log)
-                .is_ok_and(|event| event.data.id == id)
-        ));
+    let consumed = samples.iter().find(|(id, _)| *id == 4).unwrap().1;
+    assert!(consumed > budget / 2 && consumed <= budget);
+    assert!(system_gross_gas > consumed);
+    assert!(!cycle_task_completed(logs, TaskId::CompleteAuctions));
+    for task in [TaskId::ScheduleCredisCallPass, TaskId::ScheduleNodCallPass] {
+        assert!(cycle_task_completed(logs, task));
     }
 }
 
 fn assert_deferred_state(
     state: &mut CalibrationState,
     bundle: &evm2::block::bundle_state::BundleState,
-    logs: &[Log],
     read_ctx: BlockContext,
 ) -> B256 {
     let block = read_ctx.block_number;
+    let timestamp = read_ctx.timestamp;
     let mut provider =
         outbe_primitives::storage::direct::DirectStorageProvider::new(state, read_ctx);
     StorageHandle::enter(&mut provider, |storage| {
@@ -672,34 +688,32 @@ fn assert_deferred_state(
         assert_eq!(cycle.last_executed_at.read(&4).unwrap(), GENESIS + 60);
         assert_eq!(cycle.last_executed_block_number.read(&4).unwrap(), 0);
         for id in [5, 6] {
-            let scheduled = logs
+            let spec = outbe_cycle::tasks::ACTIVE_TASKS
                 .iter()
-                .filter_map(|log| outbe_cycle::ICycle::CycleTaskExecuted::decode_log(log).ok())
-                .find(|event| event.data.id == id)
-                .unwrap()
-                .data
-                .scheduledAt;
+                .find(|spec| spec.id == id)
+                .unwrap();
+            let scheduled = outbe_cycle::tasks::last_fire_at(
+                spec.period_seconds(),
+                spec.start_offset_seconds,
+                timestamp,
+            )
+            .unwrap();
             assert_eq!(cycle.last_executed_at.read(&id).unwrap(), scheduled);
             assert_eq!(cycle.last_executed_block_number.read(&id).unwrap(), block);
         }
-        let first_result = router_abi::IOriginRouter::sendIntexAuctionResultCall {
-            dstChainId: 1,
-            emissionDay: 20240101,
-            wonQuantity: 0,
-            wonBidsCount: 0,
-            quantity: 0,
-            clearingRate: 0,
-            totalDemand: 0,
-        }
-        .abi_encode();
-        let counter = U256::from_be_bytes(keccak256(first_result).0);
-        for address in [outbe_core_common::addresses::ORIGIN_ROUTER_ADDRESS, RELAY] {
-            assert_eq!(
-                storage.sload(address, counter).unwrap(),
-                U256::ZERO,
-                "rolled-back child economic state must not survive"
-            );
-        }
+        let rolled_back = outbe_desis::DesisContract::new(storage.clone())
+            .outbox()
+            .messages(1)
+            .unwrap()
+            .into_iter()
+            .any(|message| {
+                message.label.msg_type
+                    == outbe_intexfactory::transport::wire::MSG_INTEX_AUCTION_RESULT
+            });
+        assert!(
+            !rolled_back,
+            "a rolled-back clearing leaves no result in the outbox"
+        );
         let auction = outbe_desis::DesisContract::new(storage);
         let day = EmissionDate::new(20240101);
         assert_eq!(

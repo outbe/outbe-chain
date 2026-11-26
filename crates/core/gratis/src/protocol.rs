@@ -5,7 +5,6 @@
 
 use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_core_common::confidential_tee::{derive_account_keys_message, Ledger, OperationTag};
-use outbe_fidelity::{FidelityOpOutcome, FidelityOpSection};
 
 /// A Gratis write the enclave applies over encrypted per-account state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -15,12 +14,14 @@ pub enum GratisOp {
     Mint = 0,
     /// Debit the liquid balance.
     Burn = 1,
-    /// Move the authorized amount from liquid to pledged.
-    Pledge = 2,
     /// Move collateral from pledged back to liquid.
     ReleasePledged = 3,
     /// Burn collateral from the pledged balance.
     BurnPledged = 4,
+    /// Open a pledge authorization sealed to the offer key and check its MAC.
+    OpenSealedPledge = 5,
+    /// Move a runtime-authorized amount from liquid to pledged.
+    PledgeCollateral = 6,
 }
 
 impl OperationTag for GratisOp {
@@ -36,6 +37,15 @@ pub struct ModifyAuth {
     pub mac: [u8; 32],
     /// Replay counter bound by [`Self::mac`].
     pub op_nonce: u64,
+}
+
+/// A main-account pledge authorization sealed to the offer key, for one reservation.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SealedPledge {
+    /// Ephemeral X25519 key, AEAD nonce and ciphertext of the account and its MAC.
+    pub sealed: Vec<u8>,
+    /// Credis reservation the MAC binds.
+    pub credis_reservation_id: U256,
 }
 
 /// Stateless transition over an account's liquid and pledged balance blobs.
@@ -55,8 +65,8 @@ pub struct GratisOpRequest {
     pub current_pledged: Vec<u8>,
     /// Owner authorization. Collateral ops carry a zero MAC.
     pub modify_auth: ModifyAuth,
-    /// Co-located Fidelity section. Collateral ops must leave this empty.
-    pub fidelity: Option<FidelityOpSection>,
+    /// Sealed pledge of [`GratisOp::OpenSealedPledge`]. Empty for every other op.
+    pub sealed_pledge: Option<SealedPledge>,
 }
 
 /// Outcome of one Gratis op.
@@ -84,14 +94,14 @@ pub struct GratisOpResult {
     pub event_amount: U256,
     /// Next owner nonce. Zero when the op did not consume a nonce.
     pub next_op_nonce: u64,
-    /// Fidelity receipt when a section was applied.
-    pub fidelity: Option<FidelityOpOutcome>,
     /// Keccak of the canonical request.
     pub inputs_canonical_hash: B256,
     /// Ed25519 tag. Cleared inside the witness payload.
     pub attestation_tag: Vec<u8>,
-    /// Owner-encrypted event amount for mint, burn, and pledged burn.
+    /// Owner-encrypted event amount for mint and burn.
     pub encrypted_event_amount: Vec<u8>,
+    /// Main account an opened sealed pledge names. Empty for every other op.
+    pub pledge_account: Option<Address>,
 }
 
 fn push_bytes(buf: &mut Vec<u8>, bytes: &[u8]) {
@@ -111,13 +121,11 @@ pub fn gratis_op_canonical_hash(req: &GratisOpRequest) -> B256 {
     push_bytes(&mut buf, &req.current_pledged);
     buf.extend_from_slice(&req.modify_auth.mac);
     buf.extend_from_slice(&req.modify_auth.op_nonce.to_be_bytes());
-    match &req.fidelity {
-        Some(section) => {
+    match &req.sealed_pledge {
+        Some(pledge) => {
             buf.push(1);
-            buf.push(section.op as u8);
-            buf.extend_from_slice(&section.timestamp.to_be_bytes());
-            buf.extend_from_slice(&section.first_qualified_start.to_be_bytes());
-            push_bytes(&mut buf, &section.current_blob);
+            push_bytes(&mut buf, &pledge.sealed);
+            buf.extend_from_slice(&pledge.credis_reservation_id.to_be_bytes::<32>());
         }
         None => buf.push(0),
     }
@@ -136,7 +144,7 @@ pub fn gratis_op_attestation_preimage(
     )
 }
 
-/// Personal-sign message for `outbe_deriveGratisKeys`.
+/// Personal-sign message for `outbe_deriveKeys` with the Gratis ledger.
 #[must_use]
 pub fn derive_gratis_keys_message(account: Address, ephemeral_pubkey: B256) -> Vec<u8> {
     derive_account_keys_message(Ledger::Gratis, account, ephemeral_pubkey)

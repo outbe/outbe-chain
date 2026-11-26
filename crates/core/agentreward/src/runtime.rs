@@ -10,29 +10,29 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_system_common::time::WorldwideDay;
 
 impl AgentRewardContract<'_> {
-    /// Increments WAA (wallet) tribute count for an address on `day`.
+    /// Increments WAA (wallet) offer count for an address on `day`.
     ///
-    /// On the first tribute for this address+day pair, the function also
+    /// On the first offer for this address+day pair, the function also
     /// appends the address to the per-day WAA address list. Distribution
     /// enumerates that list.
     /// Overflow rejects activity before any write. Multi-recipient offer
     /// atomicity requires the caller's checkpoint.
-    pub fn increment_waa_tribute(&mut self, day: WorldwideDay, address: Address) -> Result<()> {
-        self.increment_tribute(RewardPool::Waa, day, address)
+    pub fn increment_waa_offer(&mut self, day: WorldwideDay, address: Address) -> Result<()> {
+        self.increment_offer(RewardPool::Waa, day, address)
     }
 
-    /// Increments SRA tribute count for an address on `day`.
+    /// Increments SRA offer count for an address on `day`.
     ///
-    /// On the first tribute for this address+day pair, the function also
+    /// On the first offer for this address+day pair, the function also
     /// appends the address to the per-day SRA address list. Distribution
     /// enumerates that list.
     /// Overflow rejects activity before any write. Multi-recipient offer
     /// atomicity requires the caller's checkpoint.
-    pub fn increment_sra_tribute(&mut self, day: WorldwideDay, address: Address) -> Result<()> {
-        self.increment_tribute(RewardPool::Sra, day, address)
+    pub fn increment_sra_offer(&mut self, day: WorldwideDay, address: Address) -> Result<()> {
+        self.increment_offer(RewardPool::Sra, day, address)
     }
 
-    fn increment_tribute(
+    fn increment_offer(
         &mut self,
         pool: RewardPool,
         day: WorldwideDay,
@@ -42,22 +42,22 @@ impl AgentRewardContract<'_> {
             return Err(AgentRewardError::DaySealed(day.value()).into());
         }
         let index = self.day_index(pool)?;
-        let key = AgentRewardContract::tribute_count_key(day, address);
+        let key = AgentRewardContract::offer_count_key(day, address);
         let count = index.counts.read(&key)?;
         let next_count = count
             .checked_add(1)
-            .ok_or(AgentRewardError::TributeCounterOverflow)?;
+            .ok_or(AgentRewardError::OfferCounterOverflow)?;
         let next_total = index
             .total
             .read(&day)?
             .checked_add(1)
-            .ok_or(AgentRewardError::TributeCounterOverflow)?;
+            .ok_or(AgentRewardError::OfferCounterOverflow)?;
         if count == 0 {
-            // First tribute for this address+day - add to address list
+            // First offer for this address+day - add to address list
             let addr_count = index.address_count.read(&day)?;
             let next_addr_count = addr_count
                 .checked_add(1)
-                .ok_or(AgentRewardError::TributeCounterOverflow)?;
+                .ok_or(AgentRewardError::OfferCounterOverflow)?;
             let idx_key = AgentRewardContract::address_index_key(day, addr_count);
             index.addresses.write(&idx_key, address)?;
             index.address_count.write(&day, next_addr_count)?;
@@ -68,7 +68,7 @@ impl AgentRewardContract<'_> {
     }
 
     /// Gets the total claimable reward balance for an address across all pools.
-    pub fn get_claimable_reward(&self, address: Address) -> Result<U256> {
+    pub fn agent_reward_total(&self, address: Address) -> Result<U256> {
         [
             RewardPool::Waa,
             RewardPool::Sra,
@@ -78,13 +78,13 @@ impl AgentRewardContract<'_> {
         .into_iter()
         .try_fold(U256::ZERO, |total, pool| {
             total
-                .checked_add(self.get_pool_claimable_reward(pool, address)?)
-                .ok_or_else(|| AgentRewardError::ClaimableTotalOverflow.into())
+                .checked_add(self.get_agent_reward(pool, address)?)
+                .ok_or_else(|| AgentRewardError::AgentRewardTotalOverflow.into())
         })
     }
 
     /// Gets the claimable reward balance an address holds in one pool.
-    pub fn get_pool_claimable_reward(&self, pool: RewardPool, address: Address) -> Result<U256> {
+    pub fn get_agent_reward(&self, pool: RewardPool, address: Address) -> Result<U256> {
         match pool {
             RewardPool::Waa => self.waa_claimable_minor.read(&address),
             RewardPool::Sra => self.sra_claimable_minor.read(&address),
@@ -94,18 +94,18 @@ impl AgentRewardContract<'_> {
     }
 
     /// The claimable reward of a pool summed over its addresses.
-    pub fn pool_claimable_total(&self, pool: RewardPool) -> Result<U256> {
+    pub fn pool_agent_reward_total(&self, pool: RewardPool) -> Result<U256> {
         self.claimable_total_minor.read(&(pool as u8))
     }
 
     /// The part of the pool's queued day pools not yet credited.
-    pub fn pool_pending_total(&self, pool: RewardPool) -> Result<U256> {
+    pub fn pool_pending_agent_reward_total(&self, pool: RewardPool) -> Result<U256> {
         self.pending_total_minor.read(&(pool as u8))
     }
 
     /// Returns zero for an empty balance; a nonempty balance must have a deadline.
-    pub fn get_pool_balance_deadline(&self, pool: RewardPool, address: Address) -> Result<u64> {
-        if self.get_pool_claimable_reward(pool, address)?.is_zero() {
+    pub fn agent_reward_deadline(&self, pool: RewardPool, address: Address) -> Result<u64> {
+        if self.get_agent_reward(pool, address)?.is_zero() {
             return Ok(0);
         }
         let deadline = self
@@ -125,7 +125,7 @@ impl AgentRewardContract<'_> {
     }
 
     /// Adds amount to an address's claimable reward in one pool.
-    pub fn add_claimable_reward(
+    pub fn add_agent_reward(
         &mut self,
         pool: RewardPool,
         address: Address,
@@ -136,36 +136,36 @@ impl AgentRewardContract<'_> {
         }
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
-            let current = self.get_pool_claimable_reward(pool, address)?;
+            let current = self.get_agent_reward(pool, address)?;
             let next = current
                 .checked_add(amount)
-                .ok_or(AgentRewardError::ClaimableRewardsOverflow)?;
+                .ok_or(AgentRewardError::AgentRewardOverflow)?;
             let deadline = if current.is_zero() {
                 self.renewed_reward_deadline()?
             } else {
-                self.get_pool_balance_deadline(pool, address)?
+                self.agent_reward_deadline(pool, address)?
             };
-            self.write_pool_claimable_reward(pool, address, next)?;
+            self.write_agent_reward(pool, address, next)?;
             self.reward_balance_deadlines
                 .write(&Self::reward_balance_key(pool, address), deadline)
         })
     }
 
     /// Anyone can return an expired pool balance, but only the Promis Limit receives it.
-    pub fn return_expired_reward(&mut self, pool: RewardPool, address: Address) -> Result<U256> {
+    pub fn expire_agent_reward(&mut self, pool: RewardPool, address: Address) -> Result<U256> {
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
-            let balance = self.get_pool_claimable_reward(pool, address)?;
+            let balance = self.get_agent_reward(pool, address)?;
             if balance.is_zero() {
                 return Ok(U256::ZERO);
             }
-            let deadline = self.get_pool_balance_deadline(pool, address)?;
+            let deadline = self.agent_reward_deadline(pool, address)?;
             if storage.now_secs()? < deadline {
-                return Err(AgentRewardError::RewardBalanceNotExpired(deadline).into());
+                return Err(AgentRewardError::AgentRewardNotExpired(deadline).into());
             }
             outbe_promislimit::PromisLimitContract::new(storage.clone())
                 .add(outbe_promislimit::LimitSource::AgentReward, balance)?;
-            self.write_pool_claimable_reward(pool, address, U256::ZERO)?;
+            self.write_agent_reward(pool, address, U256::ZERO)?;
             self.reward_balance_deadlines
                 .write(&Self::reward_balance_key(pool, address), 0)?;
             self.emit(IAgentReward::AgentRewardExpired {
@@ -177,13 +177,13 @@ impl AgentRewardContract<'_> {
         })
     }
 
-    fn write_pool_claimable_reward(
+    fn write_agent_reward(
         &mut self,
         pool: RewardPool,
         address: Address,
         amount: U256,
     ) -> Result<()> {
-        let previous = self.get_pool_claimable_reward(pool, address)?;
+        let previous = self.get_agent_reward(pool, address)?;
         let total = self
             .claimable_total_minor
             .read(&(pool as u8))?
@@ -213,7 +213,7 @@ impl AgentRewardContract<'_> {
     /// currency must be an Oracle reference currency.
     ///
     /// Any failure reverts the call and leaves the balance intact.
-    pub fn claim_reward(
+    pub fn redeem_agent_reward(
         &mut self,
 
         pool: RewardPool,
@@ -227,17 +227,17 @@ impl AgentRewardContract<'_> {
                 // Registration history is sufficient: earned rewards survive deregistration.
                 outbe_ccaregistry::api::cca_state(&storage, address)?;
             }
-            let balance = self.get_pool_claimable_reward(pool, address)?;
+            let balance = self.get_agent_reward(pool, address)?;
             if balance.is_zero() {
-                return Err(AgentRewardError::NoClaimableBalance.into());
+                return Err(AgentRewardError::NoAgentReward.into());
             }
-            let deadline = self.get_pool_balance_deadline(pool, address)?;
+            let deadline = self.agent_reward_deadline(pool, address)?;
             if storage.now_secs()? >= deadline {
-                return Err(AgentRewardError::ClaimDeadlinePassed(deadline).into());
+                return Err(AgentRewardError::AgentRewardDeadlinePassed(deadline).into());
             }
             let requested = if amount.is_zero() { balance } else { amount };
             if requested > balance {
-                return Err(AgentRewardError::InsufficientClaimableBalance.into());
+                return Err(AgentRewardError::InsufficientAgentReward.into());
             }
             let next_deadline = if requested == balance {
                 0
@@ -245,10 +245,10 @@ impl AgentRewardContract<'_> {
                 self.renewed_reward_deadline()?
             };
             let gem_id = issue_reward_gem(&self.storage, (address, requested), currencies)?;
-            self.write_pool_claimable_reward(pool, address, balance - requested)?;
+            self.write_agent_reward(pool, address, balance - requested)?;
             self.reward_balance_deadlines
                 .write(&Self::reward_balance_key(pool, address), next_deadline)?;
-            self.emit(IAgentReward::RewardsClaimed {
+            self.emit(IAgentReward::AgentRewardRedeemed {
                 account: address,
                 pool: pool as u8,
                 promisLoadMinor: requested,
@@ -258,32 +258,32 @@ impl AgentRewardContract<'_> {
         })
     }
 
-    /// Gets all WAA tribute counts for a day as (address, count) pairs.
+    /// Gets all WAA offer counts for a day as (address, count) pairs.
     pub fn get_all_waa_counts(&self, day: WorldwideDay) -> Result<Vec<(Address, u64)>> {
-        read_tribute_counts(
+        read_offer_counts(
             day,
             &self.waa_address_count,
             &self.waa_addresses,
-            &self.waa_tribute_counts,
+            &self.waa_offer_counts,
         )
     }
 
-    /// Gets all SRA tribute counts for a day as (address, count) pairs.
+    /// Gets all SRA offer counts for a day as (address, count) pairs.
     pub fn get_all_sra_counts(&self, day: WorldwideDay) -> Result<Vec<(Address, u64)>> {
-        read_tribute_counts(
+        read_offer_counts(
             day,
             &self.sra_address_count,
             &self.sra_addresses,
-            &self.sra_tribute_counts,
+            &self.sra_offer_counts,
         )
     }
 }
 
-fn read_tribute_counts(
+fn read_offer_counts(
     day: WorldwideDay,
     address_count: &Map<'_, WorldwideDay, u32>,
     addresses: &Map<'_, B256, Address>,
-    tribute_counts: &Map<'_, B256, u64>,
+    offer_counts: &Map<'_, B256, u64>,
 ) -> Result<Vec<(Address, u64)>> {
     let addr_count = address_count.read(&day)?;
     let mut result = Vec::with_capacity(addr_count as usize);
@@ -293,8 +293,8 @@ fn read_tribute_counts(
         if addr.is_zero() {
             continue;
         }
-        let count_key = AgentRewardContract::tribute_count_key(day, addr);
-        let count = tribute_counts.read(&count_key)?;
+        let count_key = AgentRewardContract::offer_count_key(day, addr);
+        let count = offer_counts.read(&count_key)?;
         if count > 0 {
             result.push((addr, count));
         }
@@ -313,7 +313,7 @@ pub(crate) fn issue_reward_gem(
     outbe_oracle::api::check_reference_currency(reference_currency)?;
     let snapshot = outbe_oracle::api::current_vwap_24h_snapshot(storage.clone())?;
     let vwap = outbe_oracle::api::vwap_24h(storage.clone(), reference_currency, snapshot)?
-        .ok_or(AgentRewardError::ClaimPriceUnavailable(reference_currency))?;
+        .ok_or(AgentRewardError::RedeemPriceUnavailable(reference_currency))?;
     let entry_price =
         marked_down(vwap, AGENT_DISCOUNT_PCT).ok_or(AgentRewardError::EntryPriceOverflow)?;
     outbe_gemfactory::api::issue_gem(

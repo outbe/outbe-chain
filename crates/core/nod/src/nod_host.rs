@@ -234,7 +234,7 @@ const OFFER_CANARY_RESULT: &[u8] = b"outbe/nod/offer-canary-result/v1";
 /// Open `offer` with the resident offer key of `context` and sign what it holds.
 pub fn open_offer_canary_with(
     context: &InProcessTeeContext,
-    offer: &crate::offer::protocol::EncryptedTributeOffer,
+    offer: &crate::offer::protocol::EncryptedOffer,
 ) -> Result<OfferCanaryV1, TransportError> {
     let expected = crate::offer::protocol::inputs_canonical_hash(std::slice::from_ref(offer));
     let payload = context
@@ -445,7 +445,7 @@ fn has_requested_terms(
         request.offer.owner,
         request.emission_day,
         request.entry_price_minor,
-        request.offer.tribute_currency,
+        request.offer.issuance_currency,
         request.offer.reference_currency,
     )
 }

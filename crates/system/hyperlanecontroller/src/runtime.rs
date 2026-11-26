@@ -191,7 +191,7 @@ impl HyperlaneControllerContract<'_> {
     /// Mirrors the active Outbe validator set into every ISM (validators =
     /// the Hyperlane signer of every active validator, threshold =
     /// [`consensus_threshold`]). Returns `false` when the local ISM already
-    /// matches, so a keeper can call it every epoch.
+    /// matches. The epoch boundary step calls it once per epoch.
     pub fn sync(&mut self) -> Result<bool> {
         let active = self.active_signers()?;
         let threshold = consensus_threshold(active.len())?;

@@ -1,17 +1,13 @@
-//! Tribute computation - economics + `tribute_id`. Pure, deterministic, integer
-//! (U256) only.
+//! Offer computation - economics. Pure, deterministic, integer (U256) only.
 //!
-//! The settlement->nominal computation runs **only in the enclave**. The host
-//! `outbe-tributefactory` runtime does not recompute private economics. It forwards
-//! the public pricing inputs and uses the enclave result.
+//! The settlement->nominal computation runs **only in the enclave**. The host does not
+//! recompute private economics. It forwards the public pricing inputs and uses the
+//! enclave result.
 //!
 //!   - Arithmetic is checked (no panics, per project safety rules). On overflow the
 //!     enclave rejects the offer and does not abort.
 //!   - The exact WorldwideDay VWAP legs and reference S-curve are public inputs. The
 //!     node reads them from committed Oracle state. They are identical on every validator.
-//!
-//! The token id is a Poseidon2-BN254 digest of the owner and the WorldwideDay. The host
-//! recomputes the same digest and derives the tribute id from it.
 //!
 //! Settlement arithmetic uses checked `U256` operations. The module-level lint
 //! below rejects floating-point arithmetic.
@@ -20,14 +16,13 @@
 // `clippy::` tool lints are accepted (ignored) by plain rustc.
 #![deny(clippy::float_arithmetic)]
 
-use alloy_primitives::{Address, B256, U256, U512};
-use outbe_core_common::confidential_tee::{parse_tribute_draft_id, ComputeError};
-use outbe_system_common::time::WorldwideDay;
+use alloy_primitives::{U256, U512};
+use outbe_core_common::confidential_tee::ComputeError;
 use outbe_system_common::units::SCALE_1E6_U256;
 
 type AmountResult<T> = Result<T, ComputeError>;
 
-/// Canonical Tribute amount parsed once before the ZK/non-ZK paths diverge.
+/// Canonical offer amount parsed once before the ZK/non-ZK paths diverge.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CanonicalAmount {
     pub base: u64,
@@ -35,33 +30,7 @@ pub struct CanonicalAmount {
     pub amount_minor: U256,
 }
 
-/// Returns the token id `Poseidon2(owner, worldwide_day)`, BN254.
-/// The digest depends on `(owner, worldwide_day)` ALONE. This property enforces
-/// the one-tribute-per-owner-per-day invariant. The host recomputes this digest and
-/// derives the tribute id from the day and the digest tail
-/// (`WwdEntityId::from_day_and_digest`). A second offer for the same owner and day
-/// gives the same tribute id, so the host's `get_tribute` check rejects it
-/// (`TributeAlreadyExists`). This function still checks the `tribute_draft_id`
-/// (must be 32-byte hex) but intentionally does NOT mix it into the id. Mixing it in
-/// made the id per-offer-unique and silently allowed duplicate tributes per owner per day.
-///
-/// Both identity inputs fit below the BN254 scalar modulus:
-/// - `owner`: address left-padded to 32 bytes.
-/// - `worldwide_day`: its `YYYYMMDD` word as 32-byte big-endian.
-pub fn compute_token_id(
-    owner: Address,
-    worldwide_day: WorldwideDay,
-    draft_id: &str,
-) -> AmountResult<B256> {
-    // Validate the draft id (reject malformed input) but keep it out of the hash.
-    parse_tribute_draft_id(draft_id)?;
-    Ok(outbe_core_common::wwd_entity_id::derive_poseidon_digest(
-        owner,
-        worldwide_day,
-    ))
-}
-
-/// Computes the Tribute-only S-curve pricing contract:
+/// Computes the S-curve pricing contract of an offer:
 ///
 /// `effective_ref = max(reference_vwap, reference_scurve)`
 /// `nominal = floor(amount * 1_000_000 * reference_vwap /
@@ -109,7 +78,7 @@ fn parse_canonical_u64(value: &str, field: &'static str) -> AmountResult<u64> {
 }
 
 /// Parse the `amount_base`/`amount_micro` wire fields into the canonical
-/// six-decimal Tribute amount. `amount_base` is a whole unsigned `u64` and the
+/// six-decimal offer amount. `amount_base` is a whole unsigned `u64` and the
 /// `amount_micro` field is the raw remainder `0..999_999`.
 pub fn parse_canonical_amount(
     base_amount: &str,
@@ -147,7 +116,7 @@ mod tests {
     fn canonical_amount_cases() -> CanonicalAmountCases {
         serde_json::from_str(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../../testdata/tribute/canonical-amounts-v1.json"
+            "/../../../testdata/offer/canonical-amounts-v1.json"
         )))
         .unwrap()
     }
@@ -243,40 +212,6 @@ mod tests {
         assert!(compute_nominal(U256::MAX, U256::ONE, U256::MAX, U256::ZERO).is_err());
         assert!(
             compute_nominal(U256::ONE, U256::from(2_000_000u64), U256::ONE, U256::ONE,).is_err()
-        );
-    }
-
-    const DRAFT_A: &str = "0x1111111111111111111111111111111111111111111111111111111111111111";
-    const DRAFT_B: &str = "0x2222222222222222222222222222222222222222222222222222222222222222";
-    const DAY: WorldwideDay = WorldwideDay::new(20250115);
-    const NEXT_DAY: WorldwideDay = WorldwideDay::new(20250116);
-
-    #[test]
-    fn token_id_deterministic_and_input_bound() {
-        let a = Address::repeat_byte(0x11);
-        let b = Address::repeat_byte(0x22);
-        let base = compute_token_id(a, DAY, DRAFT_A).unwrap();
-        assert_eq!(base, compute_token_id(a, DAY, DRAFT_A).unwrap());
-        assert_ne!(base, compute_token_id(b, DAY, DRAFT_A).unwrap()); // owner
-        assert_ne!(base, compute_token_id(a, NEXT_DAY, DRAFT_A).unwrap()); // day
-
-        // draft_id is deliberately NOT bound into the id. The same owner+day yields
-        // the same id regardless of draft, which enforces one-per-owner-per-day.
-        assert_eq!(base, compute_token_id(a, DAY, DRAFT_B).unwrap());
-    }
-
-    #[test]
-    fn token_id_rejects_bad_draft_id() {
-        assert!(compute_token_id(Address::ZERO, DAY, "not-hex").is_err());
-        assert!(compute_token_id(Address::ZERO, DAY, "0x1234").is_err()); // not 32 bytes
-    }
-
-    #[test]
-    fn token_id_matches_chain_digest() {
-        let owner = Address::repeat_byte(0x42);
-        assert_eq!(
-            compute_token_id(owner, DAY, DRAFT_A).unwrap(),
-            outbe_core_common::wwd_entity_id::derive_poseidon_digest(owner, DAY)
         );
     }
 }

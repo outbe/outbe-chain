@@ -1,7 +1,7 @@
 //! Gem: the terms, profile and data of a Gem. Bodies, groups, the call bins and the
 //! expiry queue live here, with the read-time state.
 //!
-//! GemFactory applies every rule and runs the call and forfeit sweeps through [`api`].
+//! GemFactory applies every rule and runs the call and close sweeps through [`api`].
 //! The precompile surface is the Gem NFT and its views.
 
 pub mod api;
@@ -23,7 +23,7 @@ pub use schema::{
     CallTerms, GemAddParams, GemContract, GemGroupState, GemItemState, GemState, GemView,
     GroupSubSeriesSummary,
 };
-pub use state::{CallBins, CleanupQueue, ForfeitQueue};
+pub use state::{CallBins, CloseQueue, ForfeitQueue};
 
 #[cfg(test)]
 mod tests;

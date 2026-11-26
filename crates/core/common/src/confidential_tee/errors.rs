@@ -93,12 +93,6 @@ pub fn map_consensus_transport_error<E>(
     }
 }
 
-/// Tribute offer, read, day, or NOD attestation failure descriptor.
-pub const TRIBUTE_OFFER_ATTESTATION: AppErrorDescriptor = AppErrorDescriptor::new(
-    "tribute_offer_attestation",
-    "offer attestation signature invalid",
-);
-
 /// Gratis ledger operation attestation failure descriptor.
 pub const GRATIS_OP_ATTESTATION: AppErrorDescriptor = AppErrorDescriptor::new(
     "gratis_op_attestation",
@@ -110,16 +104,6 @@ pub const PROMIS_OP_ATTESTATION: AppErrorDescriptor = AppErrorDescriptor::new(
     "promis_op_attestation",
     "promis-op attestation signature invalid",
 );
-
-/// Fidelity operation attestation failure descriptor.
-pub const FIDELITY_ATTESTATION: AppErrorDescriptor = AppErrorDescriptor::new(
-    "fidelity_attestation",
-    "fidelity attestation signature invalid",
-);
-
-/// Tribute state-source proof or context rejection descriptor.
-pub const TRIBUTE_SOURCE_REJECTED: AppErrorDescriptor =
-    AppErrorDescriptor::new("tribute_source_rejected", "Tribute source rejected");
 
 /// Encrypted NOD mint business rejection descriptor.
 pub const NOD_MINT_REJECTED: AppErrorDescriptor =
@@ -177,7 +161,7 @@ fn resident_error_message(error: &outbe_tee::resident::TeeCryptoError) -> &'stat
     }
 }
 
-/// Hex decoder failure for a `tribute_draft_id`.
+/// Hex decoder failure for an `offer_draft_id`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum DraftIdHexError {
     /// A character was not a hex digit.
@@ -199,8 +183,8 @@ pub enum DraftIdHexError {
 /// Error from canonical amount parsing and nominal math shared by offer payloads.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum ComputeError {
-    /// The `tribute_draft_id` hex string failed hex decoding.
-    #[error("invalid tribute_draft_id hex: {draft_id}")]
+    /// The `offer_draft_id` hex string failed hex decoding.
+    #[error("invalid offer_draft_id hex: {draft_id}")]
     InvalidDraftIdHex {
         /// Caller text that failed decoding, including any `0x` prefix.
         draft_id: String,
@@ -208,8 +192,8 @@ pub enum ComputeError {
         #[source]
         source: DraftIdHexError,
     },
-    /// The decoded `tribute_draft_id` length is not 32 bytes.
-    #[error("tribute_draft_id must be 32 bytes, got {len}")]
+    /// The decoded `offer_draft_id` length is not 32 bytes.
+    #[error("offer_draft_id must be 32 bytes, got {len}")]
     DraftIdLength { len: usize },
     /// The issuance WorldwideDay VWAP is zero.
     #[error("issuance WorldwideDay VWAP is zero")]
@@ -237,40 +221,9 @@ pub enum ComputeError {
     AmountOverflow,
 }
 
-/// Typed rejection causes for a Tribute state-source opening.
-#[derive(Clone, Debug, PartialEq, Eq, Error)]
-pub enum TributeSourceError {
-    /// Checkpoint or Tribute context identity failed structural validation.
-    #[error("Tribute source context mismatch")]
-    ContextMismatch,
-    /// Expected storage slot list is empty, unsorted, oversized, or misaligned.
-    #[error("Tribute source slot set mismatch")]
-    SlotSetMismatch,
-    /// Source binding hash differed from the node's expected authority binding.
-    #[error("Tribute source does not match node authority")]
-    AuthorityMismatch,
-    /// Proven storage word differed from the expected word value.
-    #[error("Tribute source word mismatch")]
-    WordMismatch,
-    /// Underlying MPT account/storage proof verification failed.
-    #[error(transparent)]
-    ProofVerification(#[from] outbe_primitives::storage::proof::StateProofError),
-}
-
 /// Typed host-client errors for domain enclave operations.
 #[derive(Debug, Error)]
 pub enum EnclaveClientError {
-    /// Tribute state source verification rejected the supplied opening.
-    #[error("Tribute source rejected: {0}")]
-    TributeSourceRejected(#[from] TributeSourceError),
-    /// Tribute day or league predecessor record carried an invalid version.
-    #[error("invalid Tribute day predecessor version: expected {expected}, got {actual}")]
-    InvalidTributeDayPredecessorVersion {
-        /// Minimum expected predecessor version.
-        expected: u8,
-        /// Actual predecessor version byte observed.
-        actual: u8,
-    },
     /// Underlying enclave transport or codec error.
     #[error(transparent)]
     Transport(#[from] TransportError),
@@ -297,12 +250,6 @@ pub enum LocalCryptoError {
     /// Sealed offer bytes did not have the fixed wire length.
     #[error("aead seal")]
     AeadOutputLength,
-    /// Encrypted Fidelity cohort blob failed envelope validation.
-    #[error("invalid encrypted Fidelity cohort envelope")]
-    InvalidFidelityCohortEnvelope,
-    /// Fidelity cohort ciphertext failed AEAD.
-    #[error("Fidelity cohort decryption failed")]
-    FidelityCohortDecryptionFailed(#[source] outbe_tee::TeeCryptoError),
     /// Encrypted Gratis balance blob failed envelope validation.
     #[error("invalid encrypted Gratis balance")]
     InvalidGratisBalance,
@@ -333,18 +280,6 @@ pub enum LocalCryptoError {
     /// Derived NOD amount key failed AEAD key initialization.
     #[error("invalid NOD amount key")]
     InvalidNodAmountKey(#[source] outbe_tee::TeeCryptoError),
-    /// Encrypted Tribute record failed structural encoding validation.
-    #[error("invalid encrypted Tribute encoding")]
-    InvalidTributeEncoding,
-    /// Encrypted Tribute amounts failed AEAD or key derivation.
-    #[error("Tribute amount decryption failed")]
-    TributeAmountDecryptionFailed(#[source] outbe_tee::TeeCryptoError),
-    /// Opened Tribute plaintext did not have the 64-byte amounts length.
-    #[error("invalid Tribute amount length")]
-    InvalidTributeAmountLength(#[source] outbe_tee::TeeCryptoError),
-    /// Derived Tribute amount key failed AEAD key initialization.
-    #[error("invalid Tribute amount key")]
-    InvalidTributeAmountKey(#[source] outbe_tee::TeeCryptoError),
 }
 
 impl PartialEq<&str> for LocalCryptoError {
@@ -367,8 +302,6 @@ impl LocalCryptoError {
             Self::HkdfFill(_) => "hkdf fill",
             Self::AeadKey(_) => "aead key",
             Self::AeadSeal(_) | Self::AeadOutputLength => "aead seal",
-            Self::InvalidFidelityCohortEnvelope => "invalid encrypted Fidelity cohort envelope",
-            Self::FidelityCohortDecryptionFailed(_) => "Fidelity cohort decryption failed",
             Self::InvalidGratisBalance => "invalid encrypted Gratis balance",
             Self::GratisBalanceDecryptionFailed(_) => "Gratis balance decryption failed",
             Self::InvalidGratisAmountLength(_) => "invalid Gratis amount length",
@@ -379,19 +312,15 @@ impl LocalCryptoError {
             Self::NodAmountDecryptionFailed(_) => "NOD amount decryption failed",
             Self::InvalidNodAmountLength(_) => "invalid NOD amount length",
             Self::InvalidNodAmountKey(_) => "invalid NOD amount key",
-            Self::InvalidTributeEncoding => "invalid encrypted Tribute encoding",
-            Self::TributeAmountDecryptionFailed(_) => "Tribute amount decryption failed",
-            Self::InvalidTributeAmountLength(_) => "invalid Tribute amount length",
-            Self::InvalidTributeAmountKey(_) => "invalid Tribute amount key",
         }
     }
 }
 
-/// Decode a 32-byte `tribute_draft_id`. An optional `0x` prefix is accepted.
+/// Decode a 32-byte `offer_draft_id`. An optional `0x` prefix is accepted.
 ///
 /// The decoded bytes are validated and then discarded by token-id derivation.
 /// A malformed id still fails this function.
-pub fn parse_tribute_draft_id(draft_id: &str) -> Result<[u8; 32], ComputeError> {
+pub fn parse_offer_draft_id(draft_id: &str) -> Result<[u8; 32], ComputeError> {
     let hex_str = draft_id.strip_prefix("0x").unwrap_or(draft_id);
     let bytes = hex::decode(hex_str).map_err(|source| ComputeError::InvalidDraftIdHex {
         draft_id: draft_id.to_owned(),
@@ -448,7 +377,7 @@ mod tests {
 
     #[test]
     fn draft_id_hex_failure_keeps_the_decoder() {
-        let error = parse_tribute_draft_id("0xzz").unwrap_err();
+        let error = parse_offer_draft_id("0xzz").unwrap_err();
         let ComputeError::InvalidDraftIdHex { draft_id, source } = error else {
             panic!("odd or non-hex draft id is InvalidDraftIdHex");
         };
@@ -458,11 +387,11 @@ mod tests {
             DraftIdHexError::InvalidHexCharacter { c: 'z', index: 0 }
         ));
         assert_eq!(
-            parse_tribute_draft_id(&format!("0x{}", "11".repeat(32))).unwrap(),
+            parse_offer_draft_id(&format!("0x{}", "11".repeat(32))).unwrap(),
             [0x11; 32]
         );
         assert!(matches!(
-            parse_tribute_draft_id("0x11").unwrap_err(),
+            parse_offer_draft_id("0x11").unwrap_err(),
             ComputeError::DraftIdLength { len: 1 }
         ));
     }

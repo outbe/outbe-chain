@@ -317,10 +317,9 @@ fn declared_error_reservation_not_found() {
         let id = U256::from(42);
         let err = dispatch(
             storage.clone(),
-            &IVaultRouter::releaseReservationCall {
-                id,
-                receiver: receiver(),
-                amountMinor: U256::from(10),
+            &IVaultRouter::redeemCredisReservationCall {
+                credisReservationId: id,
+                credisId: U256::ONE,
             }
             .abi_encode(),
             CREDIS_FACTORY_ADDRESS,

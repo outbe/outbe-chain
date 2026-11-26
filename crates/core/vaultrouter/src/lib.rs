@@ -15,10 +15,8 @@ pub(crate) mod state;
 pub mod test_support;
 pub mod vote_target;
 
-pub use schema::{LiquidityReservation, VaultRouterContract};
+pub use schema::{CredisReservation, VaultRouterContract};
 pub use vote_target::VaultRouterVoteTarget;
 
 #[cfg(test)]
 mod tests;
-
-mod reservation;

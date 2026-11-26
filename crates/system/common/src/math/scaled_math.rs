@@ -1,7 +1,6 @@
 //! Checked integer scaling shared by monetary protocol modules.
 //!
-//! Generic multiply/divide helpers reject a `U256` product overflow. Pledge
-//! quotes use bounded `U512` intermediates and check their final `U256` output.
+//! Pledge quotes use bounded `U512` intermediates and check their final `U256` output.
 
 use alloy_primitives::{U256, U512};
 
@@ -43,38 +42,6 @@ fn convert_to_u256(value: U512) -> Result<U256> {
         return Err(PrimitivesMathError::ValueRoundsToZero.into());
     }
     Ok(value)
-}
-
-fn checked_product(numerator: U256, multiplier: U256) -> Result<U256> {
-    numerator
-        .checked_mul(multiplier)
-        .ok_or_else(|| PrimitivesMathError::ScaledMathMultiplicationOverflow.into())
-}
-
-fn require_denominator(denominator: U256) -> Result<()> {
-    if denominator.is_zero() {
-        return Err(PrimitivesMathError::ScaledMathDivisionByZero.into());
-    }
-    Ok(())
-}
-
-/// Returns `floor(numerator * multiplier / denominator)`.
-pub fn checked_mul_div_floor(numerator: U256, multiplier: U256, denominator: U256) -> Result<U256> {
-    require_denominator(denominator)?;
-    Ok(checked_product(numerator, multiplier)? / denominator)
-}
-
-/// Returns `ceil(numerator * multiplier / denominator)`.
-pub fn checked_mul_div_ceil(numerator: U256, multiplier: U256, denominator: U256) -> Result<U256> {
-    require_denominator(denominator)?;
-    let product = checked_product(numerator, multiplier)?;
-    let quotient = product / denominator;
-    if product % denominator == U256::ZERO {
-        return Ok(quotient);
-    }
-    quotient
-        .checked_add(U256::ONE)
-        .ok_or_else(|| PrimitivesMathError::ScaledMathCeilingOverflow.into())
 }
 
 #[cfg(test)]
@@ -128,34 +95,5 @@ mod pledge_tests {
         // Exact upper conversion boundary. The conversion rejects the next integer.
         assert_eq!(convert_to_u256(U512::from(U256::MAX)).unwrap(), U256::MAX);
         assert!(convert_to_u256(U512::from(U256::MAX) + U512::ONE).is_err());
-    }
-
-    #[test]
-    fn checked_mul_div_floor_and_ceil_cover_exact_remainder_and_error_paths() {
-        // Exact division: floor and ceil agree.
-        assert_eq!(
-            checked_mul_div_floor(U256::from(6u64), U256::from(4u64), U256::from(3u64)).unwrap(),
-            U256::from(8u64)
-        );
-        assert_eq!(
-            checked_mul_div_ceil(U256::from(6u64), U256::from(4u64), U256::from(3u64)).unwrap(),
-            U256::from(8u64)
-        );
-
-        // Non-zero remainder: 7 * 3 / 4 = 21 / 4 -> floor = 5, ceil = 6.
-        assert_eq!(
-            checked_mul_div_floor(U256::from(7u64), U256::from(3u64), U256::from(4u64)).unwrap(),
-            U256::from(5u64)
-        );
-        assert_eq!(
-            checked_mul_div_ceil(U256::from(7u64), U256::from(3u64), U256::from(4u64)).unwrap(),
-            U256::from(6u64)
-        );
-
-        // Division by zero and product overflow.
-        assert!(checked_mul_div_floor(U256::ONE, U256::ONE, U256::ZERO).is_err());
-        assert!(checked_mul_div_ceil(U256::ONE, U256::ONE, U256::ZERO).is_err());
-        assert!(checked_mul_div_floor(U256::MAX, U256::from(2u64), U256::from(2u64)).is_err());
-        assert!(checked_mul_div_ceil(U256::MAX, U256::from(2u64), U256::from(2u64)).is_err());
     }
 }

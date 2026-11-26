@@ -20,11 +20,11 @@ pub enum MetadosisError {
     VwapMustBeNonZero,
 
     #[error(
-        "Metadosis business failure: invalid Lysis limit split: lysis limit {lysis_limit_minor} exceeds day limit {day_limit}"
+        "Metadosis business failure: invalid Metadosis limit split: Nod loads {nod_loads_minor} exceed day limit {day_limit}"
     )]
-    InvalidLysisLimitSplit {
+    InvalidMetadosisLimitSplit {
         day_limit: U256,
-        lysis_limit_minor: U256,
+        nod_loads_minor: U256,
     },
 
     #[error(
@@ -45,12 +45,12 @@ impl From<MetadosisError> for PrecompileError {
         use IMetadosis as I;
         match value {
             MetadosisError::VwapMustBeNonZero => revert_with(I::VwapMustBeNonZero {}),
-            MetadosisError::InvalidLysisLimitSplit {
+            MetadosisError::InvalidMetadosisLimitSplit {
                 day_limit,
-                lysis_limit_minor,
-            } => revert_with(I::InvalidLysisLimitSplit {
+                nod_loads_minor,
+            } => revert_with(I::InvalidMetadosisLimitSplit {
                 dayLimit: day_limit,
-                lysisLimitMinor: lysis_limit_minor,
+                nodLoadsMinor: nod_loads_minor,
             }),
             MetadosisError::DesisLimitUnavailable {
                 desis_limit_minor,

@@ -4,7 +4,6 @@ use super::*;
 use crate::runtime::{handle_cycle_tick_with_tasks, run_isolated_cycle_worker};
 use crate::tasks::CycleWorkerId;
 use crate::ICycle;
-use alloy_sol_types::SolEvent;
 use outbe_agentreward::schema::{AgentRewardContract, RewardPool};
 use outbe_desis::{AuctionStage, DesisContract};
 use outbe_primitives::error::{PrecompileError, Result};
@@ -17,18 +16,13 @@ const RECIPIENT: Address = Address::repeat_byte(0x93);
 const DAY: WorldwideDay = WorldwideDay::new(20_240_101);
 const CLEANUP_DAY: EmissionDate = EmissionDate::new(20_231_113);
 
-fn worker_failures(storage: &HashMapStorageProvider) -> Vec<(u8, u64)> {
-    storage
-        .get_events(CYCLE_ADDRESS)
-        .iter()
-        .filter_map(|log| ICycle::CycleWorkerFailed::decode_log_data(log).ok())
-        .map(|event| (event.workerId, event.blockNumber))
-        .collect()
+fn cycle_logs(storage: &HashMapStorageProvider) -> usize {
+    storage.get_events(CYCLE_ADDRESS).len()
 }
 
 fn seed_jobs(ctx: &BlockRuntimeContext) {
     let mut rewards = ctx.storage.contract::<AgentRewardContract>();
-    rewards.increment_waa_tribute(DAY, RECIPIENT).unwrap();
+    rewards.increment_waa_offer(DAY, RECIPIENT).unwrap();
     outbe_rewards::api::seal_votes_and_fees(ctx, DAY.value()).unwrap();
     let allocation = outbe_agentreward::api::allocate_day_agent_rewards(
         ctx,
@@ -77,12 +71,12 @@ fn tail_worker_missing_job_reverts_and_cleanup_continues_then_next_block_retries
         assert_eq!(rewards.worker_height.read().unwrap(), 0);
         assert!(!rewards.worker_initialized.read().unwrap());
         assert_eq!(rewards.pending_jobs_by_day.read(&DAY.value()).unwrap(), 4);
-        assert_eq!(rewards.get_claimable_reward(RECIPIENT).unwrap(), U256::ZERO);
+        assert_eq!(rewards.agent_reward_total(RECIPIENT).unwrap(), U256::ZERO);
         let desis = ctx.storage.contract::<DesisContract>();
         assert_eq!(desis.cleanup_head.read().unwrap(), 0);
         assert_eq!(desis.cleanup_pending.read(&CLEANUP_DAY).unwrap(), 2);
     });
-    assert_eq!(worker_failures(&storage), vec![(1, 2)]);
+    assert_eq!(cycle_logs(&storage), 0);
     storage.set_block_number(3);
     storage.set_gas_limit(100_000_000);
     storage.enter(|handle| {
@@ -94,12 +88,12 @@ fn tail_worker_missing_job_reverts_and_cleanup_continues_then_next_block_retries
         assert_eq!(rewards.worker_height.read().unwrap(), 3);
         assert_eq!(
             rewards
-                .get_pool_claimable_reward(RewardPool::Waa, RECIPIENT)
+                .get_agent_reward(RewardPool::Waa, RECIPIENT)
                 .unwrap(),
             U256::from(10)
         );
     });
-    assert_eq!(worker_failures(&storage), vec![(1, 2)]);
+    assert_eq!(cycle_logs(&storage), 0);
 }
 
 fn write_worker_page(ctx: &BlockRuntimeContext) -> Result<()> {
@@ -109,17 +103,13 @@ fn write_worker_page(ctx: &BlockRuntimeContext) -> Result<()> {
     ctx.storage.increase_balance(RECIPIENT, U256::ONE)?;
     ctx.storage
         .contract::<Cycle>()
-        .emit(ICycle::CycleTaskExecuted {
-            id: 99,
-            scheduledAt: 0,
-            blockTimestamp: 0,
-            blockNumber: 0,
+        .emit(ICycle::CycleTaskCompleted {
+            task: ICycle::CycleTask::ScheduleNodCallPass,
         })
 }
 
 #[test]
-fn tail_worker_revert_budget_exceeded_and_panic_emit_cycle_worker_failed_and_preserve_cursor_for_retry(
-) {
+fn tail_worker_revert_budget_exceeded_and_panic_roll_back_the_page_and_preserve_cursor_for_retry() {
     let mut measured = cycle_storage();
     let mut page_cost = 0;
     measured.enter(|handle| {
@@ -140,7 +130,7 @@ fn tail_worker_revert_budget_exceeded_and_panic_emit_cycle_worker_failed_and_pre
                 write_worker_page(ctx)?;
                 match failure {
                     0 => Err(
-                        outbe_agentreward::errors::AgentRewardError::ClaimPriceUnavailable(840)
+                        outbe_agentreward::errors::AgentRewardError::RedeemPriceUnavailable(840)
                             .into(),
                     ),
                     1 => Ok(()),
@@ -157,8 +147,7 @@ fn tail_worker_revert_budget_exceeded_and_panic_emit_cycle_worker_failed_and_pre
             assert_eq!(rewards.worker_height.read().unwrap(), 0);
         }
     });
-    assert_eq!(worker_failures(&storage), vec![(2, 1); 6]);
-    assert_eq!(storage.get_events(CYCLE_ADDRESS).len(), 6);
+    assert_eq!(cycle_logs(&storage), 0);
 }
 
 #[test]
@@ -186,7 +175,7 @@ fn corrupt_cleanup_or_accrual_job_state_stays_fatal_and_rejects_cycle_tick() {
                 Err(PrecompileError::Fatal(_))
             ));
         });
-        assert!(worker_failures(&storage).is_empty());
+        assert_eq!(cycle_logs(&storage), 0);
     }
 }
 
@@ -216,7 +205,7 @@ fn fatal_node_local_and_enclosing_out_of_gas_workers_are_not_recoverable() {
             assert_eq!(ctx.storage.balance(RECIPIENT).unwrap(), U256::ZERO);
         }
     });
-    assert!(worker_failures(&storage).is_empty());
+    assert_eq!(cycle_logs(&storage), 0);
 }
 
 #[test]
@@ -255,10 +244,8 @@ fn real_accrual_page_one_gas_short_rolls_back_credits_logs_and_cursors() {
         assert_eq!(rewards.worker_height.read().unwrap(), 0);
         assert!(!rewards.worker_initialized.read().unwrap());
         assert_eq!(rewards.pending_jobs_by_day.read(&DAY.value()).unwrap(), 4);
-        assert_eq!(rewards.get_claimable_reward(RECIPIENT).unwrap(), U256::ZERO);
+        assert_eq!(rewards.agent_reward_total(RECIPIENT).unwrap(), U256::ZERO);
     });
-    assert_eq!(worker_failures(&storage), vec![(1, 2)]);
-    let mut without_failure = storage.events.clone();
-    without_failure.remove(&CYCLE_ADDRESS);
-    assert_eq!(without_failure, before);
+    assert_eq!(cycle_logs(&storage), 0);
+    assert_eq!(storage.events, before);
 }

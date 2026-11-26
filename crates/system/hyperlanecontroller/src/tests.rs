@@ -8,6 +8,7 @@
 
 use alloy_primitives::{address, Address, Bytes, B256, U256};
 use alloy_sol_types::{SolCall, SolError, SolEvent, SolValue};
+use outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS;
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
@@ -126,6 +127,8 @@ fn initialized_provider() -> HashMapStorageProvider {
     StorageHandle::enter(&mut p, |storage| {
         dispatch(storage, &initialize_call(), deployer(), U256::ZERO).unwrap();
     });
+    // The local ISM holds the deploy set {v1} / 1.
+    stub_router_and_ism(&mut p, U256::ZERO, &[v(1)], 1);
     p
 }
 
@@ -450,6 +453,36 @@ fn domains_can_be_added_and_removed_except_the_local_one() {
 }
 
 #[test]
+fn add_domain_sends_ownership_and_the_local_set_in_one_message() {
+    let mut p = initialized_provider();
+    // The active set already differs from the local ISM: the new chain gets
+    // the local ISM set, the same set as the other chains.
+    stub_router_and_ism(&mut p, U256::ZERO, &[v(2), v(3)], 2);
+    let start = p.sub_call_inputs().len();
+    StorageHandle::enter(&mut p, |storage| {
+        let mut c = HyperlaneControllerContract::new(storage);
+        c.add_domain(1, v(5), hook(5), announce(5)).unwrap();
+    });
+    let messages = p.sub_call_inputs()[start..]
+        .iter()
+        .filter(|input| input.target == CROSSCHAIN_BRIDGE_ADDRESS)
+        .count();
+    assert_eq!(messages, 1);
+    let set = Bytes::from(
+        IStorageMultisigIsm::setValidatorsAndThresholdCall {
+            _validators: vec![v(2), v(3)],
+            _threshold: 2,
+        }
+        .abi_encode(),
+    );
+    let accept = Bytes::from(IStorageMultisigIsm::acceptOwnershipCall {}.abi_encode());
+    assert_eq!(
+        owner_calls(&p, start),
+        vec![(Some(1), v(5), accept), (Some(1), v(5), set)]
+    );
+}
+
+#[test]
 fn operations_require_initialization() {
     let mut p = provider();
     p.enable_sub_call_stub();
@@ -542,9 +575,15 @@ mod sync {
             c.set_hyperlane_signer(v(4), v(9)).unwrap();
         });
         p.clear_events(HYPERLANE_CONTROLLER_ADDRESS);
+        let call: Bytes = IHyperlaneController::syncCall {}.abi_encode().into();
         StorageHandle::enter(&mut p, |storage| {
-            let call: Bytes = IHyperlaneController::syncCall {}.abi_encode().into();
-            let ret = dispatch(storage, &call, stranger(), U256::ZERO).unwrap();
+            // Only the epoch boundary system transaction can rotate.
+            let err = dispatch(storage.clone(), &call, stranger(), U256::ZERO).unwrap_err();
+            assert_eq!(
+                revert_selector(err),
+                IHyperlaneController::NotSystemTransaction::SELECTOR
+            );
+            let ret = dispatch(storage, &call, OUTBE_SYSTEM_TX_ADDRESS, U256::ZERO).unwrap();
             assert!(IHyperlaneController::syncCall::abi_decode_returns(&ret).unwrap());
         });
         let applied = IHyperlaneController::ValidatorsAndThresholdApplied::decode_log_data(
@@ -1168,6 +1207,63 @@ mod liveness {
             let c = HyperlaneControllerContract::new(storage);
             assert_eq!(c.miss_count.read(&v(3)).unwrap(), 0);
         });
+    }
+
+    #[test]
+    fn liveness_jail_waits_for_the_epoch_boundary_to_rotate() {
+        use crate::LIVENESS_WINDOW_BLOCKS;
+        use outbe_primitives::block::{BlockContext, BlockRuntimeContext, ProtocolModule};
+
+        let mut p = liveness_provider();
+        StorageHandle::enter(&mut p, |storage| {
+            four_validators(storage.clone());
+            let c = HyperlaneControllerContract::new(storage);
+            c.target_index.write(&LOCAL, 500).unwrap();
+            c.target_index.write(&SEPOLIA, 5).unwrap();
+            for addr in [FIXTURE_VALIDATOR, v(2), v(4)] {
+                write_submission(&c, validator_domain_key(addr, LOCAL), 500, 100).unwrap();
+                write_vote(&c, validator_domain_key(addr, LOCAL), 500, ROOT_A).unwrap();
+            }
+            // v(3) never signs the LOCAL target.
+            write_submission(&c, validator_domain_key(v(3), LOCAL), 7, 100).unwrap();
+            for addr in four() {
+                write_submission(&c, validator_domain_key(addr, SEPOLIA), 5, 100).unwrap();
+                write_vote(&c, validator_domain_key(addr, SEPOLIA), 5, ROOT_B).unwrap();
+            }
+        });
+        let start = p.sub_call_inputs().len();
+        for window in 1..=u64::from(MAX_MISSES) {
+            let block = LIVENESS_WINDOW_BLOCKS * window;
+            p.set_block_number(block);
+            StorageHandle::enter(&mut p, |storage| {
+                let ctx = BlockRuntimeContext::new(
+                    BlockContext {
+                        block_gas_limit: 0,
+                        user_gas_used: 0,
+                        block_number: block,
+                        timestamp: 1_700_000_000,
+                        chain_id: CHAIN_ID,
+                        genesis_hash: B256::ZERO,
+                        genesis_timestamp: 1_700_000_000,
+                        proposer: Address::ZERO,
+                        validators: Vec::new(),
+                    },
+                    storage,
+                );
+                <crate::HyperlaneModule as ProtocolModule>::begin_block(&ctx).unwrap();
+            });
+        }
+        StorageHandle::enter(&mut p, |storage| {
+            let vs = ValidatorSet::new(storage);
+            assert!(!vs.validator_lifecycle(v(3)).unwrap().is_active_status());
+        });
+        // No sync() call and no ISM call: the boundary step rotates.
+        assert!(p.sub_call_inputs()[start..].iter().all(|input| {
+            input.target != CROSSCHAIN_BRIDGE_ADDRESS
+                && !input
+                    .calldata
+                    .starts_with(&IHyperlaneController::syncCall::SELECTOR)
+        }));
     }
 
     #[test]

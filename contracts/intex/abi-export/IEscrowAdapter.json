@@ -363,24 +363,6 @@
   },
   {
     "type": "function",
-    "name": "returnAbandonedIntexAuctionAsset",
-    "inputs": [
-      {
-        "name": "emissionDay",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "bidder",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "returnIntexAuctionAsset",
     "inputs": [
       {
@@ -406,6 +388,24 @@
         "internalType": "bool"
       }
     ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "returnIntexAuctionAssetAfterTimeout",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "bidder",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
     "stateMutability": "nonpayable"
   },
   {
@@ -475,24 +475,6 @@
   },
   {
     "type": "function",
-    "name": "unlockAbandonedIntexAuctionBidBond",
-    "inputs": [
-      {
-        "name": "emissionDay",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "bidder",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "unlockIntexAuctionBidBond",
     "inputs": [
       {
@@ -509,6 +491,24 @@
         "name": "reason",
         "type": "uint8",
         "internalType": "uint8"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "unlockIntexAuctionBidBondAfterTimeout",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "bidder",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "outputs": [],
@@ -898,6 +898,22 @@
   },
   {
     "type": "error",
+    "name": "IntexAuctionAssetEscrowTimeoutNotOver",
+    "inputs": [
+      {
+        "name": "returnableAt",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "nowTs",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "IntexAuctionAssetNotYetReturnable",
     "inputs": [
       {
@@ -924,12 +940,7 @@
   },
   {
     "type": "error",
-    "name": "IntexAuctionBidBondNotFound",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "IntexAuctionBidBondNotYetAbandoned",
+    "name": "IntexAuctionBidBondEscrowTimeoutNotOver",
     "inputs": [
       {
         "name": "unlockableAt",
@@ -942,6 +953,11 @@
         "internalType": "uint32"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "IntexAuctionBidBondNotFound",
+    "inputs": []
   },
   {
     "type": "error",
@@ -999,22 +1015,6 @@
     "type": "error",
     "name": "ProceedsRecipientNotSet",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ReturnNotYetAbandoned",
-    "inputs": [
-      {
-        "name": "returnableAt",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "nowTs",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ]
   },
   {
     "type": "error",

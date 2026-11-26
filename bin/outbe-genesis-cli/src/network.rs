@@ -32,7 +32,7 @@ pub const MAX_GENESIS_AGE_SECONDS: i64 = 6 * 60 * 60;
 
 const PACKAGED_ASSETS: &str = "share/outbe-genesis";
 
-pub const SEED_SECTIONS: [&str; 15] = [
+pub const SEED_SECTIONS: [&str; 16] = [
     "protocol_constants",
     "balance",
     "staking",
@@ -41,6 +41,7 @@ pub const SEED_SECTIONS: [&str; 15] = [
     "code_registry",
     "oracle",
     "intex_profile",
+    "intex",
     "gem_profile",
     "nod_profile",
     "credis_profile",
@@ -52,9 +53,10 @@ pub const SEED_SECTIONS: [&str; 15] = [
 
 pub const TEE_KEYS: [&str; 1] = ["mode"];
 
-const STATIC_TOP_LEVEL_KEYS: [&str; 43] = [
+const STATIC_TOP_LEVEL_KEYS: [&str; 44] = [
     "network",
     "validators",
+    "validator_runtime",
     "keys_dir",
     "chain_id",
     "tee",
@@ -193,9 +195,95 @@ pub fn validate_config(config: &Value) -> Result<(), GenesisError> {
         )));
     }
     validate_founders(obj)?;
+    validate_validator_runtime(config, obj)?;
     validate_tee(config, obj)?;
     rpc_bind_ip(config, "127.0.0.1")?;
     validate_ports(obj)
+}
+
+fn validate_validator_runtime(
+    config: &Value,
+    obj: &Map<String, Value>,
+) -> Result<(), GenesisError> {
+    let Some(runtime) = obj.get("validator_runtime") else {
+        return Ok(());
+    };
+    let entries = runtime
+        .as_array()
+        .ok_or_else(|| GenesisError::validation("validator_runtime must be a list"))?;
+    let validator_count = obj
+        .get("validators")
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len);
+    if entries.len() != validator_count {
+        return Err(GenesisError::validation(format!(
+            "validator_runtime must contain one entry per validator ({validator_count})"
+        )));
+    }
+    let allowed: BTreeSet<&str> = [
+        "rpc_bind_ip",
+        "rpc_port",
+        "reth_p2p_port",
+        "reth_discv5_port",
+        "radicle_port",
+        "consensus_p2p_port",
+    ]
+    .into_iter()
+    .collect();
+    let validators = obj
+        .get("validators")
+        .and_then(Value::as_array)
+        .expect("validate_founders already checked validators");
+    let default_consensus = obj
+        .get("consensus_p2p_port")
+        .map(parse_i128)
+        .transpose()?
+        .unwrap_or_else(|| i128::from(DEFAULT_CONSENSUS_P2P_PORT));
+    for (index, entry) in entries.iter().enumerate() {
+        let fields = entry.as_object().ok_or_else(|| {
+            GenesisError::validation(format!("validator_runtime[{index}] must be a mapping"))
+        })?;
+        if let Some(key) = fields.keys().find(|key| !allowed.contains(key.as_str())) {
+            return Err(GenesisError::validation(format!(
+                "unknown validator_runtime[{index}] key: {key}"
+            )));
+        }
+        let advertised_consensus = validators[index]
+            .as_str()
+            .and_then(|value| value.rsplit_once(':'))
+            .map(|(_, port)| port.parse::<i128>())
+            .transpose()
+            .map_err(|_| {
+                GenesisError::validation(format!("invalid consensus port in validators[{index}]"))
+            })?
+            .unwrap_or(default_consensus);
+        let runtime_consensus = fields
+            .get("consensus_p2p_port")
+            .map(parse_i128)
+            .transpose()?
+            .unwrap_or(default_consensus);
+        if runtime_consensus != advertised_consensus {
+            return Err(GenesisError::validation(format!(
+                "validator_runtime[{index}].consensus_p2p_port must match validators[{index}]"
+            )));
+        }
+        let mut merged = config.clone();
+        {
+            let merged_obj = merged
+                .as_object_mut()
+                .expect("validated network config is an object");
+            for (key, value) in fields {
+                merged_obj.insert(key.clone(), value.clone());
+            }
+        }
+        rpc_bind_ip(&merged, "127.0.0.1")?;
+        validate_ports(
+            merged
+                .as_object()
+                .expect("validated network config is an object"),
+        )?;
+    }
+    Ok(())
 }
 
 /// Resolve the RPC bind for one founder. `validator` selects that founder's

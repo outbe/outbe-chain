@@ -8,12 +8,12 @@ pub fn process_emission_day(ctx: &BlockRuntimeContext, day: u32) -> Result<()> {
     let mut metadosis = MetadosisContract::new(ctx.storage.clone());
     lifecycle::validate_metadosis_timestamp(ctx.block.timestamp)?;
     if let Some(record) = lifecycle::ready_emission_day(&metadosis, ctx, day)? {
-        process_ready_candidate(&mut metadosis, ctx, &record)?;
+        run_ready_emission_day(&mut metadosis, ctx, &record)?;
     }
     Ok(())
 }
 
-pub(crate) fn process_ready_candidate(
+pub(crate) fn run_ready_emission_day(
     metadosis: &mut MetadosisContract<'_>,
     ctx: &BlockRuntimeContext<'_>,
     emission_day: &EmissionDay,

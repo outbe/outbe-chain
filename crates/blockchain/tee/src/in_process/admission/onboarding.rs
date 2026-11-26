@@ -109,7 +109,7 @@ impl InProcessTeeContext {
         let key_matches = (
             material.public(),
             material.key_epoch(),
-            material.tribute_offer_epoch(),
+            material.offer_epoch(),
         ) == (
             context.network_encryption_public,
             context.key_epoch,

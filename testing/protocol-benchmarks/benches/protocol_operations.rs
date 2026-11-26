@@ -73,7 +73,6 @@ fn execute() -> Result<(), String> {
     for scenario in [
         ConfidentialScenario::promis(),
         ConfidentialScenario::gratis(),
-        ConfidentialScenario::gratis_with_fidelity(),
         ConfidentialScenario::gratisfactory(),
     ] {
         run_if_selected(&scenario, &arguments.filter, config, &mut reports)?;

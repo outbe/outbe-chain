@@ -24,22 +24,54 @@ interface ICredis {
     /// ERC-4906: emitted over the whole id range when groups are called.
     event BatchMetadataUpdate(uint256 _fromTokenId, uint256 _toTokenId);
 
+    event CredisIssued(
+        uint256 indexed credisId,
+        address indexed owner,
+        bytes14 indexed seriesId,
+        uint16 issuanceCurrency,
+        uint16 referenceCurrency,
+        address cca,
+        address asset,
+        uint256 amountMinor,
+        uint256 gratisMinor,
+        uint256 policyRate
+    );
+
     /// @notice A forfeited Credis is deleted: by its owner, or by the cleanup after its group's
     ///         deadline. Records the amount forfeited. Unpaid fee is left out of this
     ///         event and out of `settledFeeMinor`.
     event CredisForfeited(
         uint256 indexed credisId,
         address indexed owner,
-        address indexed cca,
-        address asset,
         uint16 issuanceCurrency,
         uint16 referenceCurrency,
-        uint256 forfeitedAmountMinor
+        address indexed cca,
+        address asset,
+        uint256 unsettledAmountMinor,
+        uint256 burnedGratisMinor
     );
 
+    /// @notice A settlement of a Credis. `amountMinor` is the whole payment, `feeMinor` its fee
+    ///         part, in the units of the Credis asset. `unpledgedGratisMinor` is free again in
+    ///         the main account. `asset` is the asset paid in.
+    event CredisSettled(
+        uint256 indexed credisId,
+        address indexed owner,
+        uint16 issuanceCurrency,
+        uint16 referenceCurrency,
+        address asset,
+        uint256 amountMinor,
+        uint256 feeMinor,
+        uint256 unpledgedGratisMinor
+    );
+
+    /// @notice The full settlement deleted the Credis.
+    event CredisBurned(uint256 indexed credisId, address indexed owner);
+
     /// @notice Lifecycle state of a Credis, mirroring the Rust `CredisState`.
-    ///         `Issued -> (Called) -> Settled | Forfeited`. A Credis is settleable
-    ///         from the moment it is issued.
+    ///         `Issued -> (Called) -> Forfeited`. A Credis is settleable from the
+    ///         moment it is issued, and its full settlement deletes it, so no read shows
+    ///         `Settled`.
     enum State {
         Issued,
         Called,
@@ -84,8 +116,6 @@ interface ICredis {
         /// ISO 4217 numeric code of the reference currency elected at origination
         /// and fixed for the Credis's life.
         uint16 referenceCurrency;
-        /// Main account whose pledged Gratis backs the Credis.
-        address source;
         /// P - the stablecoin amount disbursed. Never changes.
         uint256 amountMinor;
         /// P_out - decreases with each settlement; 0 once Settled or Forfeited.
