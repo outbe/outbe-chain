@@ -8,7 +8,7 @@ import {IIntexNFT1155Router, BatchSendParam} from "@contracts/shared/interfaces/
 
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
-import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
+import {OpenSeriesLib} from "../helpers/OpenSeriesLib.sol";
 
 /// @title DuplicateProtectionTest
 /// @notice Duplicate-execution protection on the NFT batch adapter.
@@ -62,7 +62,7 @@ contract DuplicateProtectionTest is CrossChainTest {
     }
 
     function _seedSeries(IntexNFT1155 intex) internal {
-        intex.openSeries(CreateSeriesLib.params(SERIES_ID_DAY, 10_000, 0));
+        intex.openSeries(OpenSeriesLib.params(SERIES_ID_DAY, 10_000, 0));
     }
 
     function _batchSendParam(address to) internal view returns (BatchSendParam memory) {

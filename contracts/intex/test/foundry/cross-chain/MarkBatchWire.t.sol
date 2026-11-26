@@ -9,7 +9,7 @@ import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
-import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
+import {OpenSeriesLib} from "../helpers/OpenSeriesLib.sol";
 import {MarkBatchLib} from "../helpers/MarkBatchLib.sol";
 
 /// @dev One day's series in one reference currency travel as a single mark message, and the target
@@ -41,8 +41,8 @@ contract MarkBatchWireTest is CrossChainTest {
     }
 
     function _createBoth() internal {
-        intex.openSeries(CreateSeriesLib.params(EMISSION_DAY, 10_000, 0));
-        IIntexNFT1155.CreateSeriesParams memory eur = CreateSeriesLib.params(EMISSION_DAY, 10_000, 0);
+        intex.openSeries(OpenSeriesLib.params(EMISSION_DAY, 10_000, 0));
+        IIntexNFT1155.OpenSeriesParams memory eur = OpenSeriesLib.params(EMISSION_DAY, 10_000, 0);
         eur.seriesId = EUR_SERIES;
         intex.openSeries(eur);
     }
@@ -68,7 +68,7 @@ contract MarkBatchWireTest is CrossChainTest {
 
     /// @notice One series missing on the target must not cost the rest of its batch.
     function test_aMissingSeriesParksAloneWhileTheRestApply() public {
-        intex.openSeries(CreateSeriesLib.params(EMISSION_DAY, 10_000, 0));
+        intex.openSeries(OpenSeriesLib.params(EMISSION_DAY, 10_000, 0));
 
         _deliver(
             OUTBE_CHAIN_ID,

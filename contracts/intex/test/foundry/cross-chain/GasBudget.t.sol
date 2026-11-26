@@ -11,7 +11,7 @@ import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {IntexGas} from "@contracts/shared/libs/IntexGas.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
-import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
+import {OpenSeriesLib} from "../helpers/OpenSeriesLib.sol";
 import {MarkBatchLib} from "../helpers/MarkBatchLib.sol";
 import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
 import {MultiRecipientSendParam} from "@contracts/shared/interfaces/IIntexNFT1155Router.sol";
@@ -55,7 +55,7 @@ contract GasBudgetTest is CrossChainTest {
 
     function _seed(bytes14[] memory batch) internal {
         for (uint256 i = 0; i < batch.length; ++i) {
-            IIntexNFT1155.CreateSeriesParams memory p = CreateSeriesLib.params(EMISSION_DAY, 10_000, 0);
+            IIntexNFT1155.OpenSeriesParams memory p = OpenSeriesLib.params(EMISSION_DAY, 10_000, 0);
             p.seriesId = batch[i];
             intex.openSeries(p);
         }
@@ -186,7 +186,7 @@ contract GasBudgetTest is CrossChainTest {
 
         bytes14[] memory one = MarkBatchLib.one(SERIES_PREFIX);
         _seed(one);
-        dstToken.openSeries(CreateSeriesLib.params(EMISSION_DAY, 10_000, 0));
+        dstToken.openSeries(OpenSeriesLib.params(EMISSION_DAY, 10_000, 0));
 
         // `multiSend` burns the whole batch from its caller and fans it out to `recipients`.
         address sender = address(0x3000);
@@ -231,7 +231,7 @@ contract GasBudgetTest is CrossChainTest {
         dstToken.grantRole(dstToken.BRIDGE_ROLE(), address(dst));
 
         _seed(MarkBatchLib.one(SERIES_PREFIX));
-        dstToken.openSeries(CreateSeriesLib.params(EMISSION_DAY, 10_000, 0));
+        dstToken.openSeries(OpenSeriesLib.params(EMISSION_DAY, 10_000, 0));
 
         address sender = address(0x3000);
         uint256 tokenId = intex.issuedIntexId(SERIES_PREFIX);

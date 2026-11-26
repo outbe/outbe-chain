@@ -6,7 +6,7 @@ import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol"
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {MarkBatchLib} from "../helpers/MarkBatchLib.sol";
-import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
+import {OpenSeriesLib} from "../helpers/OpenSeriesLib.sol";
 import {IssuanceBatchLib} from "../helpers/IssuanceBatch.sol";
 
 import {IntexAuctionTargetRouter} from "@contracts/target/IntexAuctionTargetRouter.sol";
@@ -37,7 +37,7 @@ contract IntexAuctionTargetRouterMarkSlotTest is CrossChainTest {
         _wireOutbeIca(router, outbeIca);
         router.setDependencies(makeAddr("auction"), address(intex), makeAddr("escrow"));
         intex.grantRole(intex.ROUTER_ROLE(), address(router));
-        series = CreateSeriesLib.seriesId(DAY);
+        series = OpenSeriesLib.seriesId(DAY);
     }
 
     // --- helpers ---
@@ -48,13 +48,13 @@ contract IntexAuctionTargetRouterMarkSlotTest is CrossChainTest {
 
     function _called() internal view returns (bytes memory) {
         return BridgeMsgCodec.encodeIntexSeriesCallNotice(
-            DAY, uint32(block.timestamp), MarkBatchLib.one(CreateSeriesLib.seriesId(DAY))
+            DAY, uint32(block.timestamp), MarkBatchLib.one(OpenSeriesLib.seriesId(DAY))
         );
     }
 
     function _issuance() internal returns (bytes memory) {
         BridgeMsgCodec.IntexSeriesPayload memory payload;
-        payload.seriesId = CreateSeriesLib.seriesId(DAY);
+        payload.seriesId = OpenSeriesLib.seriesId(DAY);
         payload.emissionDay = DAY;
         payload.issuedAt = uint32(block.timestamp);
         payload.issuedUnits = 10;
@@ -90,7 +90,7 @@ contract IntexAuctionTargetRouterMarkSlotTest is CrossChainTest {
     }
 
     function test_ACallNoticeTheTokenRefusesWaitsWithTheRefusal() public {
-        intex.openSeries(CreateSeriesLib.params(DAY, 10, 0));
+        intex.openSeries(OpenSeriesLib.params(DAY, 10, 0));
         intex.revokeRole(intex.ROUTER_ROLE(), address(router));
 
         vm.expectEmit(true, true, true, true, address(router));
@@ -154,8 +154,8 @@ contract IntexAuctionTargetRouterMarkSlotTest is CrossChainTest {
         assertEq(applied[0], IIntexAuctionTargetRouter.IntexSeriesAllReceived.selector);
 
         vm.warp(block.timestamp + 1);
-        bytes14 other = CreateSeriesLib.seriesId(DAY + 1);
-        intex.openSeries(CreateSeriesLib.params(DAY + 1, 10, 0));
+        bytes14 other = OpenSeriesLib.seriesId(DAY + 1);
+        intex.openSeries(OpenSeriesLib.params(DAY + 1, 10, 0));
         vm.recordLogs();
         _deliver(BridgeMsgCodec.encodeIntexSeriesCallNotice(DAY + 1, uint32(block.timestamp), MarkBatchLib.one(other)));
         assertEq(_routerTopics().length, 0, "a notice the token takes gives no router event");
@@ -189,7 +189,7 @@ contract IntexAuctionTargetRouterMarkSlotTest is CrossChainTest {
 
     function test_RetryIntexSeriesCallNoticeApplyIsPermissionless() public {
         _deliver(_called());
-        intex.openSeries(CreateSeriesLib.params(DAY, 10, 0)); // the series appears by another path
+        intex.openSeries(OpenSeriesLib.params(DAY, 10, 0)); // the series appears by another path
 
         vm.prank(makeAddr("anyone"));
         router.retryIntexSeriesCallNoticeApply(series);
@@ -222,7 +222,7 @@ contract IntexAuctionTargetRouterMarkSlotTest is CrossChainTest {
     }
 
     function test_AZeroCallTimeForAnExistingSeriesIsInvalidAndLeavesItIssued() public {
-        intex.openSeries(CreateSeriesLib.params(DAY, 10, 0));
+        intex.openSeries(OpenSeriesLib.params(DAY, 10, 0));
         _expectZeroCallTimeIgnored();
         _deliver(BridgeMsgCodec.encodeIntexSeriesCallNotice(DAY, 0, MarkBatchLib.one(series)));
         assertEq(uint8(_state()), uint8(IIntexNFT1155.IntexState.Issued), "the series stays Issued");
@@ -232,7 +232,7 @@ contract IntexAuctionTargetRouterMarkSlotTest is CrossChainTest {
     // --- already there ---
 
     function test_ARepeatedCalledIsADuplicate() public {
-        intex.openSeries(CreateSeriesLib.params(DAY, 10, 0));
+        intex.openSeries(OpenSeriesLib.params(DAY, 10, 0));
         _deliver(_called());
         // A series that is already called gets no event.
         vm.recordLogs();

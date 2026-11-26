@@ -3,7 +3,7 @@ pragma solidity 0.8.30;
 
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
-import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
+import {OpenSeriesLib} from "../helpers/OpenSeriesLib.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
 import {BatchSendParam} from "@contracts/shared/interfaces/IIntexNFT1155Router.sol";
@@ -45,7 +45,7 @@ contract IntexUnitsInTransitTest is CrossChainTest {
         tokenA.grantRole(tokenA.BURNER_ROLE(), address(this));
         routerA.setRemoteRouter(B_CHAIN_ID, _interop(B_CHAIN_ID, address(routerB)));
         routerB.setRemoteRouter(A_CHAIN_ID, _interop(A_CHAIN_ID, address(routerA)));
-        tokenA.openSeries(CreateSeriesLib.params(DAY, uint32(ISSUED), NOTICE));
+        tokenA.openSeries(OpenSeriesLib.params(DAY, uint32(ISSUED), NOTICE));
     }
 
     function test_RetryBeforeTheDeadlineMintsOnTheDestination() public {
@@ -54,7 +54,7 @@ contract IntexUnitsInTransitTest is CrossChainTest {
             uint256 k = ks[i];
             uint256 snap = vm.snapshotState();
             bytes32 idB = _start(k);
-            tokenB.openSeries(CreateSeriesLib.params(DAY, uint32(ISSUED), NOTICE));
+            tokenB.openSeries(OpenSeriesLib.params(DAY, uint32(ISSUED), NOTICE));
             routerB.retryIntexCrosschainReceive(idB, 0);
             assertEq(tokenB.totalSupply(ID), k);
             _assertOpenUnits(idB, bytes32(0), 0);
@@ -141,7 +141,7 @@ contract IntexUnitsInTransitTest is CrossChainTest {
     }
 
     function _callCloseAndForfeit() private returns (uint256 forfeited) {
-        tokenB.openSeries(CreateSeriesLib.params(DAY, uint32(ISSUED), NOTICE));
+        tokenB.openSeries(OpenSeriesLib.params(DAY, uint32(ISSUED), NOTICE));
         uint64 calledAt = uint64(block.timestamp);
         tokenA.callSeries(SERIES, calledAt);
         tokenB.callSeries(SERIES, calledAt);

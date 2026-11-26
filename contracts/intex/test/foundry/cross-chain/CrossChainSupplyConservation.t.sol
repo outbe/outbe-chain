@@ -4,7 +4,7 @@ pragma solidity 0.8.30;
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
-import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
+import {OpenSeriesLib} from "../helpers/OpenSeriesLib.sol";
 import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
 import {BatchSendParam, IIntexNFT1155Router} from "@contracts/shared/interfaces/IIntexNFT1155Router.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
@@ -50,8 +50,8 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         adapterA.setRemoteRouter(B_CHAIN_ID, _interop(B_CHAIN_ID, address(adapterB)));
         adapterB.setRemoteRouter(A_CHAIN_ID, _interop(A_CHAIN_ID, address(adapterA)));
 
-        tokenA.openSeries(CreateSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));
-        tokenB.openSeries(CreateSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));
+        tokenA.openSeries(OpenSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));
+        tokenB.openSeries(OpenSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));
     }
 
     function test_HopAToB_TotalSupplyPreserved() public {
@@ -88,12 +88,12 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
 
     function test_ParkBranch_ConservesAcrossCrosschainBurnAndPark() public {
         // Pick a fresh series that exists on A but not on B: the inbound crosschainMint reverts
-        // NonexistentToken and the transfer parks on B. Tokens are burned on A but not yet
+        // IntexNotFound and the transfer parks on B. Tokens are burned on A but not yet
         // minted on B - the missing amount lives in failedCrosschainReceives.
         uint32 parkDay = 20260601;
         bytes14 parkSeries = "20260601-USD-U";
         uint256 parkTokenId = uint256(keccak256(abi.encodePacked(parkSeries)));
-        tokenA.openSeries(CreateSeriesLib.params(parkDay, ISSUED_UNITS, 0));
+        tokenA.openSeries(OpenSeriesLib.params(parkDay, ISSUED_UNITS, 0));
 
         uint256 minted = 100;
         uint256 bridged = 100;
@@ -115,7 +115,7 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
 
         // Fix the destination cause and retry - parked moves into B.totalSupply with no
         // change to the global sum.
-        tokenB.openSeries(CreateSeriesLib.params(parkDay, ISSUED_UNITS, 0));
+        tokenB.openSeries(OpenSeriesLib.params(parkDay, ISSUED_UNITS, 0));
         adapterB.retryIntexCrosschainReceive(receiveId, 0);
 
         assertEq(tokenB.totalSupply(parkTokenId), bridged, "B.totalSupply == bridged after retry");
@@ -131,7 +131,7 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         uint32 parkDay = 20260601;
         bytes14 parkSeries = "20260601-USD-U";
         uint256 parkTokenId = uint256(keccak256(abi.encodePacked(parkSeries)));
-        tokenA.openSeries(CreateSeriesLib.params(parkDay, ISSUED_UNITS, 0));
+        tokenA.openSeries(OpenSeriesLib.params(parkDay, ISSUED_UNITS, 0));
 
         uint256 minted = 100;
         tokenA.issueIntex(user, minted, parkSeries);
@@ -167,17 +167,17 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         uint32 day = 20260602;
         bytes14 series = "20260602-USD-U";
         uint256 id = uint256(keccak256(abi.encodePacked(series)));
-        tokenA.openSeries(CreateSeriesLib.params(day, ISSUED_UNITS, 60));
+        tokenA.openSeries(OpenSeriesLib.params(day, ISSUED_UNITS, 60));
         tokenA.issueIntex(user, 100, series);
         bytes32 receiveId = _send(adapterA, adapterB, A_CHAIN_ID, user, id, 60);
         (,, uint256 parked, bool exists) = adapterB.getFailedCrosschainReceive(receiveId, 0);
         assertTrue(exists, "parked on B");
         assertEq(tokenA.totalSupply(id) + tokenB.totalSupply(id) + parked, 100);
 
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.NonexistentToken.selector, id));
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.IntexNotFound.selector, id));
         adapterB.retryIntexCrosschainReceive(receiveId, 0);
 
-        tokenB.openSeries(CreateSeriesLib.params(day, ISSUED_UNITS, 60));
+        tokenB.openSeries(OpenSeriesLib.params(day, ISSUED_UNITS, 60));
         uint32 calledAt = uint32(block.timestamp);
         tokenA.callSeries(series, calledAt);
         tokenB.callSeries(series, calledAt);
@@ -215,8 +215,8 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         uint32 day = 20260603;
         bytes14 series = "20260603-USD-U";
         uint256 id = uint256(keccak256(abi.encodePacked(series)));
-        tokenA.openSeries(CreateSeriesLib.params(day, ISSUED_UNITS, 60));
-        tokenB.openSeries(CreateSeriesLib.params(day, ISSUED_UNITS, 60));
+        tokenA.openSeries(OpenSeriesLib.params(day, ISSUED_UNITS, 60));
+        tokenB.openSeries(OpenSeriesLib.params(day, ISSUED_UNITS, 60));
         tokenA.issueIntex(user, 100, series);
 
         uint32 calledAt = uint32(block.timestamp);

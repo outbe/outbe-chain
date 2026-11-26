@@ -4,7 +4,7 @@ pragma solidity 0.8.30;
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
-import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
+import {OpenSeriesLib} from "../helpers/OpenSeriesLib.sol";
 import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
 import {SendParam, BatchSendParam, MultiRecipientSendParam} from "@contracts/shared/interfaces/IIntexNFT1155Router.sol";
 import {IntexNFT1155RouterCodec} from "@contracts/shared/libs/IntexNFT1155RouterCodec.sol";
@@ -39,7 +39,7 @@ contract BridgeRecipientValidationTest is CrossChainTest {
         token.grantRole(token.BRIDGE_ROLE(), address(adapter));
         adapter.setRemoteRouter(B_CHAIN_ID, _interop(B_CHAIN_ID, address(adapter)));
 
-        token.openSeries(CreateSeriesLib.params(SERIES_ID_DAY, 10_000, 0));
+        token.openSeries(OpenSeriesLib.params(SERIES_ID_DAY, 10_000, 0));
         token.issueIntex(user, AMOUNT, SERIES_ID);
     }
 

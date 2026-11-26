@@ -10,7 +10,7 @@ import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
-import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
+import {OpenSeriesLib} from "../helpers/OpenSeriesLib.sol";
 
 /// @title InboundRevertAndRedeliverTest
 /// @notice Under ERC-7786 the routers no longer swallow a failed inbound (there is no ORDERED lane
@@ -82,7 +82,7 @@ contract InboundRevertAndRedeliverTest is CrossChainTest {
         _deliverToTM(packet);
 
         // Prerequisite lands (the ISSUANCE that would have created the series).
-        intex.openSeries(CreateSeriesLib.params(SERIES_ID_DAY, 10_000, 0));
+        intex.openSeries(OpenSeriesLib.params(SERIES_ID_DAY, 10_000, 0));
 
         bnbRouter.retryIntexSeriesCallNoticeApply(SERIES_ID);
 

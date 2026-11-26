@@ -14,7 +14,7 @@ import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
-import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
+import {OpenSeriesLib} from "../helpers/OpenSeriesLib.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
@@ -382,7 +382,7 @@ contract IntexAuctionTargetRouterInboundHandlersTest is CrossChainTest {
     }
 
     function _seedSeriesOnIntex() internal {
-        intex.openSeries(CreateSeriesLib.params(EMISSION_DAY, ISSUED_UNITS, 0));
+        intex.openSeries(OpenSeriesLib.params(EMISSION_DAY, ISSUED_UNITS, 0));
     }
 
     function _deliver(bytes memory packet) internal {

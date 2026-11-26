@@ -13,7 +13,7 @@ import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
-import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
+import {OpenSeriesLib} from "../helpers/OpenSeriesLib.sol";
 
 /// @title PayNativeAccountingTest
 /// @notice Behavioural coverage for the native-fee funding logic that
@@ -75,7 +75,7 @@ contract PayNativeAccountingTest is CrossChainTest {
         intex.grantRole(intex.ROUTER_ROLE(), address(bnbRouter));
 
         // Series + owner balance so callSeries/owner enumeration and the entry-path bridge sends have tokens.
-        intex.openSeries(CreateSeriesLib.params(SERIES_ID_DAY, 10_000, 0));
+        intex.openSeries(OpenSeriesLib.params(SERIES_ID_DAY, 10_000, 0));
         intex.issueIntex(owner, 5, SERIES_ID);
     }
 

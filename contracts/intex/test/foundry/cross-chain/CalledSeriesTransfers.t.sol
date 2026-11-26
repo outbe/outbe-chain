@@ -8,7 +8,7 @@ import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
 import {SendParam, MultiRecipientSendParam} from "@contracts/shared/interfaces/IIntexNFT1155Router.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
-import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
+import {OpenSeriesLib} from "../helpers/OpenSeriesLib.sol";
 
 /// @dev A Called series still changes hands until its settlement deadline, on a chain and across
 ///      the bridge. Past the deadline its unpaid units are forfeited and stay where they are.
@@ -32,7 +32,7 @@ contract CalledSeriesTransfersTest is CrossChainTest {
 
         intex.grantRole(intex.BRIDGE_ROLE(), address(nftRouter));
 
-        intex.openSeries(CreateSeriesLib.params(EMISSION_DAY, 10_000, 1 days));
+        intex.openSeries(OpenSeriesLib.params(EMISSION_DAY, 10_000, 1 days));
         intex.issueIntex(owner, 10, SERIES_ID);
         tokenId = intex.issuedIntexId(SERIES_ID);
         intex.callSeries(SERIES_ID, uint32(block.timestamp));
@@ -81,7 +81,7 @@ contract CalledSeriesTransfersTest is CrossChainTest {
     }
 
     function test_BeforeTheCallTheBridgeStillCarriesToAnyone() public {
-        intex.openSeries(CreateSeriesLib.params(20260502, 10_000, 1 days));
+        intex.openSeries(OpenSeriesLib.params(20260502, 10_000, 1 days));
         bytes14 open = "20260502-USD-U";
         intex.issueIntex(owner, 5, open);
 

@@ -6,7 +6,7 @@ import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {IERC1155Bridgeable} from "@contracts/shared/interfaces/IERC1155Bridgeable.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
-import {CreateSeriesLib} from "./helpers/CreateSeriesLib.sol";
+import {OpenSeriesLib} from "./helpers/OpenSeriesLib.sol";
 
 /// @dev ERC-4906 discipline: `MetadataUpdate` fires exactly when the rendered document changes
 ///      (series birth, lifecycle transitions) and never on supply moves.
@@ -23,14 +23,14 @@ contract IntexNFT1155Erc4906Test is Test {
     address internal user3 = makeAddr("user3");
 
     IntexNFT1155 internal nft;
-    uint256 internal iTok;
+    uint256 internal intexId;
 
     function setUp() public {
         nft = DeployProxy.intexNFT1155(admin, bridger);
         vm.startPrank(admin);
         nft.grantRole(nft.BURNER_ROLE(), bridger);
         vm.stopPrank();
-        iTok = nft.issuedIntexId(SERIES_ID);
+        intexId = nft.issuedIntexId(SERIES_ID);
     }
 
     /// @dev Drains recorded logs; counts MetadataUpdate emits and checks the de-indexed shape.
@@ -55,10 +55,10 @@ contract IntexNFT1155Erc4906Test is Test {
         vm.recordLogs();
         vm.startPrank(bridger);
 
-        nft.openSeries(CreateSeriesLib.params(SERIES_ID_DAY, CAP, CALL_PERIOD));
+        nft.openSeries(OpenSeriesLib.params(SERIES_ID_DAY, CAP, CALL_PERIOD));
         (uint256 count, uint256 tokenId) = _metadataUpdates();
         assertEq(count, 1, "openSeries emits once");
-        assertEq(tokenId, iTok);
+        assertEq(tokenId, intexId);
 
         nft.issueIntex(user, 10, SERIES_ID);
         (count,) = _metadataUpdates();
@@ -71,10 +71,10 @@ contract IntexNFT1155Erc4906Test is Test {
         nft.callSeries(SERIES_ID, uint32(block.timestamp));
         (count, tokenId) = _metadataUpdates();
         assertEq(count, 1, "callSeries changes the document");
-        assertEq(tokenId, iTok);
+        assertEq(tokenId, intexId);
 
-        nft.crosschainBurn(user, user, iTok, 1);
-        nft.crosschainMint(user3, iTok, 1);
+        nft.crosschainBurn(user, user, intexId, 1);
+        nft.crosschainMint(user3, intexId, 1);
         (count,) = _metadataUpdates();
         assertEq(count, 0, "bridge moves are supply-only");
 

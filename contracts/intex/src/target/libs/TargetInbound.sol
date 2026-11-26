@@ -119,7 +119,8 @@ library TargetInbound {
             return;
         }
         uint16 pageBefore = state.nextPage;
-        try IIntexAuctionTargetRouterShims(address(this)).sendIntexAuctionBidsToOutbe{gas: gasleft() - IntexGas.SEND_PAUSE_GAS}(
+        try IIntexAuctionTargetRouterShims(address(this))
+        .sendIntexAuctionBidsToOutbe{gas: gasleft() - IntexGas.SEND_PAUSE_GAS}(
             emissionDay
         ) {}
         catch (bytes memory errorData) {
@@ -345,7 +346,7 @@ library TargetInbound {
         if (!seriesKnown) {
             $.intexContract
                 .openSeries(
-                    IIntexNFT1155.CreateSeriesParams({
+                    IIntexNFT1155.OpenSeriesParams({
                         seriesId: payload.seriesId,
                         emissionDay: payload.emissionDay,
                         issuedAt: payload.issuedAt,
@@ -490,7 +491,8 @@ library TargetInbound {
             _slotIntexSeriesCallNotice($, srcChainId, seriesId, calledAt, "");
             return;
         }
-        try IIntexAuctionTargetRouterShims(address(this)).applyIntexSeriesCallNotice{gas: IntexGas.CALL_NOTICE_APPLY_CAP}(
+        try IIntexAuctionTargetRouterShims(address(this))
+        .applyIntexSeriesCallNotice{gas: IntexGas.CALL_NOTICE_APPLY_CAP}(
             seriesId, calledAt
         ) {}
         catch (bytes memory reason) {
@@ -523,7 +525,8 @@ library TargetInbound {
         uint64 calledAt = $.failedIntexSeriesCallNoticeApplies[seriesId];
         if (calledAt == 0) return;
         delete $.failedIntexSeriesCallNoticeApplies[seriesId];
-        try IIntexAuctionTargetRouterShims(address(this)).applyIntexSeriesCallNotice{gas: IntexGas.CALL_NOTICE_APPLY_CAP}(
+        try IIntexAuctionTargetRouterShims(address(this))
+        .applyIntexSeriesCallNotice{gas: IntexGas.CALL_NOTICE_APPLY_CAP}(
             seriesId, calledAt
         ) {}
         catch (bytes memory reason) {

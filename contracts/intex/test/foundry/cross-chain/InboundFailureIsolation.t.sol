@@ -8,7 +8,7 @@ import {IIntexNFT1155Router} from "@contracts/shared/interfaces/IIntexNFT1155Rou
 import {IntexNFT1155RouterCodec} from "@contracts/shared/libs/IntexNFT1155RouterCodec.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
-import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
+import {OpenSeriesLib} from "../helpers/OpenSeriesLib.sol";
 
 /// @title InboundFailureIsolationTest
 /// @notice Behavioural coverage Pattern B on `IntexNFT1155Router`: a per-item
@@ -46,7 +46,7 @@ contract InboundFailureIsolationTest is CrossChainTest {
         nftRouterOutbe.setRemoteRouter(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(nftRouterBnb)));
 
         // Two series: one Issued (crosschainMint succeeds), one not (crosschainMint reverts on state check).
-        intex.openSeries(CreateSeriesLib.params(SERIES_GOOD_DAY, 10_000, 0));
+        intex.openSeries(OpenSeriesLib.params(SERIES_GOOD_DAY, 10_000, 0));
         // SERIES_BAD intentionally not created - `intex.crosschainMint` will revert on lookup.
 
         intex.grantRole(intex.BRIDGE_ROLE(), address(nftRouterBnb));
@@ -134,7 +134,7 @@ contract InboundFailureIsolationTest is CrossChainTest {
         assertTrue(existsBefore, "bad item parked");
 
         // Fix upstream: create SERIES_BAD now so crosschainMint can succeed.
-        intex.openSeries(CreateSeriesLib.params(SERIES_BAD_DAY, 10_000, 0));
+        intex.openSeries(OpenSeriesLib.params(SERIES_BAD_DAY, 10_000, 0));
 
         // Anyone can retry - no auth gate.
         vm.prank(address(0xDEAD));
@@ -156,7 +156,7 @@ contract InboundFailureIsolationTest is CrossChainTest {
         _deliverInbound(packet);
 
         // Fix upstream + retry once.
-        intex.openSeries(CreateSeriesLib.params(SERIES_BAD_DAY, 10_000, 0));
+        intex.openSeries(OpenSeriesLib.params(SERIES_BAD_DAY, 10_000, 0));
         nftRouterBnb.retryIntexCrosschainReceive(receiveId, 1);
 
         // Second retry must revert, because the slot has been deleted.

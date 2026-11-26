@@ -11,7 +11,7 @@ import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
-import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
+import {OpenSeriesLib} from "../helpers/OpenSeriesLib.sol";
 
 /// @notice Stub Auction that synthesises `bidCount` revealed bids (default 1) on `getAuctionDetails`.
 ///         Used by the TM bids-relay tests to drive `_doSendBidsToOutbe`'s chunked send loop and the
@@ -137,7 +137,7 @@ contract PatternADeferTest is CrossChainTest {
         intex.grantRole(intex.ROUTER_ROLE(), address(bnbRouter));
 
         // Series so callSeries + owner enumeration work.
-        intex.openSeries(CreateSeriesLib.params(SERIES_ID_DAY, 10_000, 0));
+        intex.openSeries(OpenSeriesLib.params(SERIES_ID_DAY, 10_000, 0));
     }
 
     /// @dev Deliver an inbound packet to the router from the registered Outbe peer.

@@ -14,7 +14,7 @@ import {
 } from "@contracts/shared/interfaces/IIntexNFT1155Router.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
-import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
+import {OpenSeriesLib} from "../helpers/OpenSeriesLib.sol";
 
 /// @title IntexNFT1155RouterTest
 /// @notice direct coverage for the NFT-Batch outbound entry points
@@ -60,8 +60,8 @@ contract IntexNFT1155RouterTest is CrossChainTest {
         for (uint32 i = 0; i < 2; i++) {
             uint32 day = i == 0 ? SERIES_A_DAY : SERIES_B_DAY;
             bytes14 series = i == 0 ? SERIES_A : SERIES_B;
-            srcToken.openSeries(CreateSeriesLib.params(day, 1_000_000, 0));
-            dstToken.openSeries(CreateSeriesLib.params(day, 1_000_000, 0));
+            srcToken.openSeries(OpenSeriesLib.params(day, 1_000_000, 0));
+            dstToken.openSeries(OpenSeriesLib.params(day, 1_000_000, 0));
         }
 
         srcToken.grantRole(srcToken.BRIDGE_ROLE(), address(srcBatch));

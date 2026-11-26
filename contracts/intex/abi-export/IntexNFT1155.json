@@ -648,7 +648,7 @@
       {
         "name": "params",
         "type": "tuple",
-        "internalType": "struct IIntexNFT1155.CreateSeriesParams",
+        "internalType": "struct IIntexNFT1155.OpenSeriesParams",
         "components": [
           {
             "name": "seriesId",
@@ -1735,6 +1735,17 @@
   },
   {
     "type": "error",
+    "name": "IntexNotFound",
+    "inputs": [
+      {
+        "name": "intexId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "InvalidInitialization",
     "inputs": []
   },
@@ -1778,17 +1789,6 @@
         "name": "closedAt",
         "type": "uint64",
         "internalType": "uint64"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "NonexistentToken",
-    "inputs": [
-      {
-        "name": "intexId",
-        "type": "uint256",
-        "internalType": "uint256"
       }
     ]
   },

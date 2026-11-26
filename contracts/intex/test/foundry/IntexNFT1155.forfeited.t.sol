@@ -6,7 +6,7 @@ import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
-import {CreateSeriesLib} from "./helpers/CreateSeriesLib.sol";
+import {OpenSeriesLib} from "./helpers/OpenSeriesLib.sol";
 
 /// @notice A called series past its transit close reads as `Forfeited`, while storage
 ///         keeps `Called` so every freeze written against the stored field still bites.
@@ -24,18 +24,18 @@ contract IntexNFT1155ForfeitedTest is Test {
     address internal user = makeAddr("user");
 
     IntexNFT1155 internal token;
-    uint256 internal iTok;
+    uint256 internal intexId;
     uint256 internal deadline;
     uint256 internal closeAt;
 
     function setUp() public {
         token = DeployProxy.intexNFT1155(admin, relayer);
         vm.startPrank(relayer);
-        token.openSeries(CreateSeriesLib.params(SERIES_ID_DAY, CAP, CALL_PERIOD));
+        token.openSeries(OpenSeriesLib.params(SERIES_ID_DAY, CAP, CALL_PERIOD));
         token.issueIntex(user, 10, SERIES_ID);
         token.callSeries(SERIES_ID, uint32(block.timestamp));
         vm.stopPrank();
-        iTok = token.issuedIntexId(SERIES_ID);
+        intexId = token.issuedIntexId(SERIES_ID);
         deadline = block.timestamp + CALL_PERIOD;
         closeAt = deadline + token.getIntexSeries(SERIES_ID).callTrigger.transitMargin;
     }
@@ -43,7 +43,7 @@ contract IntexNFT1155ForfeitedTest is Test {
     /// The stored `state` word: `SeriesData` packs `issuedAt`, `calledAt`, `totalSupply`
     /// and `state` into the record's fourth slot, `state` at byte 20.
     function _storedState() internal view returns (uint8) {
-        bytes32 base = keccak256(abi.encode(iTok, STORAGE_SLOT));
+        bytes32 base = keccak256(abi.encode(intexId, STORAGE_SLOT));
         return uint8(uint256(vm.load(address(token), bytes32(uint256(base) + 3))) >> 160);
     }
 
@@ -69,28 +69,28 @@ contract IntexNFT1155ForfeitedTest is Test {
     function test_TransferStaysFrozenAfterExpiry() public {
         vm.warp(closeAt + 1);
         vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.TransferAfterDeadline.selector, iTok, uint32(deadline)));
-        token.safeTransferFrom(user, makeAddr("other"), iTok, 1, "");
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.TransferAfterDeadline.selector, intexId, uint32(deadline)));
+        token.safeTransferFrom(user, makeAddr("other"), intexId, 1, "");
     }
 
     function test_BridgeStaysClosedAfterExpiry() public {
         vm.warp(closeAt + 1);
         vm.prank(relayer);
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.BridgeAfterDeadline.selector, iTok, uint32(deadline)));
-        token.crosschainBurn(user, user, iTok, 1);
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.BridgeAfterDeadline.selector, intexId, uint32(deadline)));
+        token.crosschainBurn(user, user, intexId, 1);
     }
 
     function test_BurnForfeited_BurnsTheOwnersUnitsForAnyCaller() public {
         vm.warp(closeAt + 1);
         address anyone = makeAddr("anyone");
         vm.expectEmit(address(token));
-        emit IERC1155.TransferSingle(anyone, user, address(0), iTok, 10);
+        emit IERC1155.TransferSingle(anyone, user, address(0), intexId, 10);
         vm.expectEmit(address(token));
-        emit IIntexNFT1155.IntexForfeited(iTok, user, 840, 840, 10);
+        emit IIntexNFT1155.IntexForfeited(intexId, user, 840, 840, 10);
         vm.prank(anyone);
         token.burnForfeited(user, SERIES_ID);
 
-        assertEq(token.balanceOf(user, iTok), 0);
+        assertEq(token.balanceOf(user, intexId), 0);
         assertEq(token.getIntexSeries(SERIES_ID).totalSupply, 0);
     }
 

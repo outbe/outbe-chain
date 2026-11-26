@@ -5,7 +5,7 @@ import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
-import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
+import {OpenSeriesLib} from "../helpers/OpenSeriesLib.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
 import {IIntexNFT1155Router, SendParam} from "@contracts/shared/interfaces/IIntexNFT1155Router.sol";
@@ -58,8 +58,8 @@ contract IntexNFT1155RouterSingleTest is CrossChainTest {
         adapterB.setRemoteRouter(A_CHAIN_ID, _interop(A_CHAIN_ID, address(adapterA)));
 
         // Create series on both chains
-        tokenA.openSeries(CreateSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));
-        tokenB.openSeries(CreateSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));
+        tokenA.openSeries(OpenSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));
+        tokenB.openSeries(OpenSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));
 
         // Mint initial tokens to user on chain A
         tokenA.issueIntex(user, AMOUNT, SERIES_ID);
@@ -139,7 +139,7 @@ contract IntexNFT1155RouterSingleTest is CrossChainTest {
         uint32 failDay = 20260402;
         bytes14 failSeries = "20260402-USD-U";
         uint256 failTokenId = uint256(keccak256(abi.encodePacked(failSeries)));
-        tokenA.openSeries(CreateSeriesLib.params(failDay, ISSUED_UNITS, 0));
+        tokenA.openSeries(OpenSeriesLib.params(failDay, ISSUED_UNITS, 0));
         tokenA.issueIntex(user, AMOUNT, failSeries);
         SendParam memory sendParam = SendParam({
             dstChainId: B_CHAIN_ID, to: bytes32(uint256(uint160(user))), intexId: failTokenId, units: AMOUNT
@@ -159,7 +159,7 @@ contract IntexNFT1155RouterSingleTest is CrossChainTest {
         }
         assertEq(failed, 1);
 
-        tokenB.openSeries(CreateSeriesLib.params(failDay, ISSUED_UNITS, 0));
+        tokenB.openSeries(OpenSeriesLib.params(failDay, ISSUED_UNITS, 0));
         vm.expectEmit(true, true, true, true, address(adapterB));
         emit IIntexNFT1155Router.IntexCrosschainReceived(receiveId, A_CHAIN_ID, user, failTokenId, uint32(AMOUNT));
         adapterB.retryIntexCrosschainReceive(receiveId, 0);
@@ -281,12 +281,12 @@ contract IntexNFT1155RouterSingleTest is CrossChainTest {
     // --- Inbound crosschainMint isolation ---
 
     function test_inboundCrosschainMintFailure_parksAndRetries() public {
-        // A series that exists on A only: the destination crosschainMint reverts NonexistentToken, which
+        // A series that exists on A only: the destination crosschainMint reverts IntexNotFound, which
         // must park the transfer (not unwind the packet and strand the burned tokens).
         uint32 failDay = 20260402;
         bytes14 failSeries = "20260402-USD-U";
         uint256 failTokenId = uint256(keccak256(abi.encodePacked(failSeries)));
-        tokenA.openSeries(CreateSeriesLib.params(failDay, ISSUED_UNITS, 0));
+        tokenA.openSeries(OpenSeriesLib.params(failDay, ISSUED_UNITS, 0));
         tokenA.issueIntex(user, AMOUNT, failSeries);
 
         SendParam memory sendParam = SendParam({
@@ -313,7 +313,7 @@ contract IntexNFT1155RouterSingleTest is CrossChainTest {
         assertEq(amount, AMOUNT);
 
         // Fix the cause on B, then retry -> minted and entry cleared.
-        tokenB.openSeries(CreateSeriesLib.params(failDay, ISSUED_UNITS, 0));
+        tokenB.openSeries(OpenSeriesLib.params(failDay, ISSUED_UNITS, 0));
         adapterB.retryIntexCrosschainReceive(receiveId, 0);
         assertEq(tokenB.balanceOf(user, failTokenId), AMOUNT, "minted on retry");
 
@@ -332,7 +332,7 @@ contract IntexNFT1155RouterSingleTest is CrossChainTest {
         uint32 failDay = 20260402;
         bytes14 failSeries = "20260402-USD-U";
         uint256 failTokenId = uint256(keccak256(abi.encodePacked(failSeries)));
-        tokenA.openSeries(CreateSeriesLib.params(failDay, ISSUED_UNITS, 0));
+        tokenA.openSeries(OpenSeriesLib.params(failDay, ISSUED_UNITS, 0));
         tokenA.issueIntex(user, AMOUNT, failSeries);
 
         SendParam memory sendParam = SendParam({

@@ -5,7 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {StdInvariant} from "forge-std/StdInvariant.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
-import {CreateSeriesLib} from "./helpers/CreateSeriesLib.sol";
+import {OpenSeriesLib} from "./helpers/OpenSeriesLib.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 
 /// @dev Randomized mints and burns into a fixed series. totalSupply moves both ways, and the parity
@@ -50,7 +50,7 @@ contract IntexNFT1155SupplyInvariantTest is StdInvariant, Test {
 
     function setUp() public {
         intex = DeployProxy.intexNFT1155(admin, admin);
-        intex.openSeries(CreateSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));
+        intex.openSeries(OpenSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));
 
         bidders.push(address(0xB1));
         bidders.push(address(0xB2));
@@ -70,12 +70,12 @@ contract IntexNFT1155SupplyInvariantTest is StdInvariant, Test {
 
     /// @dev `issuedUnits` never moves, and parity (sum balanceOf == totalSupply) holds.
     function invariant_issuedUnitsAndParity() public view {
-        uint256 iTok = intex.issuedIntexId(SERIES_ID);
+        uint256 intexId = intex.issuedIntexId(SERIES_ID);
         IIntexNFT1155.SeriesData memory d = intex.getIntexSeries(SERIES_ID);
         assertEq(d.issuedUnits, ISSUED_UNITS, "issuedUnits is immutable");
         uint256 sum;
         for (uint256 i = 0; i < bidders.length; i++) {
-            sum += intex.balanceOf(bidders[i], iTok);
+            sum += intex.balanceOf(bidders[i], intexId);
         }
         assertEq(sum, d.totalSupply, "sum(balanceOf) != totalSupply");
     }

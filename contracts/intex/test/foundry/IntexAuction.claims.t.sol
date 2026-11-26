@@ -11,7 +11,7 @@ import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 import {RevertingERC1155Receiver} from "@test-mocks/RevertingERC1155Receiver.sol";
-import {CreateSeriesLib} from "./helpers/CreateSeriesLib.sol";
+import {OpenSeriesLib} from "./helpers/OpenSeriesLib.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {ReferenceCurrencyPriceLib} from "./helpers/ReferenceCurrencyPriceLib.sol";
 
@@ -121,7 +121,7 @@ contract IntexAuctionClaimsTest is Test {
 
     function _openSeries(uint32 callNoticePeriod) internal {
         vm.prank(relayer);
-        intex.openSeries(CreateSeriesLib.params(DAY, 100, callNoticePeriod));
+        intex.openSeries(OpenSeriesLib.params(DAY, 100, callNoticePeriod));
     }
 
     function _finalize(address[] memory winners, uint16 partialIndex, uint16 partialWon) internal {
@@ -135,7 +135,7 @@ contract IntexAuctionClaimsTest is Test {
     }
 
     function _units(address who) internal view returns (uint256) {
-        return intex.balanceOf(who, intex.issuedIntexId(CreateSeriesLib.seriesId(DAY)));
+        return intex.balanceOf(who, intex.issuedIntexId(OpenSeriesLib.seriesId(DAY)));
     }
 
     function _change(uint16 quantity) internal pure returns (uint256) {
@@ -148,7 +148,7 @@ contract IntexAuctionClaimsTest is Test {
         _finalize(_winner(alice), 0, 0);
 
         vm.expectEmit(true, true, true, true, address(auction));
-        emit IIntexAuction.IntexAuctionWinNoteRedeemed(DAY, alice, CreateSeriesLib.seriesId(DAY));
+        emit IIntexAuction.IntexAuctionWinNoteRedeemed(DAY, alice, OpenSeriesLib.seriesId(DAY));
         vm.prank(bob);
         auction.redeemWinNote(DAY, alice);
 
@@ -221,7 +221,7 @@ contract IntexAuctionClaimsTest is Test {
         _openSeries(1 days);
         _finalize(_winner(alice), 0, 0);
         vm.prank(relayer);
-        intex.callSeries(CreateSeriesLib.seriesId(DAY), uint32(block.timestamp));
+        intex.callSeries(OpenSeriesLib.seriesId(DAY), uint32(block.timestamp));
 
         auction.redeemWinNote(DAY, alice);
         assertEq(_units(alice), 3);
@@ -232,14 +232,14 @@ contract IntexAuctionClaimsTest is Test {
         _openSeries(0);
         _finalize(_winner(alice), 0, 0);
         vm.prank(relayer);
-        intex.callSeries(CreateSeriesLib.seriesId(DAY), uint32(block.timestamp));
-        vm.warp(block.timestamp + intex.getIntexSeries(CreateSeriesLib.seriesId(DAY)).callTrigger.transitMargin + 1);
+        intex.callSeries(OpenSeriesLib.seriesId(DAY), uint32(block.timestamp));
+        vm.warp(block.timestamp + intex.getIntexSeries(OpenSeriesLib.seriesId(DAY)).callTrigger.transitMargin + 1);
         assertEq(
-            uint8(intex.getIntexSeries(CreateSeriesLib.seriesId(DAY)).state), uint8(IIntexNFT1155.IntexState.Forfeited)
+            uint8(intex.getIntexSeries(OpenSeriesLib.seriesId(DAY)).state), uint8(IIntexNFT1155.IntexState.Forfeited)
         );
 
         vm.expectEmit(true, true, true, true, address(auction));
-        emit IIntexAuction.IntexAuctionWinNoteExpired(DAY, alice, CreateSeriesLib.seriesId(DAY));
+        emit IIntexAuction.IntexAuctionWinNoteExpired(DAY, alice, OpenSeriesLib.seriesId(DAY));
         auction.redeemWinNote(DAY, alice);
 
         assertEq(_units(alice), 0, "nothing issued");
@@ -290,7 +290,7 @@ contract IntexAuctionClaimsTest is Test {
 
         vm.prank(router);
         vm.expectRevert();
-        intex.issueIntex(alice, 1, CreateSeriesLib.seriesId(DAY));
+        intex.issueIntex(alice, 1, OpenSeriesLib.seriesId(DAY));
     }
 
     function test_ALoserRefundsAndClearsItsBid() public {

@@ -97,12 +97,12 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     }
 
     /// @inheritdoc IIntexNFT1155
-    function openSeries(IIntexNFT1155.CreateSeriesParams calldata params) external onlyRole(ROUTER_ROLE) {
+    function openSeries(IIntexNFT1155.OpenSeriesParams calldata params) external onlyRole(ROUTER_ROLE) {
         IntexNFT1155Storage storage $ = _s();
-        uint256 iTok = _issuedIntexId(params.seriesId);
+        uint256 intexId = _issuedIntexId(params.seriesId);
 
-        if ($.seriesData[iTok].issuedAt != 0) {
-            revert IntexAlreadyExists(iTok);
+        if ($.seriesData[intexId].issuedAt != 0) {
+            revert IntexAlreadyExists(intexId);
         }
 
         // A series is born from an auction that cleared at least one unit.
@@ -134,7 +134,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
             state: IIntexNFT1155.IntexState.Issued,
             emissionDay: params.emissionDay
         });
-        $.seriesData[iTok] = seed;
+        $.seriesData[intexId] = seed;
 
         // Series remain in allSeries permanently even after supply reaches 0. This
         // preserves the historical record and avoids O(n) removal.
@@ -155,7 +155,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
             params.issuedUnits,
             params.promisLoadMinor
         );
-        emit MetadataUpdate(iTok);
+        emit MetadataUpdate(intexId);
     }
 
     /// @inheritdoc IIntexNFT1155
@@ -168,7 +168,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         uint256 intexId = _issuedIntexId(seriesId);
         IIntexNFT1155.SeriesData storage data = $.seriesData[intexId];
         if (data.issuedAt == 0) {
-            revert NonexistentToken(intexId);
+            revert IntexNotFound(intexId);
         }
         if (data.state == IIntexNFT1155.IntexState.Called) {
             uint256 closeAt = _transitCloseAt(data);
@@ -205,7 +205,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         uint256 intexId = _issuedIntexId(seriesId);
         IIntexNFT1155.SeriesData storage data = _s().seriesData[intexId];
         if (data.issuedAt == 0) {
-            revert NonexistentToken(intexId);
+            revert IntexNotFound(intexId);
         }
         if (data.state != IIntexNFT1155.IntexState.Issued) {
             revert InvalidState(uint8(IIntexNFT1155.IntexState.Issued), uint8(data.state));
@@ -231,7 +231,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     ///      - Series state `Called`: allowed to any recipient until the settlement deadline.
     function crosschainBurn(address from, address to, uint256 tokenId, uint256 amount) external onlyRole(BRIDGE_ROLE) {
         IIntexNFT1155.SeriesData storage data = _s().seriesData[tokenId];
-        if (data.issuedAt == 0) revert NonexistentToken(tokenId);
+        if (data.issuedAt == 0) revert IntexNotFound(tokenId);
         if (from == address(0)) revert ZeroAddress("from", from);
 
         if (data.state == IIntexNFT1155.IntexState.Called) {
@@ -256,7 +256,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     function crosschainMint(address to, uint256 tokenId, uint256 amount) external onlyRole(BRIDGE_ROLE) {
         if (to == address(0)) revert ZeroAddress("to", to);
         IIntexNFT1155.SeriesData storage data = _s().seriesData[tokenId];
-        if (data.issuedAt == 0) revert NonexistentToken(tokenId);
+        if (data.issuedAt == 0) revert IntexNotFound(tokenId);
 
         if (data.state == IIntexNFT1155.IntexState.Called) {
             uint256 closeAt = _transitCloseAt(data);
@@ -301,7 +301,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
 
         intexId = _issuedIntexId(seriesId);
         IIntexNFT1155.SeriesData storage data = _s().seriesData[intexId];
-        if (data.issuedAt == 0) revert NonexistentToken(intexId);
+        if (data.issuedAt == 0) revert IntexNotFound(intexId);
 
         // forge-lint: disable-next-line(unsafe-typecast) -- units <= balance <= totalSupply (uint32); _burn reverts otherwise
         data.totalSupply -= uint32(units);
@@ -312,7 +312,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     function burnForfeited(address owner, bytes14 seriesId) external {
         uint256 intexId = _issuedIntexId(seriesId);
         IIntexNFT1155.SeriesData storage data = _s().seriesData[intexId];
-        if (data.issuedAt == 0) revert NonexistentToken(intexId);
+        if (data.issuedAt == 0) revert IntexNotFound(intexId);
         IIntexNFT1155.IntexState state = _effectiveState(data);
         if (state != IIntexNFT1155.IntexState.Forfeited) {
             revert InvalidState(uint8(IIntexNFT1155.IntexState.Forfeited), uint8(state));
@@ -363,7 +363,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         // `issuedAt == 0` is the canonical existence sentinel for seriesData entries.
         // slither-disable-next-line incorrect-equality
         if ($.seriesData[intexId].issuedAt == 0) {
-            revert NonexistentToken(intexId);
+            revert IntexNotFound(intexId);
         }
         IIntexNFT1155.SeriesData memory data = $.seriesData[intexId];
         data.state = _effectiveState(data);

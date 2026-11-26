@@ -9,7 +9,7 @@ import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
-import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
+import {OpenSeriesLib} from "../helpers/OpenSeriesLib.sol";
 
 /// @dev MARK_CALLED carries the origin's stamp, so a slow delivery still yields the deadline
 ///      settlement honours rather than a later one.
@@ -32,7 +32,7 @@ contract MarkCalledClockTest is CrossChainTest {
         intex.grantRole(intex.ROUTER_ROLE(), address(router));
         // A real notice period: with zero the window closes the instant the series
         // is called, and the reads below would report the series forfeited.
-        intex.openSeries(CreateSeriesLib.params(EMISSION_DAY, 10_000, 21 days));
+        intex.openSeries(OpenSeriesLib.params(EMISSION_DAY, 10_000, 21 days));
     }
 
     function _deliverCalled(uint32 calledAt) internal {

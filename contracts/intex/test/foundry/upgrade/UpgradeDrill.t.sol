@@ -12,7 +12,7 @@ import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {IntexAuctionTargetRouter} from "@contracts/target/IntexAuctionTargetRouter.sol";
 import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
-import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
+import {OpenSeriesLib} from "../helpers/OpenSeriesLib.sol";
 import {
     UPGRADE_PROBE,
     IntexNFT1155V2,
@@ -58,8 +58,8 @@ contract UpgradeDrillTest is CrossChainTest {
         address owner = makeAddr("owner");
 
         vm.startPrank(admin);
-        nft.openSeries(CreateSeriesLib.params(7, 100, 0));
-        nft.issueIntex(owner, 3, CreateSeriesLib.seriesId(7));
+        nft.openSeries(OpenSeriesLib.params(7, 100, 0));
+        nft.issueIntex(owner, 3, OpenSeriesLib.seriesId(7));
         vm.stopPrank();
 
         IntexNFT1155V2 newImpl = new IntexNFT1155V2();
@@ -67,9 +67,9 @@ contract UpgradeDrillTest is CrossChainTest {
         nft.upgradeToAndCall(address(newImpl), "");
 
         _assertUpgraded(address(nft), address(newImpl));
-        assertEq(nft.balanceOf(owner, nft.issuedIntexId(CreateSeriesLib.seriesId(7))), 3, "balance lost");
-        assertEq(nft.totalSupply(nft.issuedIntexId(CreateSeriesLib.seriesId(7))), 3, "supply lost");
-        IIntexNFT1155.SeriesData memory data = nft.getIntexSeries(CreateSeriesLib.seriesId(7));
+        assertEq(nft.balanceOf(owner, nft.issuedIntexId(OpenSeriesLib.seriesId(7))), 3, "balance lost");
+        assertEq(nft.totalSupply(nft.issuedIntexId(OpenSeriesLib.seriesId(7))), 3, "supply lost");
+        IIntexNFT1155.SeriesData memory data = nft.getIntexSeries(OpenSeriesLib.seriesId(7));
         assertGt(data.issuedAt, 0, "series record lost");
         assertEq(uint8(data.state), uint8(IIntexNFT1155.IntexState.Issued), "state lost");
         assertTrue(nft.hasRole(nft.ROUTER_ROLE(), admin), "role lost");
@@ -87,8 +87,8 @@ contract UpgradeDrillTest is CrossChainTest {
         address owner = makeAddr("owner");
 
         vm.startPrank(admin);
-        nft.openSeries(CreateSeriesLib.params(7, 100, 0));
-        nft.issueIntex(owner, 3, CreateSeriesLib.seriesId(7));
+        nft.openSeries(OpenSeriesLib.params(7, 100, 0));
+        nft.issueIntex(owner, 3, OpenSeriesLib.seriesId(7));
         vm.stopPrank();
 
         IntexNFT1155V2Reinit newImpl = new IntexNFT1155V2Reinit();
@@ -99,8 +99,8 @@ contract UpgradeDrillTest is CrossChainTest {
         assertEq(address(uint160(uint256(implSlot))), address(newImpl), "implementation not swapped");
         uint256 migratedFlag = uint256(vm.load(address(nft), _V2_REINIT_SLOT));
         assertEq(migratedFlag, UPGRADE_PROBE, "reinitializer did not run");
-        assertEq(nft.balanceOf(owner, nft.issuedIntexId(CreateSeriesLib.seriesId(7))), 3, "balance lost across reinit");
-        assertEq(nft.totalSupply(nft.issuedIntexId(CreateSeriesLib.seriesId(7))), 3, "supply lost across reinit");
+        assertEq(nft.balanceOf(owner, nft.issuedIntexId(OpenSeriesLib.seriesId(7))), 3, "balance lost across reinit");
+        assertEq(nft.totalSupply(nft.issuedIntexId(OpenSeriesLib.seriesId(7))), 3, "supply lost across reinit");
     }
 
     function test_Drill_IntexAuction() public {

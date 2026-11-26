@@ -3,7 +3,7 @@ pragma solidity 0.8.30;
 
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
-import {CreateSeriesLib} from "./helpers/CreateSeriesLib.sol";
+import {OpenSeriesLib} from "./helpers/OpenSeriesLib.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {Test} from "forge-std/Test.sol";
 
@@ -33,7 +33,7 @@ contract IntexNFT1155SupplyTest is Test {
 
     function _openSeries(uint32 issuedUnits) internal {
         vm.prank(bridger);
-        nft.openSeries(CreateSeriesLib.params(SERIES_ID_DAY, issuedUnits, CALL_PERIOD));
+        nft.openSeries(OpenSeriesLib.params(SERIES_ID_DAY, issuedUnits, CALL_PERIOD));
     }
 
     // --- openSeries / issueIntex ---
@@ -41,12 +41,12 @@ contract IntexNFT1155SupplyTest is Test {
     function test_OpenSeries_ZeroIssuedCount_Reverts() public {
         vm.prank(bridger);
         vm.expectRevert(IIntexNFT1155.ZeroIssuedUnits.selector);
-        nft.openSeries(CreateSeriesLib.params(SERIES_ID_DAY, 0, CALL_PERIOD));
+        nft.openSeries(OpenSeriesLib.params(SERIES_ID_DAY, 0, CALL_PERIOD));
     }
 
     function test_OpenSeries_RejectsAnIssuedAtItCannotHonour() public {
         vm.warp(1_700_000_000);
-        IIntexNFT1155.CreateSeriesParams memory params = CreateSeriesLib.params(SERIES_ID_DAY, 100, CALL_PERIOD);
+        IIntexNFT1155.OpenSeriesParams memory params = OpenSeriesLib.params(SERIES_ID_DAY, 100, CALL_PERIOD);
 
         params.issuedAt = 0;
         vm.prank(bridger);
@@ -61,7 +61,7 @@ contract IntexNFT1155SupplyTest is Test {
 
     function test_OpenSeries_KeepsTheOriginsIssuedAt() public {
         vm.warp(1_700_000_000);
-        IIntexNFT1155.CreateSeriesParams memory params = CreateSeriesLib.params(SERIES_ID_DAY, 100, CALL_PERIOD);
+        IIntexNFT1155.OpenSeriesParams memory params = OpenSeriesLib.params(SERIES_ID_DAY, 100, CALL_PERIOD);
         params.issuedAt = uint32(block.timestamp) - 3600;
 
         vm.prank(bridger);
@@ -131,7 +131,7 @@ contract IntexNFT1155SupplyTest is Test {
 
     function test_BurnIntex_UnknownSeries_Reverts() public {
         vm.prank(burner);
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.NonexistentToken.selector, TOKEN_ID));
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.IntexNotFound.selector, TOKEN_ID));
         nft.burnIntex(ownerA, SERIES_ID, 1);
     }
 

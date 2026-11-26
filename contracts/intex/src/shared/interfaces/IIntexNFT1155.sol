@@ -156,8 +156,8 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     error ZeroAddress(string field, address value);
     /// @notice Invalid lifecycle state transition.
     error InvalidState(uint8 expected, uint8 actual);
-    /// @notice Token id does not exist.
-    error NonexistentToken(uint256 intexId);
+    /// @notice No Intex has this id.
+    error IntexNotFound(uint256 intexId);
     /// @notice Series already exists for this token id.
     error IntexAlreadyExists(uint256 intexId);
     /// @notice `openSeries` was called with a zero issued-intex count.
@@ -190,7 +190,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @notice Identity inputs for a new series, set once at `openSeries`.
     /// @dev `emissionDay` is the day the series was derived from. It is the provenance key
     ///      (`seriesOfDay`), stored verbatim rather than inferred from `seriesId`.
-    struct CreateSeriesParams {
+    struct OpenSeriesParams {
         bytes14 seriesId;
         uint32 emissionDay;
         /// @notice When the origin created the series. The call window is dated from it.
@@ -207,7 +207,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @notice Create a new Intex series (one per auction) with its identity fields.
     /// @param params Series identity (id, currencies, issued units, promis load, prices, call
     ///        trigger).
-    function openSeries(CreateSeriesParams calldata params) external;
+    function openSeries(OpenSeriesParams calldata params) external;
 
     /// @notice Mint Intex to a specific address.
     /// @dev A `Called` series takes no issuance past the transit margin after its settlement deadline.

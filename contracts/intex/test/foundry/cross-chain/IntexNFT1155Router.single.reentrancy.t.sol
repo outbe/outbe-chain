@@ -4,7 +4,7 @@ pragma solidity 0.8.30;
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
-import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
+import {OpenSeriesLib} from "../helpers/OpenSeriesLib.sol";
 import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
 import {IIntexNFT1155Router, SendParam} from "@contracts/shared/interfaces/IIntexNFT1155Router.sol";
 import {IERC1155Receiver} from "@openzeppelin/contracts/token/ERC1155/IERC1155Receiver.sol";
@@ -98,8 +98,8 @@ contract IntexNFT1155RouterSingleReentrancyTest is CrossChainTest {
         adapterA.setRemoteRouter(bChainId, _interop(bChainId, address(adapterB)));
         adapterB.setRemoteRouter(aChainId, _interop(aChainId, address(adapterA)));
 
-        tokenA.openSeries(CreateSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));
-        tokenB.openSeries(CreateSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));
+        tokenA.openSeries(OpenSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));
+        tokenB.openSeries(OpenSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));
 
         tokenA.issueIntex(user, AMOUNT, SERIES_ID);
     }

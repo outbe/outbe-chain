@@ -13,7 +13,7 @@ import {DESIS} from "@precompiles/IDesis.sol";
 import {IIntexFactory, INTEX_FACTORY} from "@precompiles/IIntexFactory.sol";
 import {IntexAuctionTargetRouter} from "@contracts/target/IntexAuctionTargetRouter.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
-import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
+import {OpenSeriesLib} from "../helpers/OpenSeriesLib.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
@@ -235,7 +235,7 @@ contract LocalLoopbackTest is Test {
 
         // 7. ISSUANCE_INSTRUCTIONS: the series lands on the canonical NFT.
         BridgeMsgCodec.IntexSeriesPayload memory series = BridgeMsgCodec.IntexSeriesPayload({
-            seriesId: CreateSeriesLib.seriesId(DAY),
+            seriesId: OpenSeriesLib.seriesId(DAY),
             emissionDay: DAY,
             issuedAt: uint32(block.timestamp),
             issuedUnits: 50,
@@ -250,12 +250,12 @@ contract LocalLoopbackTest is Test {
             transitMargin: 1 hours
         });
         _fromOutbe(BridgeMsgCodec.encodeIntexSeries(DAY, 0, 1, IssuanceBatchLib.one(series)), IntexGas.issuance(1));
-        assertTrue(intex.seriesExists(CreateSeriesLib.seriesId(DAY)), "series created");
+        assertTrue(intex.seriesExists(OpenSeriesLib.seriesId(DAY)), "series created");
 
         // Each winner issues its own units through the auction.
         auction.redeemWinNote(DAY, iba1);
         auction.redeemWinNote(DAY, iba2);
-        uint256 tokenId = intex.issuedIntexId(CreateSeriesLib.seriesId(DAY));
+        uint256 tokenId = intex.issuedIntexId(OpenSeriesLib.seriesId(DAY));
         assertEq(intex.balanceOf(iba1, tokenId), 30, "iba1 issued");
         assertEq(intex.balanceOf(iba2, tokenId), 20, "iba2 issued");
 
