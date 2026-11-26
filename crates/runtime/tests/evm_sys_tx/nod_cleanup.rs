@@ -40,7 +40,7 @@ fn queue_forfeited(storage: &StorageHandle<'_>, nod_id: U256) {
     nod.called_deadline
         .write(&group_key, item.body().issued_at)
         .unwrap();
-    nod.hand_to_cleanup(group_key).unwrap();
+    nod.hand_to_forfeit(group_key).unwrap();
 }
 
 fn reserve(storage: &StorageHandle<'_>) -> U256 {
@@ -124,7 +124,7 @@ fn idle_cleanup_processing_leaves_the_nod_queue_empty() {
     provider.enter(|storage| {
         run_cleanup(storage.clone());
         assert!(NodContract::new(storage)
-            .first_cleanup_day()
+            .first_forfeit_day()
             .unwrap()
             .is_none());
     });

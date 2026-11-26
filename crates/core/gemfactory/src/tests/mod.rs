@@ -469,7 +469,7 @@ pub(crate) fn daily_pass<'s>(
     let gem = GemContract::new(ctx.storage.clone());
     let mut height = ctx.block.block_number;
     loop {
-        for packed in [gem.daily_budget.read()?, gem.cleanup_budget.read()?] {
+        for packed in [gem.daily_budget.read()?, gem.forfeit_budget.read()?] {
             if let Some(previous) =
                 outbe_system_common::pass_budget::BlockAllowance::unpack(packed)?
             {

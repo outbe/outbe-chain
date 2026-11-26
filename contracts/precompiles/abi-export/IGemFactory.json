@@ -549,7 +549,7 @@
   },
   {
     "type": "error",
-    "name": "EmptyMemberSlotDuringCleanup",
+    "name": "EmptyMemberSlotDuringForfeit",
     "inputs": [
       {
         "name": "groupKey",
@@ -658,7 +658,7 @@
   },
   {
     "type": "error",
-    "name": "MissingMemberRecordDuringCleanup",
+    "name": "MissingMemberRecordDuringForfeit",
     "inputs": [
       {
         "name": "groupKey",

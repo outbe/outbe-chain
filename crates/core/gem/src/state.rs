@@ -294,7 +294,7 @@ impl GemContract<'_> {
             self.group_sub_series_unsettled_load_minor.clear(&gss_key)?;
         }
         self.group_sub_series_keys.list(&group).clear()?;
-        deadline_queue::remove(&CleanupQueue(self), group)?;
+        deadline_queue::remove(&ForfeitQueue(self), group)?;
         self.group_gem_count.clear(&group)
     }
 
@@ -340,17 +340,17 @@ impl GemContract<'_> {
         deadline_queue::remove(&CloseQueue(self), group)
     }
 
-    /// Moves a closed group from the close queue to the cleanup, which deletes its
+    /// Moves a closed group from the close queue to the forfeit pass, which deletes its
     /// unsettled gems. Done with the group's credit, so a retry never credits it twice.
-    pub fn hand_to_cleanup(&mut self, group: B256) -> Result<()> {
+    pub fn hand_to_forfeit(&mut self, group: B256) -> Result<()> {
         let deadline = self.called_deadline.read(&group)?;
         deadline_queue::remove(&CloseQueue(self), group)?;
-        deadline_queue::push(&CleanupQueue(self), group, deadline)
+        deadline_queue::push(&ForfeitQueue(self), group, deadline)
     }
 
     #[cfg(any(test, feature = "test-utils"))]
-    pub fn first_cleanup_day(&self) -> Result<Option<u32>> {
-        deadline_queue::first_day(&CleanupQueue(self))
+    pub fn first_forfeit_day(&self) -> Result<Option<u32>> {
+        deadline_queue::first_day(&ForfeitQueue(self))
     }
 
     /// This function returns the deadline's UTC day since the epoch, not a WorldwideDay.
@@ -413,19 +413,19 @@ outbe_core_common::impl_deadline_queue!(CloseQueue<B256> {
 });
 
 /// Forfeited groups whose unsettled gems wait to be deleted.
-pub struct CleanupQueue<'a, 'storage>(pub &'a GemContract<'storage>);
+pub struct ForfeitQueue<'a, 'storage>(pub &'a GemContract<'storage>);
 
-outbe_core_common::impl_deadline_queue!(CleanupQueue<B256> {
-    root: cleanup_tree_root,
-    mid: cleanup_tree_mid,
-    leaf: cleanup_tree_leaf,
-    len: cleanup_day_len,
-    live: cleanup_day_live,
-    at: cleanup_day_at,
-    slot: cleanup_group_slot,
-    deadline: cleanup_deadline,
-    sweep_day: cleanup_sweep_day,
-    cursor: cleanup_cursor,
+outbe_core_common::impl_deadline_queue!(ForfeitQueue<B256> {
+    root: forfeit_tree_root,
+    mid: forfeit_tree_mid,
+    leaf: forfeit_tree_leaf,
+    len: forfeit_day_len,
+    live: forfeit_day_live,
+    at: forfeit_day_at,
+    slot: forfeit_group_slot,
+    deadline: forfeit_deadline,
+    sweep_day: forfeit_sweep_day,
+    cursor: forfeit_cursor,
 });
 
 /// The uncalled groups of one reference currency, by call price.

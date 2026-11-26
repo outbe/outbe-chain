@@ -214,7 +214,7 @@ fn settled_units_mine_after_the_group_expired_without_moving_the_promis_limit() 
             s.clone(),
         );
         let block = super::called::daily_pass(&ctx).unwrap();
-        crate::hooks::cleanup(&block).unwrap();
+        crate::hooks::forfeit_through(&block).unwrap();
         let reserve = || {
             outbe_promislimit::PromisLimitContract::new(s.clone())
                 .promis_limit()
@@ -232,7 +232,7 @@ fn settled_units_mine_after_the_group_expired_without_moving_the_promis_limit() 
             intex.called_group_slot.read(&group_of(&s, sid(7))).unwrap(),
             0
         );
-        assert_eq!(intex.first_cleanup_day().unwrap(), None);
+        assert_eq!(intex.first_forfeit_day().unwrap(), None);
 
         let nonce = (0u64..)
             .find(|nonce| {
@@ -276,7 +276,7 @@ fn settled_units_mine_after_the_group_expired_without_moving_the_promis_limit() 
             s.clone(),
         );
         let block = super::called::daily_pass(&later).unwrap();
-        crate::hooks::cleanup(&block).unwrap();
+        crate::hooks::forfeit_through(&block).unwrap();
         assert_eq!(reserve(), forfeited);
     });
     let closed_series: Vec<_> = storage

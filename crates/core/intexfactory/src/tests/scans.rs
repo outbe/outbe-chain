@@ -842,13 +842,13 @@ fn the_cleanup_deletes_a_spent_series_and_keeps_one_with_settled_units() {
             s.clone(),
         );
         let block = called::daily_pass(&ctx).unwrap();
-        crate::hooks::cleanup(&block).unwrap();
+        crate::hooks::forfeit_through(&block).unwrap();
 
         let f = IntexContract::new(s.clone());
         assert!(!outbe_intex::api::series_exists(&s, spent).unwrap());
         assert!(outbe_intex::api::series_exists(&s, kept).unwrap());
         assert_eq!(f.group_members(group).unwrap(), vec![kept]);
-        assert_eq!(f.first_cleanup_day().unwrap(), None);
+        assert_eq!(f.first_forfeit_day().unwrap(), None);
         let record = outbe_intex::api::get_series(&s, kept).unwrap();
         assert_eq!(
             outbe_intex::api::call_stamp(&s, &record)

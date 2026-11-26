@@ -1,27 +1,27 @@
-//! Cleanup sweep: deletes the Credis of the forfeited groups. Each one takes its CCA's
+//! Forfeit pass: deletes the Credis of the closed groups. Each one takes its CCA's
 //! default, and its Gratis burns from the source's pledge into the Promis reserve.
 
 use alloy_primitives::{B256, U256};
 use outbe_core_common::deadline_queue::{self, DeadlineHandler, Due};
-use outbe_credis::{CleanupQueue, CredisContract};
+use outbe_credis::{CredisContract, ForfeitQueue};
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PassFailure, PrecompileError, Result},
 };
 use outbe_system_common::pass_budget::{PassBudget, WITNESS_BYTES_PER_WRITE};
 
-pub(crate) fn cleanup_through(
+pub(crate) fn forfeit_through(
     ctx: &BlockRuntimeContext,
     through_day: u32,
     budget: &mut PassBudget,
 ) -> Result<deadline_queue::Progress> {
     let queue = CredisContract::new(ctx.storage.clone());
     deadline_queue::run_through_day(
-        &CleanupQueue(&queue),
+        &ForfeitQueue(&queue),
         ctx,
         through_day,
         budget,
-        &mut CredisCleanup::new(ctx),
+        &mut CredisForfeit::new(ctx),
     )
 }
 
@@ -29,12 +29,12 @@ pub(crate) fn cleanup_through(
 pub const PLEDGE_BURN_COST: u32 =
     outbe_gratis::enclave_client::COLLATERAL_OP_WITNESS_BYTES.div_ceil(WITNESS_BYTES_PER_WRITE);
 
-struct CredisCleanup<'a, 'storage> {
+struct CredisForfeit<'a, 'storage> {
     ctx: &'a BlockRuntimeContext<'storage>,
     credis: CredisContract<'storage>,
 }
 
-impl<'a, 's> CredisCleanup<'a, 's> {
+impl<'a, 's> CredisForfeit<'a, 's> {
     fn new(ctx: &'a BlockRuntimeContext<'s>) -> Self {
         Self {
             ctx,
@@ -44,7 +44,7 @@ impl<'a, 's> CredisCleanup<'a, 's> {
 }
 
 /// A forfeited group's members are its unsettled Credis.
-impl DeadlineHandler<B256> for CredisCleanup<'_, '_> {
+impl DeadlineHandler<B256> for CredisForfeit<'_, '_> {
     type Member = U256;
 
     fn due(&mut self, group: B256) -> Result<Due> {
@@ -76,7 +76,7 @@ impl DeadlineHandler<B256> for CredisCleanup<'_, '_> {
     }
 
     fn deferred(&mut self, group: B256, retry_at: u64) -> Result<()> {
-        tracing::warn!(target: "outbe::credisfactory", %group, retry_at, "cleanup sweep: group deferred");
+        tracing::warn!(target: "outbe::credisfactory", %group, retry_at, "forfeit pass: group deferred");
         Ok(())
     }
 }

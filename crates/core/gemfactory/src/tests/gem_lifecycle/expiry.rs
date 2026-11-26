@@ -1,5 +1,5 @@
 //! The close sweep: a called group whose notice lapsed returns its unsettled load to the
-//! Promis reserve in one credit, and the cleanup deletes its unsettled gems under the
+//! Promis reserve in one credit, and the forfeit pass deletes its unsettled gems under the
 //! block budget.
 
 use alloy_primitives::{B256, U256};
@@ -311,7 +311,7 @@ fn a_forfeit_credit_that_overflows_the_promis_limit_fails_the_block() {
 }
 
 /// A broken group index cannot stop the forfeit, which reads only the group's totals.
-/// The cleanup keeps the gem it cannot delete and tries it again later.
+/// The forfeit pass keeps the gem it cannot delete and tries it again later.
 #[test]
 fn a_broken_group_index_holds_back_only_the_cleanup() {
     let mut provider = provider_at(T_NOW);
@@ -326,7 +326,7 @@ fn a_broken_group_index_holds_back_only_the_cleanup() {
         assert_eq!(unallocated(&storage), U256::from(3u64));
         assert!(item(&storage, gems[1]).is_some());
         assert!(GemContract::new(storage.clone())
-            .first_cleanup_day()
+            .first_forfeit_day()
             .unwrap()
             .is_some());
     });
@@ -365,7 +365,7 @@ fn a_called_group_wider_than_the_budget_is_cleaned_up_over_several_blocks() {
         assert_eq!(
             live(),
             gems.len() - SWEEP_WRITES_PER_BLOCK as usize,
-            "same-height cleanup cannot replenish its independent allowance"
+            "same-height forfeit pass cannot replenish its independent allowance"
         );
         ctx.block.block_number += 1;
         ctx.block.timestamp += 1;
@@ -373,7 +373,7 @@ fn a_called_group_wider_than_the_budget_is_cleaned_up_over_several_blocks() {
         assert_eq!(live(), 0);
         let gem = GemContract::new(storage.clone());
         assert_eq!(gem.first_expiry_day().unwrap(), None);
-        assert_eq!(gem.first_cleanup_day().unwrap(), None);
+        assert_eq!(gem.first_forfeit_day().unwrap(), None);
         assert_eq!(unallocated(storage), U256::from(loads.iter().sum::<u64>()));
     });
 }

@@ -77,7 +77,7 @@ fn idle_daily_scans_do_not_reopen_a_completed_day() {
             storage.clone(),
         );
         called::process_call_pass(&ctx).unwrap();
-        hooks::cleanup(&ctx).unwrap();
+        hooks::forfeit_through(&ctx).unwrap();
         let nod = NodContract::new(storage);
         assert_eq!(nod.call_sweep_day.read().unwrap(), 0);
         assert_eq!(nod.call_latest_day.read().unwrap(), 20260715);
@@ -110,7 +110,7 @@ fn idle_daily_scans_do_not_reopen_a_completed_day() {
             storage,
         );
         called::process_call_pass(&ctx).unwrap();
-        hooks::cleanup(&ctx).unwrap();
+        hooks::forfeit_through(&ctx).unwrap();
     });
     assert_eq!(
         provider.storage, before,

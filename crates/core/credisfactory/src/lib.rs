@@ -9,22 +9,22 @@
 //!   collateral burns as in an expired one.
 //! - [`called`] is the daily Cycle-triggered price-path scan. It calls the groups of
 //!   Credis whose breach window filled.
-//! - [`forfeited`] forfeits a called group after its settlement window. The cleanup then
+//! - [`close`] closes a called group after its settlement window. The forfeit pass then
 //!   deletes its Credis, burning each one's collateral from its source's pledged balance
 //!   into the Promis Reserve.
 
 pub(crate) mod call_progress;
 pub mod called;
-mod cleanup;
 pub mod close;
 pub mod errors;
+mod forfeit;
 pub mod hooks;
 pub mod precompile;
 pub mod rules;
 pub mod runtime;
 mod sol_ext;
 
-pub use cleanup::PLEDGE_BURN_COST;
+pub use forfeit::PLEDGE_BURN_COST;
 pub use hooks::CredisFactoryModule;
 
 #[cfg(test)]

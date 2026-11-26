@@ -4,7 +4,7 @@ use outbe_primitives::block::{BlockRuntimeContext, ProtocolModule};
 use outbe_primitives::error::Result;
 
 /// Deletes the unsettled Nods of the forfeited groups.
-pub use crate::cleanup::cleanup;
+pub use crate::forfeit::forfeit_through;
 
 pub struct NodFactoryModule;
 
@@ -13,7 +13,7 @@ impl ProtocolModule for NodFactoryModule {
 
     fn end_block(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
         crate::called::process_call_pass(ctx)?;
-        crate::cleanup::cleanup(ctx)?;
+        crate::forfeit::forfeit_through(ctx)?;
         Ok(())
     }
 }

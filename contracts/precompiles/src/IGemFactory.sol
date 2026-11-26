@@ -23,8 +23,8 @@ interface IGemFactory {
     error InvalidOwner();
     error Overflow();
     error ZeroPromisLoad();
-    error EmptyMemberSlotDuringCleanup(bytes32 groupKey);
-    error MissingMemberRecordDuringCleanup(bytes32 groupKey, uint256 gemId);
+    error EmptyMemberSlotDuringForfeit(bytes32 groupKey);
+    error MissingMemberRecordDuringForfeit(bytes32 groupKey, uint256 gemId);
     error MissingGroupForCall(bytes32 group);
     error IneligibleGroupMember(bytes32 groupKey, uint256 gemId);
     error CallPriceOverflow();

@@ -163,14 +163,14 @@ fn sweep(p: &mut HashMapStorageProvider, at: u64) -> Result<()> {
                 },
                 s.clone(),
             );
-            hooks::cleanup(&ctx)?;
+            hooks::forfeit_through(&ctx)?;
             Ok(())
         })
     })
 }
 
 /// Every load is either still live or returned once, and every gem is either still
-/// live or counted by its group's forfeit. A forfeited gem waiting for the cleanup is
+/// live or counted by its group's close. A forfeited gem waiting for the forfeit pass is
 /// no longer live: its load was returned with its group.
 fn conserved(p: &mut HashMapStorageProvider, rights: &[(U256, U256)]) {
     let (live, live_count, returned) = StorageHandle::enter(p, |s| {
@@ -178,7 +178,7 @@ fn conserved(p: &mut HashMapStorageProvider, rights: &[(U256, U256)]) {
         let live = rights
             .iter()
             .filter_map(|(id, _)| api::get_item(&s, *id).unwrap())
-            .filter(|item| gem.cleanup_group_slot.read(&item.group_key).unwrap() == 0)
+            .filter(|item| gem.forfeit_group_slot.read(&item.group_key).unwrap() == 0)
             .collect::<Vec<_>>();
         let returned = PromisLimitContract::new(s.clone()).promis_limit().unwrap();
         (
@@ -270,7 +270,7 @@ fn a_settled_then_mined_gem_returns_no_capacity_while_unsettled_siblings_forfeit
     });
 }
 
-/// A settled gem outlives the forfeit and the cleanup of its unsettled siblings: it stays
+/// A settled gem outlives the close and the forfeit pass of its unsettled siblings: it stays
 /// Settled, listed and counted, and its load is never returned.
 #[test]
 fn a_settled_gem_stays_live_beside_its_forfeited_siblings() {
@@ -316,7 +316,7 @@ fn a_settled_gem_stays_live_beside_its_forfeited_siblings() {
             gem.group_unsettled_load_minor.read(&group_key).unwrap(),
             U256::ZERO
         );
-        assert_eq!(gem.cleanup_group_slot.read(&group_key).unwrap(), 0);
+        assert_eq!(gem.forfeit_group_slot.read(&group_key).unwrap(), 0);
         assert_eq!(gem.close_tree_root.read().unwrap(), U256::ZERO);
         assert_eq!(
             PromisLimitContract::new(s).promis_limit().unwrap(),

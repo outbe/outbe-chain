@@ -217,10 +217,10 @@ pub(crate) fn block_ctx<'s>(storage: &StorageHandle<'s>) -> BlockRuntimeContext<
     block_ctx_at(storage, storage.now_secs().unwrap())
 }
 
-/// One block of the daily pass and its cleanup, as the Cycle runs them.
+/// One block of the daily pass and its forfeit pass, as the Cycle runs them.
 pub(crate) fn continue_sweeps(ctx: &BlockRuntimeContext) -> Result<()> {
     let block = super::daily_pass(ctx)?;
-    crate::hooks::cleanup(&block)?;
+    crate::hooks::forfeit_through(&block)?;
     Ok(())
 }
 

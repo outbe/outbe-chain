@@ -519,7 +519,7 @@ pub fn prepare_daily_pass(
 }
 
 /// The daily pass through the UTC day before `timestamp`, as the Cycle runs it: its calls,
-/// forfeits and cleanup, one block for each closed day it still has to catch up.
+/// closes and forfeit pass, one block for each closed day it still has to catch up.
 pub fn daily_pass(
     storage: &StorageHandle<'_>,
     timestamp: u64,
@@ -565,8 +565,8 @@ fn due_close_groups(
     Ok(due)
 }
 
-/// Runs `pass` and returns the groups due by `timestamp` it forfeited: they left the forfeit
-/// queue for the cleanup, which may have deleted their Credis already.
+/// Runs `pass` and returns the groups due by `timestamp` it closed: they left the close
+/// queue for the forfeit pass, which may have deleted their Credis already.
 pub fn forfeited_by(
     storage: &StorageHandle<'_>,
     timestamp: u64,
@@ -578,7 +578,7 @@ pub fn forfeited_by(
     let mut forfeited = 0;
     for group in due {
         if credis.called_group_slot.read(&group)? == 0
-            && (credis.cleanup_group_slot.read(&group)? != 0
+            && (credis.forfeit_group_slot.read(&group)? != 0
                 || credis.group_member_count(group)? == 0)
         {
             forfeited += 1;
@@ -604,7 +604,7 @@ pub fn call_credis(storage: &StorageHandle<'_>, id: U256, now: u64) -> bool {
 }
 
 /// This function moves the clock past the day that contains the called Credis's deadline.
-/// It runs that block's forfeit and cleanup. The return value counts forfeited groups.
+/// It runs that block's close and forfeit pass. The return value counts closed groups.
 pub fn lapse(storage: &StorageHandle<'_>, id: U256) -> u32 {
     let record = CredisContract::new(storage.clone()).get_credis(id).unwrap();
     let past = outbe_credis::settlement_deadline(&record) + CLOSED_DAY_DELAY;

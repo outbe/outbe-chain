@@ -184,7 +184,7 @@ fn call(
     Ok(true)
 }
 
-/// Deletes a lapsed Credis as its group's cleanup does.
+/// Deletes a lapsed Credis as its group's forfeit pass does.
 fn forfeit_lapsed(
     credis: &mut CredisContract<'_>,
     id: U256,
@@ -2572,7 +2572,7 @@ fn the_outcome_identities_hold_through_partial_settlements_and_forfeit() {
                 .unwrap()
                 .is_zero()
         );
-        // The owner's sums count a lapsed Credis until the cleanup deletes it.
+        // The owner's sums count a lapsed Credis until the forfeit pass deletes it.
         assert_eq!(
             credis.amount_and_outstanding_of(alice()).unwrap(),
             (U256::from(PRINCIPAL), U256::from(PRINCIPAL / 2))

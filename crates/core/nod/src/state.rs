@@ -33,7 +33,7 @@ impl NodContract<'_> {
 
     // --- Group member index ------------------------------------------------
     //
-    // The cleanup enumerates unsettled members with a count, positional map
+    // The forfeit pass enumerates unsettled members with a count, positional map
     // and reverse map for O(1) swap removal.
 
     /// Appends `nod_id` and increments the group's authoritative unsettled count.
@@ -178,7 +178,7 @@ impl NodContract<'_> {
             self.sub_series_group.clear(&sub_series)?;
         }
         self.group_series.list(&group_key).clear()?;
-        deadline_queue::remove(&CleanupQueue(self), group_key)
+        deadline_queue::remove(&ForfeitQueue(self), group_key)
     }
 
     /// Closes a called group after `NodSeriesClosed` once nothing settled remains.
@@ -449,17 +449,17 @@ impl NodContract<'_> {
         )
     }
 
-    /// Moves a closed group from the close queue to the cleanup, which deletes its
+    /// Moves a closed group from the close queue to the forfeit pass, which deletes its
     /// unsettled Nods. Done with the group's credit, so a retry never credits it twice.
-    pub fn hand_to_cleanup(&mut self, group_key: B256) -> Result<()> {
+    pub fn hand_to_forfeit(&mut self, group_key: B256) -> Result<()> {
         let deadline = self.called_deadline.read(&group_key)?;
         deadline_queue::remove(&CloseQueue(self), group_key)?;
-        deadline_queue::push(&CleanupQueue(self), group_key, deadline)
+        deadline_queue::push(&ForfeitQueue(self), group_key, deadline)
     }
 
     #[cfg(any(test, feature = "test-utils"))]
-    pub fn first_cleanup_day(&self) -> Result<Option<u32>> {
-        deadline_queue::first_day(&CleanupQueue(self))
+    pub fn first_forfeit_day(&self) -> Result<Option<u32>> {
+        deadline_queue::first_day(&ForfeitQueue(self))
     }
 }
 
@@ -483,19 +483,19 @@ fn open_load_error(group_key: B256, err: outbe_tee::TransportError) -> NodError 
 }
 
 /// Forfeited groups whose unsettled Nods wait to be deleted.
-pub struct CleanupQueue<'a, 'storage>(pub &'a NodContract<'storage>);
+pub struct ForfeitQueue<'a, 'storage>(pub &'a NodContract<'storage>);
 
-outbe_core_common::impl_deadline_queue!(CleanupQueue<B256> {
-    root: cleanup_tree_root,
-    mid: cleanup_tree_mid,
-    leaf: cleanup_tree_leaf,
-    len: cleanup_day_len,
-    live: cleanup_day_live,
-    at: cleanup_day_at,
-    slot: cleanup_group_slot,
-    deadline: cleanup_deadline,
-    sweep_day: cleanup_sweep_day,
-    cursor: cleanup_cursor,
+outbe_core_common::impl_deadline_queue!(ForfeitQueue<B256> {
+    root: forfeit_tree_root,
+    mid: forfeit_tree_mid,
+    leaf: forfeit_tree_leaf,
+    len: forfeit_day_len,
+    live: forfeit_day_live,
+    at: forfeit_day_at,
+    slot: forfeit_group_slot,
+    deadline: forfeit_deadline,
+    sweep_day: forfeit_sweep_day,
+    cursor: forfeit_cursor,
 });
 
 /// One currency's call-price trie, like `outbe_gem::state::CallBins`.

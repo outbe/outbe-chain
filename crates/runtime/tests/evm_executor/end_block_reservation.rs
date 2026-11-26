@@ -361,7 +361,7 @@ fn end_block_cursor_rejects_wrong_order_duplicate_or_mismatched_gas_limit() {
 #[test]
 fn end_block_order_executes_interleaved_factory_passes_and_gem_expire_through_before_intex_and_credis(
 ) {
-    use outbe_credis::{CleanupQueue as CredisCleanupQueue, CredisContract};
+    use outbe_credis::{CredisContract, ForfeitQueue as CredisCleanupQueue};
     use outbe_gemfactory::{schema::GemFactoryPosition, GemFactoryContract};
     use outbe_intex::SeriesId;
     use outbe_intexfactory::IntexFactoryContract;
@@ -417,7 +417,7 @@ fn end_block_order_executes_interleaved_factory_passes_and_gem_expire_through_be
                     outbe_intexfactory::notify::pack_call_notice(stale_series, expires_at),
                 )
                 .unwrap();
-            // Seed CredisFactory cleanup queue in phase 2 for OSCR (cleanup_through).
+            // Seed CredisFactory forfeit queue in phase 2 for OSCR (forfeit_through).
             let credis = CredisContract::new(storage.clone());
             credis.call_sweep_day.write(expires_day).unwrap();
             credis.call_latest_day.write(expires_day).unwrap();
@@ -523,12 +523,12 @@ fn end_block_order_executes_interleaved_factory_passes_and_gem_expire_through_be
             );
             assert!(
                 gf.positions.get(U256::from(1u64)).unwrap().is_some(),
-                "position deletion is deferred to OSGC (GemCleanup)"
+                "position deletion is deferred to OSGC (GemForfeit)"
             );
         });
     }
 
-    // 3. OSIX (IntexFactory), OSCR (CredisFactory), and OSGC (GemCleanup) execute in order.
+    // 3. OSIX (IntexFactory), OSCR (CredisFactory), and OSGC (GemForfeit) execute in order.
     for input in [
         SystemTx::EndBlock { step_index: 2 },
         SystemTx::EndBlock { step_index: 3 },
@@ -561,17 +561,17 @@ fn end_block_order_executes_interleaved_factory_passes_and_gem_expire_through_be
             assert_eq!(
                 credis.call_sweep_day.read().unwrap(),
                 0,
-                "OSCR (CredisFactory) must run cleanup_through and finish the pinned sweep day"
+                "OSCR (CredisFactory) must run forfeit_through and finish the pinned sweep day"
             );
             assert_eq!(
-                credis.cleanup_group_slot.read(&stale_group).unwrap(),
+                credis.forfeit_group_slot.read(&stale_group).unwrap(),
                 0,
-                "OSCR (CredisFactory) cleanup_through must drop due cleanup queue entry"
+                "OSCR (CredisFactory) forfeit_through must drop due forfeit queue entry"
             );
             let gf = GemFactoryContract::new(storage);
             assert!(
                 gf.positions.get(U256::from(1u64)).unwrap().is_none(),
-                "OSGC (GemCleanup) must delete expired positions handed off by OSGM"
+                "OSGC (GemForfeit) must delete expired positions handed off by OSGM"
             );
         });
     }

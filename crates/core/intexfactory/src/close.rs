@@ -1,6 +1,6 @@
 //! Close pass: closes a called group's settlement window, returns the Promis load of
 //! everything left unrealized to the Promis Limit, and hands the group to the
-//! cleanup.
+//! forfeit pass.
 
 use alloy_primitives::{B256, U256};
 use outbe_core_common::deadline_queue::{self, DeadlineHandler, Due};
@@ -85,7 +85,7 @@ impl DeadlineHandler<B256> for IntexClose<'_, '_> {
             outbe_promislimit::PromisLimitContract::new(self.storage.clone())
                 .add(outbe_promislimit::LimitSource::Intex, returned)?;
         }
-        self.intex.hand_to_cleanup(group)?;
+        self.intex.hand_to_forfeit(group)?;
         for event in closed_events {
             crate::runtime::emit_event(self.storage, event)?;
         }

@@ -1,5 +1,5 @@
 //! Credis: the terms, profile and records of a Credis, its sub-series and call groups. The call bins,
-//! the close queue and the cleanup queue live here, with the read-time state, accrued
+//! the close queue and the forfeit queue live here, with the read-time state, accrued
 //! fee and outcome.
 //!
 //! CredisFactory applies every rule and runs the call and close sweeps. The precompile
@@ -16,7 +16,7 @@ pub mod state;
 
 pub use runtime::{outcome, settlement_deadline, Outcome};
 pub use schema::{CallTerms, Credis, CredisContract, CredisState, CredisView, SubSeriesSummary};
-pub use state::{CallBins, CleanupQueue, CloseQueue};
+pub use state::{CallBins, CloseQueue, ForfeitQueue};
 
 #[cfg(test)]
 mod tests;

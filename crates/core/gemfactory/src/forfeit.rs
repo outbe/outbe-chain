@@ -1,10 +1,10 @@
-//! Cleanup sweep: deletes the unsettled gems of the forfeited groups. It moves no value:
+//! Forfeit pass: deletes the unsettled gems of the closed groups. It moves no value:
 //! the expiry already returned their load.
 
 use alloy_primitives::{B256, U256};
 use outbe_core_common::deadline_queue::{self, DeadlineHandler, Due};
 use outbe_gem::precompile::IGem::GemForfeited;
-use outbe_gem::{api as gem_api, CleanupQueue, GemContract};
+use outbe_gem::{api as gem_api, ForfeitQueue, GemContract};
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PassFailure, PrecompileError, Result},
@@ -14,25 +14,25 @@ use outbe_primitives::{
 use crate::errors::GemFactoryError;
 
 /// Deletes the unsettled gems of the forfeited groups. Returns the gems deleted.
-pub fn cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
+pub fn forfeit_through(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = GemContract::new(ctx.storage.clone());
-    let mut cleanup = GemCleanup::new(ctx);
+    let mut cleanup = GemForfeit::new(ctx);
     deadline_queue::run_with_saved_budget(
-        &CleanupQueue(&queue),
+        &ForfeitQueue(&queue),
         ctx,
-        &queue.cleanup_budget,
+        &queue.forfeit_budget,
         &mut cleanup,
     )?;
     Ok(cleanup.deleted)
 }
 
-struct GemCleanup<'a, 's> {
+struct GemForfeit<'a, 's> {
     storage: &'a StorageHandle<'s>,
     gem: GemContract<'s>,
     deleted: u32,
 }
 
-impl<'a, 's> GemCleanup<'a, 's> {
+impl<'a, 's> GemForfeit<'a, 's> {
     fn new(ctx: &'a BlockRuntimeContext<'s>) -> Self {
         Self {
             storage: &ctx.storage,
@@ -43,7 +43,7 @@ impl<'a, 's> GemCleanup<'a, 's> {
 }
 
 /// A forfeited group's members are its unsettled gems.
-impl DeadlineHandler<B256> for GemCleanup<'_, '_> {
+impl DeadlineHandler<B256> for GemForfeit<'_, '_> {
     type Member = U256;
 
     fn due(&mut self, group: B256) -> Result<Due> {
@@ -69,10 +69,10 @@ impl DeadlineHandler<B256> for GemCleanup<'_, '_> {
 
     fn handle_member(&mut self, group_key: B256, gem_id: U256) -> Result<()> {
         if gem_id.is_zero() {
-            return Err(GemFactoryError::EmptyMemberSlotDuringCleanup { group_key }.into());
+            return Err(GemFactoryError::EmptyMemberSlotDuringForfeit { group_key }.into());
         }
         let (item, group) = gem_api::load_pair(self.storage, gem_id)?
-            .ok_or(GemFactoryError::MissingMemberRecordDuringCleanup { group_key, gem_id })?;
+            .ok_or(GemFactoryError::MissingMemberRecordDuringForfeit { group_key, gem_id })?;
         if item.body().is_settled() || item.body().group_key != group_key {
             return Err(GemFactoryError::IneligibleGroupMember { group_key, gem_id }.into());
         }
@@ -89,7 +89,7 @@ impl DeadlineHandler<B256> for GemCleanup<'_, '_> {
     }
 
     fn deferred(&mut self, group: B256, retry_at: u64) -> Result<()> {
-        tracing::warn!(target: "outbe::gemfactory", %group, retry_at, "cleanup sweep: group deferred");
+        tracing::warn!(target: "outbe::gemfactory", %group, retry_at, "forfeit pass: group deferred");
         Ok(())
     }
 }

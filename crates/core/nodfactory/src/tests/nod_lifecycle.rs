@@ -211,8 +211,8 @@ fn add(storage: &StorageHandle<'_>, item: &NodItemState) {
     .unwrap();
 }
 
-/// One block's call scan and forfeits, then its cleanup. Returns the groups called and
-/// forfeited.
+/// One block's call scan and closes, then its forfeit pass. Returns the groups called and
+/// closed.
 fn scan(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
     let nod = NodContract::new(storage.clone());
     let mut decided = 0;
@@ -233,21 +233,21 @@ fn scan(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
     decided
 }
 
-/// The daily pass and its cleanup under one checkpoint, as the native transaction runs them.
-/// Returns the groups forfeited.
+/// The daily pass and its forfeit pass under one checkpoint, as the native transaction runs them.
+/// Returns the groups closed.
 fn forfeit_block(
     storage: &StorageHandle<'_>,
     timestamp: u64,
 ) -> outbe_primitives::error::Result<u32> {
     storage.with_checkpoint(|| {
         let forfeited = close_pass(storage, timestamp)?;
-        crate::cleanup::cleanup(&block_at(storage, timestamp))?;
+        crate::forfeit::forfeit_through(&block_at(storage, timestamp))?;
         Ok(forfeited)
     })
 }
 
 /// The daily pass through the closed days before `timestamp`, one day per block, without its
-/// cleanup. Returns the groups it forfeited.
+/// forfeit pass. Returns the groups it closed.
 fn close_pass(storage: &StorageHandle<'_>, timestamp: u64) -> outbe_primitives::error::Result<u32> {
     let queued: Vec<_> = ISSUED_GROUPS.with(|groups| {
         groups
@@ -282,7 +282,7 @@ fn block_at<'s>(storage: &StorageHandle<'s>, timestamp: u64) -> BlockRuntimeCont
     let nod = NodContract::new(storage.clone());
     let height = [
         nod.daily_budget.read().unwrap(),
-        nod.cleanup_budget.read().unwrap(),
+        nod.forfeit_budget.read().unwrap(),
     ]
     .into_iter()
     .filter_map(|packed| outbe_system_common::pass_budget::BlockAllowance::unpack(packed).unwrap())
@@ -1222,7 +1222,7 @@ fn slice(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
     });
     let ctx = block_at(storage, timestamp);
     let called = crate::called::process_call_pass(&ctx).unwrap();
-    crate::cleanup::cleanup(&ctx).unwrap();
+    crate::forfeit::forfeit_through(&ctx).unwrap();
     called
         + groups
             .into_iter()
@@ -1230,7 +1230,7 @@ fn slice(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
             .count() as u32
 }
 
-/// A forfeited group's Nods read Forfeited until the cleanup deletes them, and the
+/// A closed group's Nods read Forfeited until the forfeit pass deletes them, and the
 /// deletion keeps supply and the owner's list in step.
 #[test]
 fn a_forfeited_group_reads_forfeited_until_the_cleanup_deletes_it() {
@@ -1256,13 +1256,13 @@ fn a_forfeited_group_reads_forfeited_until_the_cleanup_deletes_it() {
         }
 
         assert_eq!(
-            crate::cleanup::cleanup(&block_at(&storage, past)).unwrap(),
+            crate::forfeit::forfeit_through(&block_at(&storage, past)).unwrap(),
             2
         );
         assert_eq!(
             reserve(&storage),
             U256::from(12u64),
-            "the cleanup moves no value"
+            "the forfeit pass moves no value"
         );
         assert_eq!(api::balance_of(&storage, items[0].owner).unwrap(), 0);
         assert!(api::get_group(&storage, group_key).unwrap().is_none());
@@ -1291,7 +1291,7 @@ fn a_group_over_the_cleanup_budget_is_deleted_across_blocks_and_credited_once() 
         assert_eq!(nod.group_nod_count.read(&group_key).unwrap(), 1);
         assert_eq!(reserve(storage), U256::from(specs.len()));
         let allowance = outbe_system_common::pass_budget::BlockAllowance::unpack(
-            nod.cleanup_budget.read().unwrap(),
+            nod.forfeit_budget.read().unwrap(),
         )
         .unwrap()
         .unwrap();
@@ -1309,10 +1309,10 @@ fn a_group_over_the_cleanup_budget_is_deleted_across_blocks_and_credited_once() 
             },
             storage.clone(),
         );
-        assert_eq!(crate::cleanup::cleanup(&same_height).unwrap(), 0);
+        assert_eq!(crate::forfeit::forfeit_through(&same_height).unwrap(), 0);
         assert_eq!(nod.group_nod_count.read(&group_key).unwrap(), 1);
         let after = outbe_system_common::pass_budget::BlockAllowance::unpack(
-            nod.cleanup_budget.read().unwrap(),
+            nod.forfeit_budget.read().unwrap(),
         )
         .unwrap()
         .unwrap();
@@ -1325,8 +1325,8 @@ fn a_group_over_the_cleanup_budget_is_deleted_across_blocks_and_credited_once() 
     });
 }
 
-/// Failing members of a forfeited group do not prevent cleanup of the other members.
-/// The cleanup deletes the other members. The group waits for the current UTC day to close.
+/// Failing members of a closed group do not prevent the forfeit of the other members.
+/// The forfeit pass deletes the other members. The group waits for the current UTC day to close.
 #[test]
 fn failing_members_do_not_hold_the_cleanup() {
     harness(|storage| {
@@ -1347,12 +1347,12 @@ fn failing_members_do_not_hold_the_cleanup() {
         let past = START + 30 * DAY + NOTICE + CLOSED_DAY_DELAY;
         assert_eq!(close_pass(storage, past).unwrap(), 1);
         assert_eq!(
-            crate::cleanup::cleanup(&block_at(storage, past)).unwrap(),
+            crate::forfeit::forfeit_through(&block_at(storage, past)).unwrap(),
             3
         );
         assert_eq!(reserve(storage), U256::from(25u64));
         let (day, _) = outbe_core_common::deadline_queue::unpack_slot(
-            nod.cleanup_group_slot.read(&group_key).unwrap(),
+            nod.forfeit_group_slot.read(&group_key).unwrap(),
         );
         assert_eq!(
             day,
@@ -1361,7 +1361,7 @@ fn failing_members_do_not_hold_the_cleanup() {
     });
 }
 
-/// Forfeiture decrypts the group's open load once, while member cleanup reads no encrypted load
+/// Forfeiture decrypts the group's open load once, while the member forfeit reads no encrypted load
 /// and does not need the enclave.
 #[test]
 fn a_forfeit_does_not_need_the_enclave() {
@@ -1371,7 +1371,7 @@ fn a_forfeit_does_not_need_the_enclave() {
 
         let forfeited = close_pass(storage, past);
         outbe_nod::test_support::uninstall();
-        let deleted = crate::cleanup::cleanup(&block_at(storage, past));
+        let deleted = crate::forfeit::forfeit_through(&block_at(storage, past));
         outbe_nod::test_support::install();
         assert_eq!(forfeited.unwrap(), 1);
         assert_eq!(deleted.unwrap(), 1);
@@ -1798,7 +1798,7 @@ fn the_daily_pass_forfeits_without_the_daily_trigger() {
 
         let past = START + 30 * DAY + NOTICE + CLOSED_DAY_DELAY;
         close_pass(storage, past).unwrap();
-        crate::hooks::cleanup(&block_at(storage, past)).unwrap();
+        crate::hooks::forfeit_through(&block_at(storage, past)).unwrap();
         assert_eq!(nod.group_nod_count.read(&group_key).unwrap(), 0);
         assert!(!is_queued(storage, group_key));
         assert_eq!(reserve(storage), U256::from(3u64));
@@ -2085,7 +2085,7 @@ fn a_node_local_failure_while_forfeiting_fails_the_slice() {
     });
 }
 
-/// Every persistent write of a forfeit and its cleanup (credit, event,
+/// Every persistent write of a close and its forfeit pass (credit, event,
 /// deletion) rolls back with its checkpoint. Retry credits the original unsettled
 /// loads once, neither zero nor twice.
 #[test]

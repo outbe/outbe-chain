@@ -388,7 +388,7 @@ fn credis_series_lifecycle_emits_open_issue_settle_call_close_and_forfeit_events
     provider.set_block_number(BLOCK_NUMBER + 2);
     StorageHandle::enter(&mut provider, |storage| {
         runtime::forfeit_by_owner(storage.clone(), alice(), id_owner_forfeited).unwrap();
-        // Breach the call window via `scan`, then let `id_swept` lapse through close and cleanup.
+        // Breach the call window via `scan`, then let `id_swept` lapse through close and forfeit.
         let at = CREATED_AT + (u64::from(CALL_LOOKBACK_DAYS) + 2) * DAY;
         advance_to(&storage, at);
         fill_days(
@@ -598,7 +598,7 @@ fn a_called_series_settled_before_its_deadline_closes_with_zero_forfeit() {
         finalize_through(&storage, past);
         daily_pass(&storage, past).unwrap();
         assert_eq!(credis.called_group_slot.read(&group).unwrap(), 0);
-        assert_eq!(credis.cleanup_group_slot.read(&group).unwrap(), 0);
+        assert_eq!(credis.forfeit_group_slot.read(&group).unwrap(), 0);
     });
 
     let closed: Vec<_> = provider

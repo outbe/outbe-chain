@@ -46,17 +46,17 @@ pub enum NodFactoryError {
     #[error("settlement deadline has passed")]
     SettlementDeadlinePassed,
 
-    #[error("Nod group {group_key} has an empty member slot during cleanup")]
-    EmptyGroupMemberSlotDuringCleanup { group_key: B256 },
+    #[error("Nod group {group_key} has an empty member slot during forfeit")]
+    EmptyGroupMemberSlotDuringForfeit { group_key: B256 },
 
-    #[error("Nod group {group_key} member {nod_id} has no body during cleanup")]
-    MissingGroupMemberRecordDuringCleanup { group_key: B256, nod_id: U256 },
+    #[error("Nod group {group_key} member {nod_id} has no body during forfeit")]
+    MissingGroupMemberRecordDuringForfeit { group_key: B256, nod_id: U256 },
 
     #[error("Nod group {group_key} indexes an ineligible member {nod_id}")]
     IneligibleGroupMember { group_key: B256, nod_id: U256 },
 
-    #[error("Nod group {group_key} has no body during cleanup")]
-    MissingGroupRecordDuringCleanup { group_key: B256 },
+    #[error("Nod group {group_key} has no body during forfeit")]
+    MissingGroupRecordDuringForfeit { group_key: B256 },
 
     #[error("Nod group {group_key} has no record to call")]
     MissingGroupForCall { group_key: B256 },
@@ -97,13 +97,13 @@ impl From<NodFactoryError> for PrecompileError {
             NodFactoryError::SettlementDeadlinePassed => {
                 revert_with(I::SettlementDeadlinePassed {})
             }
-            NodFactoryError::EmptyGroupMemberSlotDuringCleanup { group_key } => {
-                revert_with(I::EmptyGroupMemberSlotDuringCleanup {
+            NodFactoryError::EmptyGroupMemberSlotDuringForfeit { group_key } => {
+                revert_with(I::EmptyGroupMemberSlotDuringForfeit {
                     groupKey: group_key,
                 })
             }
-            NodFactoryError::MissingGroupMemberRecordDuringCleanup { group_key, nod_id } => {
-                revert_with(I::MissingGroupMemberRecordDuringCleanup {
+            NodFactoryError::MissingGroupMemberRecordDuringForfeit { group_key, nod_id } => {
+                revert_with(I::MissingGroupMemberRecordDuringForfeit {
                     groupKey: group_key,
                     nodId: nod_id,
                 })
@@ -114,8 +114,8 @@ impl From<NodFactoryError> for PrecompileError {
                     nodId: nod_id,
                 })
             }
-            NodFactoryError::MissingGroupRecordDuringCleanup { group_key } => {
-                revert_with(I::MissingGroupRecordDuringCleanup {
+            NodFactoryError::MissingGroupRecordDuringForfeit { group_key } => {
+                revert_with(I::MissingGroupRecordDuringForfeit {
                     groupKey: group_key,
                 })
             }

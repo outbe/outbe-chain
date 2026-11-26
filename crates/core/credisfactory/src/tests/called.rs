@@ -588,9 +588,9 @@ fn the_call_and_the_forfeit_compose_across_runs() {
             pledge_cost()
         );
 
-        // The forfeit left the deadline queue and the cleanup closed the group.
+        // The close left the deadline queue and the forfeit pass deleted the group.
         assert_eq!(queued_at(&storage, group), 0);
-        assert_eq!(cleanup_queued_at(&storage, group), 0);
+        assert_eq!(forfeit_queued_at(&storage, group), 0);
     });
     teardown();
 }
@@ -1004,9 +1004,9 @@ fn queued_at(storage: &StorageHandle<'_>, group: B256) -> u64 {
         .unwrap()
 }
 
-fn cleanup_queued_at(storage: &StorageHandle<'_>, group: B256) -> u64 {
+fn forfeit_queued_at(storage: &StorageHandle<'_>, group: B256) -> u64 {
     CredisContract::new(storage.clone())
-        .cleanup_group_slot
+        .forfeit_group_slot
         .read(&group)
         .unwrap()
 }
@@ -1121,7 +1121,7 @@ fn settling_a_called_credis_in_full_leaves_the_queue() {
     teardown();
 }
 
-/// A group is forfeited at once, and its cleanup deletes what the block's write budget
+/// A group is closed at once, and its forfeit pass deletes what the block's write budget
 /// leaves, burning each Credis's Gratis into the reserve, and leaves the rest to the next block.
 #[test]
 fn the_cleanup_budget_bounds_one_block_and_the_next_block_drains_the_rest() {
@@ -1165,14 +1165,14 @@ fn the_cleanup_budget_bounds_one_block_and_the_next_block_drains_the_rest() {
         assert_eq!(reserve(), pledge_cost() * U256::from(deleted as u64));
         assert_eq!(expire(&storage, lapsed), 0);
         assert!(ids.iter().all(|id| is_deleted(&storage, *id)));
-        assert_eq!(cleanup_queued_at(&storage, group), 0);
+        assert_eq!(forfeit_queued_at(&storage, group), 0);
         assert_eq!(reserve(), pledge_cost() * U256::from(total));
         assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
     });
     teardown();
 }
 
-/// A cleanup that cannot burn on this node fails the block: the forfeit rolls back with it,
+/// A forfeit pass that cannot burn on this node fails the block: the close rolls back with it,
 /// and the Credis stays queued until a pass with the enclave.
 #[test]
 fn a_failed_cleanup_fails_the_block_and_keeps_the_credis_queued() {
@@ -1192,7 +1192,7 @@ fn a_failed_cleanup_fails_the_block_and_keeps_the_credis_queued() {
         outbe_gratis::enclave_client::test_enclave::install();
         assert!(!is_deleted(&storage, ids[0]));
         assert_eq!(queued_for_close(&storage, lapsed).unwrap(), 1);
-        assert_eq!(cleanup_queued_at(&storage, group), 0);
+        assert_eq!(forfeit_queued_at(&storage, group), 0);
 
         assert_eq!(expire(&storage, lapsed), 1);
         assert!(is_deleted(&storage, ids[0]));
@@ -1200,7 +1200,7 @@ fn a_failed_cleanup_fails_the_block_and_keeps_the_credis_queued() {
     teardown();
 }
 
-/// A failure every node hits alike, here a broken pledged-supply total, defers the cleanup.
+/// A failure every node hits alike, here a broken pledged-supply total, defers the forfeit pass.
 #[test]
 fn a_deterministic_cleanup_failure_defers_the_group() {
     let mut storage = env();
@@ -1218,7 +1218,7 @@ fn a_deterministic_cleanup_failure_defers_the_group() {
         assert_eq!(expire(&storage, lapsed), 1);
         assert!(!is_deleted(&storage, ids[0]));
         let (day, _) =
-            outbe_core_common::deadline_queue::unpack_slot(cleanup_queued_at(&storage, group));
+            outbe_core_common::deadline_queue::unpack_slot(forfeit_queued_at(&storage, group));
         assert_eq!(
             day,
             outbe_core_common::deadline_queue::deadline_day(lapsed).unwrap()
@@ -1342,7 +1342,7 @@ fn the_daily_pass_finishes_only_after_atomic_pledge_burns_and_credits() {
     teardown();
 }
 
-/// Runs one production block's pass, forfeits and cleanup, without a test-owned checkpoint.
+/// Runs one production block's pass, closes and forfeit pass, without a test-owned checkpoint.
 /// Oracle finalization must already cover the closed day before fault injection.
 fn forfeit_block(
     storage: &StorageHandle<'_>,
@@ -1353,7 +1353,7 @@ fn forfeit_block(
     })
 }
 
-/// Every write of a group's forfeit and of its cleanup (CCA default, pledge burn, credit,
+/// Every write of a group's close and of its forfeit pass (CCA default, pledge burn, credit,
 /// deletion, events) rolls back with the block. The retry credits the pledged Gratis once,
 /// and leaves the state a clean run leaves.
 #[test]
@@ -1449,9 +1449,9 @@ fn every_credis_forfeit_and_cleanup_mutation_rolls_back_then_retries_once() {
             0,
         )
     );
-    // R5d: verify exact per-Credis cleanup effect log ordering.
+    // R5d: verify exact per-Credis forfeit effect log ordering.
     // CredisSeriesClosed is emitted when the close pass closes the series, before
-    // cleanup of each member: CredisForfeited -> Transfer(..., 0x0, id). No Gratis event.
+    // forfeit of each member: CredisForfeited -> Transfer(..., 0x0, id). No Gratis event.
     let cleanup_tags: Vec<&'static str> = clean
         .get_ordered_events()
         .iter()
@@ -1500,7 +1500,7 @@ fn every_credis_forfeit_and_cleanup_mutation_rolls_back_then_retries_once() {
         assert_eq!(credis.credis_count_of(alice()).unwrap(), 0);
         assert_eq!(credis.group_member_count(group).unwrap(), 0);
         assert_eq!(queued_at(&storage, group), 0);
-        assert_eq!(cleanup_queued_at(&storage, group), 0);
+        assert_eq!(forfeit_queued_at(&storage, group), 0);
         assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
         assert_eq!(
             outbe_gratis::api::pledged_total_supply(storage.clone()).unwrap(),
@@ -1550,7 +1550,7 @@ fn every_credis_forfeit_and_cleanup_mutation_rolls_back_then_retries_once() {
         );
     }
 
-    // R5d: also verify retrying cleanup on the next UTC day (`lapsed + DAY`) after a rollback.
+    // R5d: also verify retrying the forfeit pass on the next UTC day (`lapsed + DAY`) after a rollback.
     let (mut next_day_provider, _) = lapsed_group_of_three();
     next_day_provider.fail_after_mutation_at(mutations - 1);
     let failed = StorageHandle::enter(&mut next_day_provider, |storage| {

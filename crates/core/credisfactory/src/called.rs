@@ -47,7 +47,7 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     call_pass::continue_day(ctx, &mut CredisCallPass::new(ctx))
 }
 
-/// This function runs calls, group forfeits, and cleanup that moves value in pinned-day order.
+/// This function runs calls, group closes, and the forfeit pass that moves value in pinned-day order.
 /// The return value counts called groups, not forfeited groups or deleted members.
 pub fn process_call_pass(ctx: &BlockRuntimeContext) -> Result<u32> {
     call_pass::continue_day(ctx, &mut CredisCallPass::new(ctx))
@@ -88,7 +88,7 @@ impl<'storage> CallPass<'storage> for CredisCallPass<'storage> {
         let through_day = outbe_core_common::deadline_queue::deadline_day(pinned_ts)?;
         match phase {
             1 => crate::close::close_through(ctx, through_day, budget),
-            _ => crate::cleanup::cleanup_through(ctx, through_day, budget),
+            _ => crate::forfeit::forfeit_through(ctx, through_day, budget),
         }
     }
 

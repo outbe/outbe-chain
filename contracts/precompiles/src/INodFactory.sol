@@ -14,10 +14,10 @@ interface INodFactory {
     error NodNotIssued();
     error InsufficientProofOfWork();
     error SettlementDeadlinePassed();
-    error EmptyGroupMemberSlotDuringCleanup(bytes32 groupKey);
-    error MissingGroupMemberRecordDuringCleanup(bytes32 groupKey, uint256 nodId);
+    error EmptyGroupMemberSlotDuringForfeit(bytes32 groupKey);
+    error MissingGroupMemberRecordDuringForfeit(bytes32 groupKey, uint256 nodId);
     error IneligibleGroupMember(bytes32 groupKey, uint256 nodId);
-    error MissingGroupRecordDuringCleanup(bytes32 groupKey);
+    error MissingGroupRecordDuringForfeit(bytes32 groupKey);
     error MissingGroupForCall(bytes32 groupKey);
     error CallPriceOverflow();
     error DateStep(uint8 kind, uint32 dateKey);

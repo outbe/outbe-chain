@@ -316,25 +316,25 @@ pub struct CredisContract {
 
     // The queue orders forfeited groups by deadline day while their Credis await deletion.
     #[attribute(order = 43)]
-    pub cleanup_tree_root: outbe_primitives::storage::dsl::Value<U256>,
+    pub forfeit_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 44)]
-    pub cleanup_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
+    pub forfeit_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 45)]
-    pub cleanup_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
+    pub forfeit_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 46)]
-    pub cleanup_day_len: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub forfeit_day_len: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 47)]
-    pub cleanup_day_live: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub forfeit_day_live: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 48)]
-    pub cleanup_day_at: outbe_primitives::storage::dsl::Map<B256, B256>,
+    pub forfeit_day_at: outbe_primitives::storage::dsl::Map<B256, B256>,
     #[attribute(order = 49)]
-    pub cleanup_group_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
+    pub forfeit_group_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
     #[attribute(order = 50)]
-    pub cleanup_deadline: outbe_primitives::storage::dsl::Map<B256, u64>,
+    pub forfeit_deadline: outbe_primitives::storage::dsl::Map<B256, u64>,
     #[attribute(order = 51)]
-    pub cleanup_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
+    pub forfeit_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 52)]
-    pub cleanup_cursor: outbe_primitives::storage::dsl::Value<u64>,
+    pub forfeit_cursor: outbe_primitives::storage::dsl::Value<u64>,
 
     /// Each account's amount and outstanding amount over its live Credis.
     #[attribute(order = 53)]

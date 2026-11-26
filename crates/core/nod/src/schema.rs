@@ -142,7 +142,7 @@ pub struct NodGroupState {
 #[storage_schema]
 #[contract(addr = NOD_ADDRESS)]
 pub struct NodContract {
-    // --- Group member index: lets the cleanup enumerate a group's unsettled Nods.
+    // --- Group member index: lets the forfeit pass enumerate a group's unsettled Nods.
     // U256 occupies one storage word; IDs require no reconstruction.
     /// Authoritative unsettled member count, stored outside the shared group body.
     #[attribute(order = 35)]
@@ -278,31 +278,31 @@ pub struct NodContract {
 
     // The queue orders forfeited groups by deadline day while their unsettled Nods await deletion.
     #[attribute(order = 90)]
-    pub cleanup_tree_root: outbe_primitives::storage::dsl::Value<U256>,
+    pub forfeit_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 91)]
-    pub cleanup_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
+    pub forfeit_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 92)]
-    pub cleanup_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
+    pub forfeit_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 93)]
-    pub cleanup_day_len: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub forfeit_day_len: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 94)]
-    pub cleanup_day_live: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub forfeit_day_live: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 95)]
-    pub cleanup_day_at: outbe_primitives::storage::dsl::Map<B256, B256>,
+    pub forfeit_day_at: outbe_primitives::storage::dsl::Map<B256, B256>,
     #[attribute(order = 96)]
-    pub cleanup_group_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
+    pub forfeit_group_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
     #[attribute(order = 97)]
-    pub cleanup_deadline: outbe_primitives::storage::dsl::Map<B256, u64>,
+    pub forfeit_deadline: outbe_primitives::storage::dsl::Map<B256, u64>,
     #[attribute(order = 98)]
-    pub cleanup_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
+    pub forfeit_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 99)]
-    pub cleanup_cursor: outbe_primitives::storage::dsl::Value<u64>,
+    pub forfeit_cursor: outbe_primitives::storage::dsl::Value<u64>,
     #[attribute(order = 100)]
     pub daily_phase: outbe_primitives::storage::dsl::Value<u8>,
     #[attribute(order = 101)]
     pub daily_budget: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 103)]
-    pub cleanup_budget: outbe_primitives::storage::dsl::Value<U256>,
+    pub forfeit_budget: outbe_primitives::storage::dsl::Value<U256>,
 
     /// Set to `true` when the group's call notice deadline lapses and its unsettled load is forfeited.
     #[attribute(order = 106)]

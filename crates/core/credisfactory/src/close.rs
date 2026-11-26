@@ -1,5 +1,5 @@
 //! Closes the called groups whose settlement window lapsed, earliest deadline first,
-//! and hands their Credis to the cleanup.
+//! and hands their Credis to the forfeit pass.
 
 use alloy_primitives::B256;
 use outbe_core_common::deadline_queue::{self, DeadlineHandler, Due};
@@ -58,14 +58,14 @@ impl DeadlineHandler<B256> for CredisClose<'_> {
     }
 
     /// Forfeits the group's Credis at once. Each one's Gratis burns and returns to the
-    /// Promis reserve together, in the cleanup.
+    /// Promis reserve together, in the forfeit pass.
     fn handle_member(&mut self, group: B256, _member: B256) -> Result<()> {
         let sub_series = self.credis.group_sub_series(group)?;
         let reference_currency = self.credis.group_currency.read(&group)?;
         if self.credis.group_member_count(group)? == 0 {
             self.credis.remove_called(group)?;
         } else {
-            self.credis.hand_to_cleanup(group)?;
+            self.credis.hand_to_forfeit(group)?;
         }
         for sub in sub_series {
             emit(

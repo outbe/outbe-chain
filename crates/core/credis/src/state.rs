@@ -316,10 +316,10 @@ impl<'storage> CredisContract<'storage> {
         Ok(deadline)
     }
 
-    pub fn hand_to_cleanup(&mut self, group: B256) -> Result<()> {
+    pub fn hand_to_forfeit(&mut self, group: B256) -> Result<()> {
         let deadline = self.called_deadline.read(&group)?;
         deadline_queue::remove(&CloseQueue(self), group)?;
-        deadline_queue::push(&CleanupQueue(self), group, deadline)
+        deadline_queue::push(&ForfeitQueue(self), group, deadline)
     }
 
     pub fn push_called(&mut self, group: B256, deadline: u64) -> Result<()> {
@@ -373,19 +373,19 @@ outbe_core_common::impl_deadline_queue!(CloseQueue<B256> {
 });
 
 /// Forfeited groups whose Credis wait to be deleted.
-pub struct CleanupQueue<'a, 'storage>(pub &'a CredisContract<'storage>);
+pub struct ForfeitQueue<'a, 'storage>(pub &'a CredisContract<'storage>);
 
-outbe_core_common::impl_deadline_queue!(CleanupQueue<B256> {
-    root: cleanup_tree_root,
-    mid: cleanup_tree_mid,
-    leaf: cleanup_tree_leaf,
-    len: cleanup_day_len,
-    live: cleanup_day_live,
-    at: cleanup_day_at,
-    slot: cleanup_group_slot,
-    deadline: cleanup_deadline,
-    sweep_day: cleanup_sweep_day,
-    cursor: cleanup_cursor,
+outbe_core_common::impl_deadline_queue!(ForfeitQueue<B256> {
+    root: forfeit_tree_root,
+    mid: forfeit_tree_mid,
+    leaf: forfeit_tree_leaf,
+    len: forfeit_day_len,
+    live: forfeit_day_live,
+    at: forfeit_day_at,
+    slot: forfeit_group_slot,
+    deadline: forfeit_deadline,
+    sweep_day: forfeit_sweep_day,
+    cursor: forfeit_cursor,
 });
 
 /// One reference currency's uncalled groups, by call price.

@@ -178,7 +178,7 @@ mod group_scans {
             let mut budget = PassBudget::new(100, 100);
             crate::close::close_through(&ctx, IntexContract::deadline_day(due), &mut budget)
                 .unwrap();
-            crate::cleanup::cleanup(&ctx).unwrap();
+            crate::forfeit::forfeit_through(&ctx).unwrap();
             assert!(!outbe_intex::api::series_exists(&s, id).unwrap());
         });
 

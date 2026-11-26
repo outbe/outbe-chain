@@ -64,7 +64,7 @@ impl DeadlineHandler<B256> for GemClose<'_, '_> {
     }
 
     /// Returns the load of the group's unsettled gems in one credit and hands the gems to
-    /// the cleanup. Nobody realized the load, so it goes back to the Promis reserve.
+    /// the forfeit pass. Nobody realized the load, so it goes back to the Promis reserve.
     fn handle_member(&mut self, group: B256, _member: B256) -> Result<()> {
         let load = self.gem.group_unsettled_load_minor.read(&group)?;
         let sub_series = self.gem.group_sub_series(group)?;
@@ -76,7 +76,7 @@ impl DeadlineHandler<B256> for GemClose<'_, '_> {
             self.gem.remove_called(group)?;
             self.gem.close_group_if_empty(group)?;
         } else {
-            self.gem.hand_to_cleanup(group)?;
+            self.gem.hand_to_forfeit(group)?;
         }
         for sub in sub_series {
             crate::runtime::emit_event(

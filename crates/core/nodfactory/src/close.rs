@@ -1,5 +1,5 @@
 //! Close pass: closes the called groups whose notice period lapsed, one credit per
-//! group, and hands their unsettled Nods to the cleanup.
+//! group, and hands their unsettled Nods to the forfeit pass.
 
 use alloy_primitives::B256;
 use outbe_core_common::deadline_queue::{self, DeadlineHandler, Due};
@@ -168,7 +168,7 @@ impl NodClose<'_, '_> {
             .clear()?;
         if self.nod.group_nod_count.read(&group)? == 0 {
             // Nothing left to burn. The close events have fired, so the group leaves
-            // the close queue without a cleanup entry.
+            // the close queue without a forfeit entry.
             self.nod.remove_called(group)?;
             let settled = self
                 .nod
@@ -184,7 +184,7 @@ impl NodClose<'_, '_> {
             }
         } else {
             self.nod.group_is_closed.write(&group, true)?;
-            self.nod.hand_to_cleanup(group)?;
+            self.nod.hand_to_forfeit(group)?;
         }
         Ok(())
     }

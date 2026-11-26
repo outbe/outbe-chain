@@ -506,7 +506,7 @@ fn sub_series_of_one_day_and_reference_share_one_call_group() {
         let (called_at, deadline) = call(&storage, group);
         close_at(&storage, 10, deadline + 86_400, 100);
         assert_eq!(promis_limit(&storage), U256::from(25));
-        crate::cleanup::cleanup(&block_at(&storage, 11, deadline + 86_400)).unwrap();
+        crate::forfeit::forfeit_through(&block_at(&storage, 11, deadline + 86_400)).unwrap();
         assert!(nod_api::get_item(&storage, settled).unwrap().is_some());
         for nod_id in [usd, eur] {
             assert!(nod_api::get_item(&storage, nod_id).unwrap().is_none());
@@ -849,9 +849,9 @@ fn forfeited_nod_loads_go_to_the_promis_limit_once() {
         let at = deadline + 86_400;
         close_at(&storage, 10, at, 100);
         assert_eq!(promis_limit(&storage), U256::from(31));
-        crate::cleanup::cleanup(&block_at(&storage, 11, at)).unwrap();
+        crate::forfeit::forfeit_through(&block_at(&storage, 11, at)).unwrap();
         close_at(&storage, 12, at + 86_400, 100);
-        crate::cleanup::cleanup(&block_at(&storage, 13, at + 86_400)).unwrap();
+        crate::forfeit::forfeit_through(&block_at(&storage, 13, at + 86_400)).unwrap();
         assert_eq!(promis_limit(&storage), U256::from(31));
         for nod_id in forfeited {
             assert!(nod_api::get_item(&storage, nod_id).unwrap().is_none());

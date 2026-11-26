@@ -4,7 +4,7 @@ use outbe_primitives::block::{BlockRuntimeContext, ProtocolModule};
 use outbe_primitives::error::Result;
 
 /// Deletes the unsettled gems of the forfeited groups.
-pub use crate::cleanup::cleanup;
+pub use crate::forfeit::forfeit_through;
 
 /// Deletes the positions of the expired days.
 pub use crate::position_expiry::delete_expired_positions;
@@ -26,7 +26,7 @@ impl ProtocolModule for GemCleanupModule {
     const NAME: &'static str = "gem_cleanup";
 
     fn end_block(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
-        crate::cleanup::cleanup(ctx)?;
+        crate::forfeit::forfeit_through(ctx)?;
         crate::position_expiry::delete_expired_positions(ctx)?;
         Ok(())
     }

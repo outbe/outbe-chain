@@ -1,9 +1,9 @@
-//! Cleanup sweep: deletes the unsettled Nods of the forfeited groups. It moves no value:
+//! Forfeit pass: deletes the unsettled Nods of the closed groups. It moves no value:
 //! the forfeit already returned their load.
 
 use alloy_primitives::{B256, U256};
 use outbe_core_common::deadline_queue::{self, DeadlineHandler, Due};
-use outbe_nod::state::CleanupQueue;
+use outbe_nod::state::ForfeitQueue;
 use outbe_nod::{api, schema::NodContract};
 use outbe_primitives::{
     block::BlockRuntimeContext,
@@ -14,25 +14,25 @@ use outbe_primitives::{
 use crate::errors::NodFactoryError;
 
 /// Deletes the unsettled Nods of the forfeited groups. Returns the Nods deleted.
-pub fn cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
+pub fn forfeit_through(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = NodContract::new(ctx.storage.clone());
-    let mut cleanup = NodCleanup::new(ctx);
+    let mut cleanup = NodForfeit::new(ctx);
     deadline_queue::run_with_saved_budget(
-        &CleanupQueue(&queue),
+        &ForfeitQueue(&queue),
         ctx,
-        &queue.cleanup_budget,
+        &queue.forfeit_budget,
         &mut cleanup,
     )?;
     Ok(cleanup.deleted)
 }
 
-struct NodCleanup<'a, 's> {
+struct NodForfeit<'a, 's> {
     storage: &'a StorageHandle<'s>,
     nod: NodContract<'s>,
     deleted: u32,
 }
 
-impl<'a, 's> NodCleanup<'a, 's> {
+impl<'a, 's> NodForfeit<'a, 's> {
     fn new(ctx: &'a BlockRuntimeContext<'s>) -> Self {
         Self {
             storage: &ctx.storage,
@@ -43,7 +43,7 @@ impl<'a, 's> NodCleanup<'a, 's> {
 }
 
 /// A forfeited group's members are its unsettled Nods.
-impl DeadlineHandler<B256> for NodCleanup<'_, '_> {
+impl DeadlineHandler<B256> for NodForfeit<'_, '_> {
     type Member = U256;
 
     fn due(&mut self, group: B256) -> Result<Due> {
@@ -69,22 +69,22 @@ impl DeadlineHandler<B256> for NodCleanup<'_, '_> {
 
     fn handle_member(&mut self, group_key: B256, nod_id: U256) -> Result<()> {
         if nod_id.is_zero() {
-            return Err(NodFactoryError::EmptyGroupMemberSlotDuringCleanup { group_key }.into());
+            return Err(NodFactoryError::EmptyGroupMemberSlotDuringForfeit { group_key }.into());
         }
         let item = api::load_item(self.storage, nod_id)?
-            .ok_or(NodFactoryError::MissingGroupMemberRecordDuringCleanup { group_key, nod_id })?;
+            .ok_or(NodFactoryError::MissingGroupMemberRecordDuringForfeit { group_key, nod_id })?;
         if item.body().is_settled || item.body().group_key != group_key {
             return Err(NodFactoryError::IneligibleGroupMember { group_key, nod_id }.into());
         }
         let group = api::load_group(self.storage, group_key)?
-            .ok_or(NodFactoryError::MissingGroupRecordDuringCleanup { group_key })?;
+            .ok_or(NodFactoryError::MissingGroupRecordDuringForfeit { group_key })?;
         api::remove_nod(self.storage, item, group)?;
         self.deleted = self.deleted.saturating_add(1);
         Ok(())
     }
 
     fn deferred(&mut self, group: B256, retry_at: u64) -> Result<()> {
-        tracing::warn!(target: "outbe::nodfactory", %group, retry_at, "cleanup sweep: group deferred");
+        tracing::warn!(target: "outbe::nodfactory", %group, retry_at, "forfeit pass: group deferred");
         Ok(())
     }
 }

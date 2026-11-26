@@ -23,7 +23,7 @@ pub use schema::{
     CallTerms, GemAddParams, GemContract, GemGroupState, GemItemState, GemState, GemView,
     GroupSubSeriesSummary,
 };
-pub use state::{CallBins, CleanupQueue, CloseQueue};
+pub use state::{CallBins, CloseQueue, ForfeitQueue};
 
 #[cfg(test)]
 mod tests;

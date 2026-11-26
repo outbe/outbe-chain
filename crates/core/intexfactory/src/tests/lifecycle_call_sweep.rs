@@ -404,7 +404,7 @@ fn a_group_wider_than_the_write_budget_expires_in_one_step() {
         assert!(!expiring(&s, members[0]));
         assert_eq!(unallocated(&s), U256::from(width) * U256::from(LOAD));
         assert!(IntexContract::new(s.clone())
-            .first_cleanup_day()
+            .first_forfeit_day()
             .unwrap()
             .is_some());
     });

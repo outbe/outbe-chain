@@ -6,7 +6,7 @@ use outbe_primitives::{
 };
 
 /// Deletes the spent series of the expired groups.
-pub use crate::cleanup::cleanup;
+pub use crate::forfeit::forfeit_through;
 
 /// Protocol module for the end-block Intex factory step.
 pub struct IntexFactoryModule;
@@ -17,7 +17,7 @@ impl ProtocolModule for IntexFactoryModule {
     fn end_block(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
         crate::called::process_call_pass(ctx)?;
         crate::notify::send_call_notices(ctx)?;
-        crate::cleanup::cleanup(ctx)?;
+        crate::forfeit::forfeit_through(ctx)?;
         Ok(())
     }
 }

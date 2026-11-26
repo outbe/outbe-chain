@@ -57,7 +57,7 @@ mod called {
         let intex = IntexContract::new(ctx.storage.clone());
         loop {
             let mut height = ctx.block.block_number;
-            for packed in [intex.daily_budget.read()?, intex.cleanup_budget.read()?] {
+            for packed in [intex.daily_budget.read()?, intex.forfeit_budget.read()?] {
                 if let Some(previous) =
                     outbe_system_common::pass_budget::BlockAllowance::unpack(packed)?
                 {
