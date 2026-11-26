@@ -1,5 +1,5 @@
 //! Forfeit pass: deletes the unsettled Nods of the closed groups. It moves no value:
-//! the forfeit already returned their load.
+//! the close already returned their load.
 
 use alloy_primitives::{B256, U256};
 use outbe_core_common::deadline_queue::{self, DeadlineHandler, Due};
@@ -16,14 +16,14 @@ use crate::errors::NodFactoryError;
 /// Deletes the unsettled Nods of the closed groups. Returns the Nods deleted.
 pub fn forfeit_through(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = NodContract::new(ctx.storage.clone());
-    let mut cleanup = NodForfeit::new(ctx);
+    let mut forfeit = NodForfeit::new(ctx);
     deadline_queue::run_with_saved_budget(
         &ForfeitQueue(&queue),
         ctx,
         &queue.forfeit_budget,
-        &mut cleanup,
+        &mut forfeit,
     )?;
-    Ok(cleanup.deleted)
+    Ok(forfeit.deleted)
 }
 
 struct NodForfeit<'a, 's> {

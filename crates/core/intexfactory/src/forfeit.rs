@@ -1,23 +1,23 @@
-//! Forfeit pass: deletes the spent series of the expired groups. It moves no value:
-//! the expiry already returned what the groups forfeited.
+//! Forfeit pass: deletes the spent series of the closed groups. It moves no value:
+//! the close already returned what the groups forfeited.
 
 use alloy_primitives::B256;
 use outbe_core_common::deadline_queue::{self, DeadlineHandler, Due};
 use outbe_intex::{ForfeitQueue, IntexContract, SeriesId};
 use outbe_primitives::{block::BlockRuntimeContext, error::Result, storage::StorageHandle};
 
-/// Walks the expired groups and deletes each series nothing is left in. Returns the
+/// Walks the closed groups and deletes each series nothing is left in. Returns the
 /// series deleted.
 pub fn forfeit_through(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = IntexContract::new(ctx.storage.clone());
-    let mut cleanup = IntexForfeit::new(ctx);
+    let mut forfeit = IntexForfeit::new(ctx);
     deadline_queue::run_with_saved_budget(
         &ForfeitQueue(&queue),
         ctx,
         &queue.forfeit_budget,
-        &mut cleanup,
+        &mut forfeit,
     )?;
-    Ok(cleanup.deleted)
+    Ok(forfeit.deleted)
 }
 
 struct IntexForfeit<'a, 'storage> {

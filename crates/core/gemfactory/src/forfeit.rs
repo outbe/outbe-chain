@@ -1,5 +1,5 @@
 //! Forfeit pass: deletes the unsettled gems of the closed groups. It moves no value:
-//! the expiry already returned their load.
+//! the close already returned their load.
 
 use alloy_primitives::{B256, U256};
 use outbe_core_common::deadline_queue::{self, DeadlineHandler, Due};
@@ -16,14 +16,14 @@ use crate::errors::GemFactoryError;
 /// Deletes the unsettled gems of the closed groups. Returns the gems deleted.
 pub fn forfeit_through(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = GemContract::new(ctx.storage.clone());
-    let mut cleanup = GemForfeit::new(ctx);
+    let mut forfeit = GemForfeit::new(ctx);
     deadline_queue::run_with_saved_budget(
         &ForfeitQueue(&queue),
         ctx,
         &queue.forfeit_budget,
-        &mut cleanup,
+        &mut forfeit,
     )?;
-    Ok(cleanup.deleted)
+    Ok(forfeit.deleted)
 }
 
 struct GemForfeit<'a, 's> {
