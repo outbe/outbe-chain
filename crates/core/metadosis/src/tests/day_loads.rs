@@ -19,7 +19,7 @@ fn loads_of(nominals: &[u64]) -> u64 {
 }
 
 /// Adds one Nod of nominal `nominal` to the day sums of [`WWD`], as its offer does.
-fn record_worldwide_day_nod(storage: &StorageHandle<'_>, owner: Address, nominal: u64) {
+fn record_worldwide_day_nod(storage: &StorageHandle<'_>, owner: Address, nominal: U256) {
     use outbe_nod::offers::{
         decode_worldwide_day_sum, encode_worldwide_day_sum, worldwide_day_load_scope,
         worldwide_day_nominal_scope,
@@ -36,8 +36,8 @@ fn record_worldwide_day_nod(storage: &StorageHandle<'_>, owner: Address, nominal
     let nod = outbe_nod::nod_encryption::encrypt_nod(
         &outbe_nod::test_support::state_key(),
         terms,
-        U256::from(load_of(nominal)),
-        U256::from(nominal),
+        outbe_nod::offer::issue::nod_load_of(nominal),
+        nominal,
     )
     .unwrap();
     let totals = outbe_worldwideday::worldwide_day_totals(storage.clone(), WWD).unwrap();
@@ -61,6 +61,14 @@ fn record_worldwide_day_nod(storage: &StorageHandle<'_>, owner: Address, nominal
 /// A pending emission day of limit `limit` whose sealed Worldwide Day issued one Nod of
 /// each of `nominals`.
 fn fixture(limit: u64, nominals: &[u64]) -> HashMapStorageProvider {
+    let nominals: Vec<_> = nominals
+        .iter()
+        .map(|&nominal| U256::from(nominal))
+        .collect();
+    fixture_of(u128::from(limit), &nominals)
+}
+
+fn fixture_of(limit: u128, nominals: &[U256]) -> HashMapStorageProvider {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     provider.set_block_number(10);
     provider.set_timestamp(U256::from(CLOCK));
@@ -91,7 +99,7 @@ fn fixture(limit: u64, nominals: &[u64]) -> HashMapStorageProvider {
                         DAY,
                         WWD,
                         50,
-                        u128::from(limit),
+                        limit,
                         metadosis_state::PENDING,
                     );
                     ed.state = outbe_emission::schema::emission_day_state::PROCESSING;
@@ -332,6 +340,43 @@ fn loads_above_the_limit_carry_the_excess() {
         let desis = outbe_desis::schema::DesisContract::new(storage);
         assert_eq!(desis.desis_limit_set.read(&day).unwrap(), 1);
         assert_eq!(desis.has_desis_limit.read(&day).unwrap(), 0);
+    });
+}
+
+/// A Desis Limit above the auction domain cancels the auction and goes back to the Promis Limit
+/// once, and Metadosis still ends Completed.
+#[test]
+fn a_desis_limit_above_the_auction_domain_completes_the_metadosis() {
+    let day = outbe_system_common::time::EmissionDate::new(DAY);
+    let limit = U256::from(u128::MAX);
+    let nominal = limit * U256::from(2);
+    let loads = outbe_nod::offer::issue::nod_load_of(nominal);
+    let mut provider = fixture_of(u128::MAX, &[nominal]);
+    StorageHandle::enter(&mut provider, |storage| {
+        outbe_desis::api::schedule_auction(storage.clone(), day).unwrap();
+        outbe_promislimit::PromisLimitContract::new(storage)
+            .add(outbe_promislimit::LimitSource::Nod, limit)
+            .unwrap();
+    });
+    let before = promis_limit(&mut provider);
+
+    run(&mut provider).unwrap();
+
+    assert!(failed(&provider).is_empty());
+    assert_eq!(completed(&provider).len(), 1);
+    let record = record(&mut provider);
+    assert_eq!(record.metadosis_state, metadosis_state::COMPLETED);
+    assert_eq!(U256::from(record.nods), loads);
+    assert_eq!(record.desis_limit, 0);
+    assert_eq!(promis_limit(&mut provider), before + limit - loads);
+    StorageHandle::enter(&mut provider, |storage| {
+        assert_eq!(
+            outbe_desis::schema::DesisContract::new(storage)
+                .cancel_reason
+                .read(&day)
+                .unwrap(),
+            outbe_desis::constants::CANCELED_LIMIT_OVERFLOW
+        );
     });
 }
 
