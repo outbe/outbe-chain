@@ -603,6 +603,15 @@ impl HostExec for FakeHostExec {
     fn capture_raw(&self, _ssh: &Ssh, _label: &str, command: &str) -> Result<String> {
         let mut g = self.state.lock().unwrap();
 
+        if command.contains(":9003/status") {
+            return Ok(json!({
+                "healthy": true,
+                "controller": "waiting_for_controller",
+                "active": false,
+            })
+            .to_string());
+        }
+
         if command.contains(" version --json") {
             let bin = extract_pinned_bin_name(command).unwrap_or_default();
             g.version_bins_queried.push(bin.clone());
@@ -1938,6 +1947,9 @@ fn c2_readiness_requires_growth_common_vrf_and_respects_no_tee() {
             has_threshold_shares: Some(true),
             vrf_material_version: Some(vrf),
             tee_ready: if no_tee { None } else { Some(tee_ok) },
+            hyperlane_healthy: Some(true),
+            hyperlane_controller: Some("waiting_for_controller".to_owned()),
+            hyperlane_active: Some(false),
             consensus: Some(consensus),
             boot_warning: None,
             error: None,
@@ -2145,6 +2157,14 @@ fn host_check_port_specs_include_p2p_and_radicle_1to1_ports() {
             "31304/udp",
             "8777/tcp",
         ]
+    );
+    assert_eq!(
+        ctx.hyperlane_port_specs(&members[0]).unwrap(),
+        vec!["9000/tcp"]
+    );
+    assert_eq!(
+        ctx.hyperlane_port_specs(&members[1]).unwrap(),
+        vec!["9000:9001/tcp"]
     );
 }
 
@@ -2980,7 +3000,7 @@ async fn s4_add_validator_and_add_full_node_full_lifecycle_and_exit2_gate() {
         assert!(g
             .disk_prepare_roles
             .contains(&"joining-validator".to_owned()));
-        let check_cmd = g.host_check_commands.last().unwrap();
+        let check_cmd = g.host_check_commands[..g.host_check_commands.len() - 1].join("\n");
         for port in [
             "30305/tcp",
             "30305/udp",
@@ -2993,6 +3013,16 @@ async fn s4_add_validator_and_add_full_node_full_lifecycle_and_exit2_gate() {
                 "joiner host check must verify 1:1 port {port}: {check_cmd}"
             );
         }
+        let hyperlane_check = g.host_check_commands.last().unwrap();
+        assert!(
+            hyperlane_check.contains("--port '9000:9002/tcp'")
+                || hyperlane_check.contains("--port 9000:9002/tcp"),
+            "joiner host check must verify Hyperlane 9002 -> VM:9000: {hyperlane_check}"
+        );
+        assert!(
+            !hyperlane_check.contains("--source"),
+            "Hyperlane host check must accept the firewall's dedicated infra source: {hyperlane_check}"
+        );
         assert!(
             !g.vm_start_calls
                 .iter()
@@ -3015,11 +3045,12 @@ async fn s4_add_validator_and_add_full_node_full_lifecycle_and_exit2_gate() {
         );
         let expected_min_funding = min_stake
             + alloy_primitives::U256::from(outbe_operator_node_role::FEEDER_FUNDING_WEI)
+            + alloy_primitives::U256::from(1_000_000_000_000_000_000_u128)
             + alloy_primitives::U256::from(2_000_000_000_000_000_000_u128);
         assert_eq!(
             d.funded_calls[0],
             (joiner_addr, expected_min_funding),
-            "F7: pre-start funding must cover min_stake + feeder + explicit gas reserve"
+            "F7: pre-start funding must cover min_stake + feeder + Hyperlane + gas reserve"
         );
         assert_eq!(d.staked_symmetric.as_deref(), Some("198.51.100.20:30402"));
         assert!(d.confirm_ready_called);
@@ -3178,7 +3209,15 @@ fn s4_boot_error_warning_vs_live_unhealthy() {
         fn capture(&self, _ssh: &Ssh, _label: &str, _command: &str) -> Result<String> {
             unreachable!()
         }
-        fn capture_raw(&self, _ssh: &Ssh, _label: &str, _command: &str) -> Result<String> {
+        fn capture_raw(&self, _ssh: &Ssh, _label: &str, command: &str) -> Result<String> {
+            if command.contains(":9003/status") {
+                return Ok(json!({
+                    "healthy": true,
+                    "controller": "waiting_for_controller",
+                    "active": false,
+                })
+                .to_string());
+            }
             unreachable!()
         }
         fn capture_stdin(
@@ -4135,6 +4174,9 @@ async fn s7_f2_dkg_guard_time_based_ceremony_window_and_fail_closed() {
             has_threshold_shares: Some(true),
             vrf_material_version: Some(1),
             tee_ready: Some(true),
+            hyperlane_healthy: Some(true),
+            hyperlane_controller: Some("waiting_for_controller".to_owned()),
+            hyperlane_active: Some(false),
             consensus: Some(ConsensusStatus {
                 randomness_status: rs.map(ToOwned::to_owned),
                 ..Default::default()
@@ -4352,6 +4394,9 @@ async fn s7_pre_stop_requires_every_validator_connected_peers_at_least_n_minus_1
         has_threshold_shares: Some(true),
         vrf_material_version: Some(1),
         tee_ready: Some(true),
+        hyperlane_healthy: Some(true),
+        hyperlane_controller: Some("waiting_for_controller".to_owned()),
+        hyperlane_active: Some(false),
         consensus: peers.map(|p| ConsensusStatus {
             connected_peers: p,
             is_validator: true,
@@ -4674,6 +4719,10 @@ async fn s10_status_fails_when_validator_consensus_peers_below_n_minus_1_or_miss
         has_threshold_shares: Some(role != MemberRole::FullNode),
         vrf_material_version: Some(if role == MemberRole::FullNode { 0 } else { 1 }),
         tee_ready: Some(role != MemberRole::FullNode),
+        hyperlane_healthy: (role != MemberRole::FullNode).then_some(true),
+        hyperlane_controller: (role != MemberRole::FullNode)
+            .then(|| "waiting_for_controller".to_owned()),
+        hyperlane_active: (role != MemberRole::FullNode).then_some(false),
         consensus: peers.map(|p| ConsensusStatus {
             connected_peers: p,
             is_validator: role != MemberRole::FullNode,
@@ -4835,6 +4884,9 @@ fn s10_member_node_ready_requires_execution_peers_ge_1_and_consensus_peers_ge_n_
         has_threshold_shares: Some(true),
         vrf_material_version: Some(1),
         tee_ready: Some(true),
+        hyperlane_healthy: Some(true),
+        hyperlane_controller: Some("waiting_for_controller".to_owned()),
+        hyperlane_active: Some(false),
         consensus: Some(ConsensusStatus {
             connected_peers: cons_peers,
             is_validator: true,
@@ -5247,7 +5299,7 @@ async fn certified_rpc_preflight_skips_brand_new_deploy_checks_end_of_start_and_
 }
 
 #[test]
-fn manifest_firewall_mappings_match_host_check_p2p_port_specs() {
+fn manifest_firewall_mappings_match_host_check_port_specs() {
     let mixed: crate::network::config::NetworkConfig = serde_yaml_ng::from_str(
         r#"
 version: 1
@@ -5336,9 +5388,16 @@ genesis:
         let from_manifest: Vec<String> = mappings
             .iter()
             .filter(|e| e.member == member.name)
-            .map(|e| format!("{}/{}", e.public_port, e.proto))
+            .map(|e| {
+                if e.vm_port == e.public_port {
+                    format!("{}/{}", e.public_port, e.proto)
+                } else {
+                    format!("{}:{}/{}", e.vm_port, e.public_port, e.proto)
+                }
+            })
             .collect();
-        let from_host_check = ctx.p2p_port_specs(member).unwrap();
+        let mut from_host_check = ctx.p2p_port_specs(member).unwrap();
+        from_host_check.extend(ctx.hyperlane_port_specs(member).unwrap());
         assert_eq!(
             from_manifest, from_host_check,
             "manifest firewall_mappings must match host check port specs for {}",

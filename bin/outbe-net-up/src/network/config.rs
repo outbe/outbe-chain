@@ -166,9 +166,10 @@ impl FounderPublishedPorts {
         ]
     }
 
-    /// Return the 5 P2P/Radicle 1:1 DNAT port tuples `(public_port, vm_port, proto, purpose)`
-    /// verified by `outbe-up host check` and recorded in `network-manifest.json`.
-    pub fn dnat_ports(self) -> [(u16, u16, &'static str, &'static str); 5] {
+    /// Return the P2P/Radicle 1:1 mappings and the fixed guest Hyperlane mapping as
+    /// `(public_port, vm_port, proto, purpose)` tuples verified by `outbe-up host check` and
+    /// recorded in `network-manifest.json`.
+    pub fn dnat_ports(self) -> [(u16, u16, &'static str, &'static str); 6] {
         [
             (self.reth_p2p_tcp, self.reth_p2p_tcp, "tcp", "reth-p2p"),
             (self.reth_p2p_udp, self.reth_p2p_udp, "udp", "reth-p2p"),
@@ -185,12 +186,12 @@ impl FounderPublishedPorts {
                 "reth-discovery",
             ),
             (self.radicle_tcp, self.radicle_tcp, "tcp", "radicle"),
+            (self.hyperlane_tcp, BASE_HYPERLANE_PORT, "tcp", "hyperlane"),
         ]
     }
 
     /// Return `outbe-up host check|publish --port` specs for 1:1 P2P/Radicle DNAT
     /// (`host_port == guest_port == base + offset`) plus Hyperlane (`9000 -> 9000 + offset`).
-    #[allow(dead_code)]
     pub fn publish_port_specs(self) -> Vec<String> {
         let hyperlane = if self.hyperlane_tcp == BASE_HYPERLANE_PORT {
             format!("{BASE_HYPERLANE_PORT}/tcp")

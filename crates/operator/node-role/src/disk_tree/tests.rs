@@ -207,6 +207,12 @@ fn joining_validator_stages_keys_marker_configs_and_strips_bundle_binaries() {
     assert!(fs::read_to_string(tree.join("validator.env"))
         .unwrap()
         .contains("OUTBE_NODE_ROLE=\"joining-validator\"\n"));
+    assert!(fs::read_to_string(tree.join("validator.env"))
+        .unwrap()
+        .contains("OUTBE_HYPERLANE_FUNDING_WEI=\"1000000000000000000\"\n"));
+    assert!(fs::read_to_string(tree.join("hyperlane-public.toml"))
+        .unwrap()
+        .contains("bind_address = \"10.77.0.20:9003\""));
     assert!(!tree.join(crate::NODE_ROLE_FILE).exists());
     // Bundle executables MUST NOT be copied onto the noexec VM data disk.
     assert!(!tree.join("outbe-keygen").exists());

@@ -1020,7 +1020,7 @@ genesis:
 
 #[test]
 fn firewall_mappings_cover_published_vm_founders_and_omit_single_host_local_devnet() {
-    // 1. Multi-host 2+2 VM testnet -> 4 founders x 5 DNAT ports = 20 entries.
+    // 1. Multi-host 2+2 VM testnet -> 4 founders x 6 DNAT ports = 24 entries.
     let mixed: NetworkConfig = serde_yaml_ng::from_str(
         r#"
 version: 1
@@ -1074,7 +1074,7 @@ genesis:
     .unwrap();
     mixed.validate().unwrap();
     let mappings = build_vm_firewall_mappings(&mixed).unwrap();
-    assert_eq!(mappings.len(), 20);
+    assert_eq!(mappings.len(), 24);
     assert_eq!(
         mappings[0],
         FirewallMappingEntry {
@@ -1099,11 +1099,20 @@ genesis:
             && m.vm_port == 30_401
             && m.purpose == "consensus-p2p"
     }));
+    assert!(mappings.iter().any(|m| {
+        m.member == "validator-1"
+            && m.public_port == 9_001
+            && m.proto == "tcp"
+            && m.vm_ip == Ipv4Addr::new(10, 77, 0, 11)
+            && m.vm_port == 9_000
+            && m.purpose == "hyperlane"
+    }));
     let table = render_firewall_mappings_table(&mappings);
     assert!(table.contains("MEMBER"), "{table}");
     assert!(table.contains("PUBLIC_PORT"), "{table}");
     assert!(table.contains("reth-discovery"), "{table}");
     assert!(table.contains("radicle"), "{table}");
+    assert!(table.contains("hyperlane"), "{table}");
 
     // 2. Single-host local devnet (advertise_ip == vm_ip, port_offset == 0) -> empty mappings.
     let local_dev: NetworkConfig = serde_yaml_ng::from_str(&format!(

@@ -53,6 +53,7 @@ const ENV_KEYS: &[&str] = &[
     "OUTBE_BOOTNODES",
     "OUTBE_CONSENSUS_PEERS",
     "OUTBE_CONSENSUS_EXTRA_ARGS",
+    "OUTBE_HYPERLANE_FUNDING_WEI",
     "OUTBE_CHAIN_ID",
 ];
 
@@ -213,7 +214,10 @@ fn env_key_required(name: &str, require_vm_static_net: bool) -> bool {
 }
 
 fn is_vm_only_env_key(name: &str) -> bool {
-    name == "OUTBE_NODE_ROLE" || name == "OUTBE_RPC_PORT" || VM_STATIC_NET_KEYS.contains(&name)
+    name == "OUTBE_NODE_ROLE"
+        || name == "OUTBE_RPC_PORT"
+        || name == "OUTBE_HYPERLANE_FUNDING_WEI"
+        || VM_STATIC_NET_KEYS.contains(&name)
 }
 
 pub(crate) fn validate_environment(values: &BTreeMap<String, String>) -> Result<()> {

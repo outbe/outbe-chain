@@ -53,6 +53,7 @@ fn valid_env_for_role(role: &str) -> String {
             "OUTBE_BOOTNODES=\"enode://abcd@10.0.0.1:30303\"\n",
             "OUTBE_CONSENSUS_PEERS=\"{peer_key}@10.0.0.1:30400\"\n",
             "OUTBE_CONSENSUS_EXTRA_ARGS=\"--consensus.use-local-defaults\"\n",
+            "OUTBE_HYPERLANE_FUNDING_WEI=\"1000000000000000000\"\n",
             "OUTBE_CHAIN_ID=\"707\"\n",
         ),
         role = role,
@@ -616,6 +617,7 @@ fn vm_role_services_match_exact_per_role_units() {
             "outbe-radicle.service",
             "outbe-validator.service",
             "outbe-feeder.service",
+            "outbe-hyperlane-validator.service",
         ]
     );
     assert_eq!(
@@ -624,6 +626,7 @@ fn vm_role_services_match_exact_per_role_units() {
             "outbe-radicle.service",
             "outbe-joining-validator.service",
             "outbe-feeder.service",
+            "outbe-hyperlane-validator.service",
         ]
     );
     assert_eq!(

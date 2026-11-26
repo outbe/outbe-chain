@@ -439,6 +439,14 @@ impl OperatorConfig {
                 self.network.ports.radicle,
             )
         };
+        let hyperlane_line = vm_role
+            .map(|_| {
+                format!(
+                    "OUTBE_HYPERLANE_FUNDING_WEI=\"{}\"\n",
+                    self.hyperlane.signer_funding_wei
+                )
+            })
+            .unwrap_or_default();
         let env = format!(
             concat!(
                 "{}",
@@ -450,6 +458,7 @@ impl OperatorConfig {
                 "OUTBE_BOOTNODES=\"{}\"\n",
                 "OUTBE_CONSENSUS_PEERS=\"{}\"\n",
                 "OUTBE_CONSENSUS_EXTRA_ARGS=\"{}\"\n",
+                "{}",
                 "OUTBE_CHAIN_ID=\"{}\"\n"
             ),
             role_line,
@@ -461,6 +470,7 @@ impl OperatorConfig {
             self.network.bootnodes.join(","),
             self.network.consensus_peers.join(","),
             extra,
+            hyperlane_line,
             self.network.chain_id,
         );
         write_private(&root.join("validator.env"), env.as_bytes())?;
@@ -468,9 +478,12 @@ impl OperatorConfig {
             &root.join("feeder-public.toml"),
             self.feeder.public_toml.as_bytes(),
         )?;
+        let health_bind_ip = vm_role.map_or(std::net::Ipv4Addr::LOCALHOST, |_| {
+            self.network.effective_rpc_bind_ip()
+        });
         write_private(
             &root.join("hyperlane-public.toml"),
-            self.hyperlane.public_toml()?.as_bytes(),
+            self.hyperlane.public_toml(health_bind_ip)?.as_bytes(),
         )
     }
 
@@ -542,16 +555,16 @@ impl OperatorConfig {
 }
 
 impl HyperlaneConfig {
-    pub(crate) fn public_toml(&self) -> Result<String> {
+    pub(crate) fn public_toml(&self, health_bind_ip: std::net::Ipv4Addr) -> Result<String> {
         #[derive(Serialize)]
         struct HyperlaneSection {
             poll_interval_secs: u64,
             gasless: bool,
         }
         #[derive(Serialize)]
-        struct HealthSection<'a> {
+        struct HealthSection {
             enabled: bool,
-            bind_address: &'a str,
+            bind_address: String,
         }
         #[derive(Serialize)]
         struct StorageSection<'a> {
@@ -565,7 +578,7 @@ impl HyperlaneConfig {
         #[derive(Serialize)]
         struct PublicConfig<'a> {
             hyperlane: HyperlaneSection,
-            health: HealthSection<'a>,
+            health: HealthSection,
             storage: StorageSection<'a>,
             server: ServerSection<'a>,
             origin: &'a [HyperlaneOrigin],
@@ -577,7 +590,7 @@ impl HyperlaneConfig {
             },
             health: HealthSection {
                 enabled: true,
-                bind_address: "127.0.0.1:9003",
+                bind_address: format!("{health_bind_ip}:9003"),
             },
             storage: StorageSection {
                 db_path: "/opt/outbe-chain/state/hyperlane/db",
@@ -661,7 +674,8 @@ impl HyperlaneConfig {
                 );
             }
         }
-        self.public_toml()?.parse::<toml::Table>()?;
+        self.public_toml(std::net::Ipv4Addr::LOCALHOST)?
+            .parse::<toml::Table>()?;
         Ok(())
     }
 }
@@ -732,6 +746,23 @@ pub fn validate_hyperlane_public_toml(
 
     let parsed: PublicToml =
         toml::from_str(raw).wrap_err("invalid hyperlane-public.toml structure")?;
+    let health_bind = parsed
+        .health
+        .bind_address
+        .parse::<std::net::SocketAddrV4>()
+        .wrap_err("hyperlane health.bind_address must be an IPv4 socket address")?;
+    ensure!(
+        parsed.health.enabled,
+        "hyperlane health endpoint must be enabled"
+    );
+    ensure!(
+        health_bind.port() == 9003,
+        "hyperlane health.bind_address must use port 9003"
+    );
+    ensure!(
+        health_bind.ip().is_loopback() || health_bind.ip().is_private(),
+        "hyperlane health.bind_address must use a loopback or private IPv4 address"
+    );
     let cfg = HyperlaneConfig {
         public_url: parsed.server.public_url,
         poll_interval_secs: parsed.hyperlane.poll_interval_secs,

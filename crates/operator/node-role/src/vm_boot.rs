@@ -21,19 +21,19 @@ const DEFAULT_VM_BIN_DIR: &str = "/usr/local/bin";
 
 /// Exact systemd service units started by `vm-boot` for each VM node role.
 ///
-/// `outbe-hyperlane-validator.service` is intentionally excluded for all VM roles until S9
-/// (Hyperlane delegation/funding/registration for VM networks).
 pub fn vm_role_services(role: NodeRole) -> &'static [&'static str] {
     match role {
         NodeRole::Founder => &[
             "outbe-radicle.service",
             "outbe-validator.service",
             "outbe-feeder.service",
+            "outbe-hyperlane-validator.service",
         ],
         NodeRole::JoiningValidator => &[
             "outbe-radicle.service",
             "outbe-joining-validator.service",
             "outbe-feeder.service",
+            "outbe-hyperlane-validator.service",
         ],
         NodeRole::FullNode => &["outbe-full-node.service"],
     }
