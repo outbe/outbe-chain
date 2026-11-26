@@ -353,3 +353,161 @@ fn confirm_validator_ready_enforces_default_min_stake_when_slot_zero_is_unconfig
         );
     });
 }
+
+#[test]
+fn retired_lifecycle_retains_secondary_admission_until_inactive_cleanup() {
+    // Drive Active -> Exiting -> Unbonding -> Inactive -> Absent through runtime transitions.
+    // Collect secondary admission for both retired states before the final assertion.
+    let validator = address!("0x8888888888888888888888888888888888888888");
+    let unregistered = address!("0x9999999999999999999999999999999999999999");
+    let cooldown = 100u32;
+    let deactivate_height = 10u64;
+    let cleanup_height = deactivate_height + u64::from(cooldown);
+    let mut storage = configured_storage(128);
+
+    let contains_address = |records: Vec<crate::runtime::ValidatorRecord>, target: Address| {
+        records
+            .into_iter()
+            .any(|record| record.validator_address == target)
+    };
+
+    let (unbonding_admitted, inactive_admitted) =
+        at_height(&mut storage, deactivate_height, |vs| {
+            vs.config_reregistration_cooldown.write(cooldown).unwrap();
+            register_validators(vs, &[(validator, 0x88)]).unwrap();
+            activate_for_test(vs, validator);
+
+            assert!(contains_address(
+                vs.get_active_consensus_set().unwrap(),
+                validator,
+            ));
+            assert!(contains_address(
+                vs.get_reshare_target_set().unwrap(),
+                validator,
+            ));
+            assert!(!contains_address(
+                vs.get_admitted_non_consensus_validators().unwrap(),
+                validator,
+            ));
+            assert!(vs.is_consensus_participant(validator).unwrap());
+            assert!(vs.get_validator(validator).unwrap().unwrap().has_bls_share);
+
+            vs.deactivate_validator(OWNER, validator).unwrap();
+            let exiting_record = vs.get_validator(validator).unwrap().unwrap();
+            assert_eq!(exiting_record.status, status::EXITING);
+            assert!(exiting_record.has_bls_share);
+            assert_eq!(exiting_record.deactivated_at_height, deactivate_height);
+            assert!(vs.is_consensus_participant(validator).unwrap());
+            assert!(contains_address(
+                vs.get_active_consensus_set().unwrap(),
+                validator,
+            ));
+            assert!(!contains_address(
+                vs.get_reshare_target_set().unwrap(),
+                validator,
+            ));
+            assert!(!contains_address(
+                vs.get_admitted_non_consensus_validators().unwrap(),
+                validator,
+            ));
+
+            vs.epoch_start_block.write(deactivate_height).unwrap();
+            vs.activate_reshared_set(&[], B256::ZERO).unwrap();
+            let unbonding_record = vs.get_validator(validator).unwrap().unwrap();
+            assert_eq!(unbonding_record.status, status::UNBONDING);
+            assert!(!unbonding_record.has_bls_share);
+            assert!(!vs.is_consensus_participant(validator).unwrap());
+            assert!(!contains_address(
+                vs.get_active_consensus_set().unwrap(),
+                validator,
+            ));
+            assert!(!contains_address(
+                vs.get_reshare_target_set().unwrap(),
+                validator,
+            ));
+            let unbonding_admitted = contains_address(
+                vs.get_admitted_non_consensus_validators().unwrap(),
+                validator,
+            );
+
+            vs.complete_unbonding(validator).unwrap();
+            let inactive_record = vs.get_validator(validator).unwrap().unwrap();
+            assert_eq!(inactive_record.status, status::INACTIVE);
+            assert!(!inactive_record.has_bls_share);
+            assert!(!vs.is_consensus_participant(validator).unwrap());
+            assert!(!contains_address(
+                vs.get_active_consensus_set().unwrap(),
+                validator,
+            ));
+            assert!(!contains_address(
+                vs.get_reshare_target_set().unwrap(),
+                validator,
+            ));
+            let inactive_admitted = contains_address(
+                vs.get_admitted_non_consensus_validators().unwrap(),
+                validator,
+            );
+
+            (unbonding_admitted, inactive_admitted)
+        });
+
+    // Check that early cleanup before the cooldown height removes zero records.
+    let inactive_admitted_before_cleanup = at_height(&mut storage, cleanup_height - 1, |vs| {
+        assert_eq!(vs.cleanup_inactive_validators(16).unwrap(), 0);
+        let record = vs.get_validator(validator).unwrap().unwrap();
+        assert_eq!(record.status, status::INACTIVE);
+        assert!(!record.has_bls_share);
+        assert!(!vs.is_consensus_participant(validator).unwrap());
+        assert!(!contains_address(
+            vs.get_active_consensus_set().unwrap(),
+            validator,
+        ));
+        assert!(!contains_address(
+            vs.get_reshare_target_set().unwrap(),
+            validator,
+        ));
+        contains_address(
+            vs.get_admitted_non_consensus_validators().unwrap(),
+            validator,
+        )
+    });
+
+    // Check that eligible cleanup removes the record and clears all query views.
+    at_height(&mut storage, cleanup_height, |vs| {
+        assert_eq!(vs.cleanup_inactive_validators(16).unwrap(), 1);
+        assert!(vs.get_validator(validator).unwrap().is_none());
+        assert!(vs.get_validator(unregistered).unwrap().is_none());
+
+        for addr in [validator, unregistered] {
+            assert!(!vs.is_consensus_participant(addr).unwrap());
+            assert!(!contains_address(vs.get_all_validators().unwrap(), addr));
+            assert!(!contains_address(vs.get_active_validators().unwrap(), addr));
+            assert!(!contains_address(
+                vs.get_active_consensus_set().unwrap(),
+                addr,
+            ));
+            assert!(!contains_address(
+                vs.get_reshare_target_set().unwrap(),
+                addr,
+            ));
+            assert!(!contains_address(
+                vs.get_pending_validators().unwrap(),
+                addr,
+            ));
+            assert!(!contains_address(
+                vs.get_admitted_non_consensus_validators().unwrap(),
+                addr,
+            ));
+        }
+    });
+
+    assert_eq!(
+        (
+            unbonding_admitted,
+            inactive_admitted,
+            inactive_admitted_before_cleanup,
+        ),
+        (true, true, true),
+        "Unbonding and Inactive validators must remain in secondary admission",
+    );
+}
