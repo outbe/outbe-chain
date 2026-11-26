@@ -56,6 +56,7 @@ contract IntexNFT1155Router is
         bool exists;
         uint256 intexId;
         uint256 units;
+        address owner;
     }
 
     /// @custom:storage-location erc7201:outbe.intex.IntexNFT1155Router
@@ -157,13 +158,13 @@ contract IntexNFT1155Router is
         return address(uint160(uint256(recipient)));
     }
 
-    function _buildSingleMsg(SendParam calldata _sendParam) internal pure returns (bytes memory) {
+    function _buildSingleMsg(SendParam calldata _sendParam) internal view returns (bytes memory) {
         // reject a malformed recipient before burning. The receive path rejects it too.
         IntexNFT1155RouterCodec.assertAddress(_sendParam.to);
         if (_sendParam.to == bytes32(0)) revert InvalidReceiver();
         return IntexNFT1155RouterCodec.encodeSingle(
             IntexNFT1155RouterCodec.SinglePayload({
-                to: _sendParam.to, intexId: _sendParam.intexId, units: _sendParam.units
+                owner: msg.sender, to: _sendParam.to, intexId: _sendParam.intexId, units: _sendParam.units
             })
         );
     }
@@ -192,7 +193,7 @@ contract IntexNFT1155Router is
         );
     }
 
-    function _buildBatchMsg(BatchSendParam calldata _sendParam) internal pure returns (bytes memory) {
+    function _buildBatchMsg(BatchSendParam calldata _sendParam) internal view returns (bytes memory) {
         IntexNFT1155RouterCodec.assertAddress(_sendParam.to);
         if (_sendParam.to == bytes32(0)) revert InvalidReceiver();
         if (_sendParam.intexIds.length > MAX_BATCH_SIZE) {
@@ -200,7 +201,7 @@ contract IntexNFT1155Router is
         }
         return IntexNFT1155RouterCodec.encodeBatch(
             IntexNFT1155RouterCodec.BatchPayload({
-                to: _sendParam.to, intexIds: _sendParam.intexIds, units: _sendParam.units
+                owner: msg.sender, to: _sendParam.to, intexIds: _sendParam.intexIds, units: _sendParam.units
             })
         );
     }
@@ -243,13 +244,16 @@ contract IntexNFT1155Router is
         );
     }
 
-    function _buildMultiMsg(MultiRecipientSendParam calldata _sendParam) internal pure returns (bytes memory) {
+    function _buildMultiMsg(MultiRecipientSendParam calldata _sendParam) internal view returns (bytes memory) {
         if (_sendParam.recipients.length > MAX_BATCH_SIZE) {
             revert IntexNFT1155RouterCodec.BatchTooLarge(_sendParam.recipients.length, MAX_BATCH_SIZE);
         }
         return IntexNFT1155RouterCodec.encodeMulti(
             IntexNFT1155RouterCodec.MultiPayload({
-                recipients: _sendParam.recipients, intexIds: _sendParam.intexIds, units: _sendParam.units
+                owner: msg.sender,
+                recipients: _sendParam.recipients,
+                intexIds: _sendParam.intexIds,
+                units: _sendParam.units
             })
         );
     }
@@ -303,7 +307,7 @@ contract IntexNFT1155Router is
         address toAddress = address(uint160(uint256(p.to)));
 
         // A failed mint is recorded with IntexCrosschainReceiveFailed, and its retry emits the receive.
-        if (_tryCrosschainReceiveOne(srcChainId, receiveId, 0, toAddress, p.intexId, p.units)) {
+        if (_tryCrosschainReceiveOne(srcChainId, receiveId, 0, p.owner, toAddress, p.intexId, p.units)) {
             emit IntexCrosschainReceived(receiveId, srcChainId, toAddress, p.intexId, _units32(p.units));
         }
     }
@@ -316,7 +320,7 @@ contract IntexNFT1155Router is
         address toAddress = address(uint160(uint256(p.to)));
 
         for (uint256 i = 0; i < p.intexIds.length; i++) {
-            _tryCrosschainReceiveOne(srcChainId, receiveId, i, toAddress, p.intexIds[i], p.units[i]);
+            _tryCrosschainReceiveOne(srcChainId, receiveId, i, p.owner, toAddress, p.intexIds[i], p.units[i]);
         }
 
         emit IntexCrosschainBatchReceived(receiveId, srcChainId, toAddress, p.intexIds, _units32(p.units));
@@ -330,7 +334,7 @@ contract IntexNFT1155Router is
             IntexNFT1155RouterCodec.assertAddress(p.recipients[i]);
             if (p.recipients[i] == bytes32(0)) revert InvalidReceiver();
             recipients[i] = address(uint160(uint256(p.recipients[i])));
-            _tryCrosschainReceiveOne(srcChainId, receiveId, i, recipients[i], p.intexIds[i], p.units[i]);
+            _tryCrosschainReceiveOne(srcChainId, receiveId, i, p.owner, recipients[i], p.intexIds[i], p.units[i]);
         }
 
         emit IntexCrosschainMultiReceived(receiveId, srcChainId, recipients, p.intexIds, _units32(p.units));
@@ -342,6 +346,7 @@ contract IntexNFT1155Router is
         uint32 srcChainId,
         bytes32 receiveId,
         uint256 idx,
+        address owner,
         address to,
         uint256 intexId,
         uint256 units
@@ -349,8 +354,9 @@ contract IntexNFT1155Router is
         try this.crosschainReceiveOne(to, intexId, units) {
             minted = true;
         } catch (bytes memory reason) {
-            _bs().failedCrosschainReceives[receiveId][idx] =
-                FailedCrosschainReceive({to: to, srcChainId: srcChainId, exists: true, intexId: intexId, units: units});
+            _bs().failedCrosschainReceives[receiveId][idx] = FailedCrosschainReceive({
+                to: to, srcChainId: srcChainId, exists: true, intexId: intexId, units: units, owner: owner
+            });
             emit IntexCrosschainReceiveFailed(receiveId, srcChainId, idx, to, intexId, _units32(units), reason);
         }
     }
@@ -386,7 +392,7 @@ contract IntexNFT1155Router is
 
         sendId = _sendPaidByCaller(f.srcChainId, _buildSendBackMsg(f), IntexGas.nftMint(1));
         emit IntexCrosschainSentBack(
-            sendId, f.srcChainId, receiveId, idx, bytes32(uint256(uint160(f.to))), f.intexId, _units32(f.units)
+            sendId, f.srcChainId, receiveId, idx, bytes32(uint256(uint160(f.owner))), f.intexId, _units32(f.units)
         );
     }
 
@@ -414,13 +420,15 @@ contract IntexNFT1155Router is
     /// @dev The reverse one-item transfer that returns a stranded item to its owner on the origin chain.
     function _buildSendBackMsg(FailedCrosschainReceive memory f) private pure returns (bytes memory) {
         bytes32[] memory recipients = new bytes32[](1);
-        recipients[0] = bytes32(uint256(uint160(f.to)));
+        recipients[0] = bytes32(uint256(uint160(f.owner)));
         uint256[] memory intexIds = new uint256[](1);
         intexIds[0] = f.intexId;
         uint256[] memory units = new uint256[](1);
         units[0] = f.units;
         return IntexNFT1155RouterCodec.encodeMulti(
-            IntexNFT1155RouterCodec.MultiPayload({recipients: recipients, intexIds: intexIds, units: units})
+            IntexNFT1155RouterCodec.MultiPayload({
+                owner: f.owner, recipients: recipients, intexIds: intexIds, units: units
+            })
         );
     }
 }

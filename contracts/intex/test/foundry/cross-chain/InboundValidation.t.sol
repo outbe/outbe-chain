@@ -22,6 +22,7 @@ import {DeployProxy} from "../helpers/DeployProxy.sol";
 ///      from the loopback bridge as the authenticated peer, so the payload is the only thing under
 ///      test.
 contract InboundValidationTest is CrossChainTest {
+    address internal constant OWNER = address(0x5E4D);
     uint32 internal constant BNB_CHAIN_ID = 1;
     uint32 internal constant OUTBE_CHAIN_ID = 2;
 
@@ -178,7 +179,7 @@ contract InboundValidationTest is CrossChainTest {
         uint256[] memory amounts = new uint256[](over);
         bytes memory packet = IntexNFT1155RouterCodec.encodeBatch(
             IntexNFT1155RouterCodec.BatchPayload({
-                to: bytes32(uint256(uint160(address(0xCAFE)))), intexIds: intexIds, units: amounts
+                owner: OWNER, to: bytes32(uint256(uint160(address(0xCAFE)))), intexIds: intexIds, units: amounts
             })
         );
         vm.expectRevert(
@@ -198,7 +199,9 @@ contract InboundValidationTest is CrossChainTest {
         uint256[] memory amounts = new uint256[](1);
         amounts[0] = 100;
         bytes memory packet = IntexNFT1155RouterCodec.encodeMulti(
-            IntexNFT1155RouterCodec.MultiPayload({recipients: recipients, intexIds: intexIds, units: amounts})
+            IntexNFT1155RouterCodec.MultiPayload({
+                owner: OWNER, recipients: recipients, intexIds: intexIds, units: amounts
+            })
         );
         vm.expectRevert(IIntexNFT1155Router.InvalidReceiver.selector);
         _deliverToBatch(packet);
@@ -211,7 +214,9 @@ contract InboundValidationTest is CrossChainTest {
             IntexNFT1155RouterCodec.BODY_VERSION_V1,
             IntexNFT1155RouterCodec.SEND_BATCH,
             abi.encode(
-                IntexNFT1155RouterCodec.BatchPayload({to: badTo, intexIds: new uint256[](0), units: new uint256[](0)})
+                IntexNFT1155RouterCodec.BatchPayload({
+                    owner: OWNER, to: badTo, intexIds: new uint256[](0), units: new uint256[](0)
+                })
             )
         );
         vm.expectRevert(abi.encodeWithSelector(IntexNFT1155RouterCodec.MalformedAddress.selector, badTo));
@@ -228,7 +233,9 @@ contract InboundValidationTest is CrossChainTest {
         uint256[] memory amounts = new uint256[](1);
         amounts[0] = 100;
         bytes memory packet = IntexNFT1155RouterCodec.encodeMulti(
-            IntexNFT1155RouterCodec.MultiPayload({recipients: recipients, intexIds: intexIds, units: amounts})
+            IntexNFT1155RouterCodec.MultiPayload({
+                owner: OWNER, recipients: recipients, intexIds: intexIds, units: amounts
+            })
         );
         vm.expectRevert(abi.encodeWithSelector(IntexNFT1155RouterCodec.MalformedAddress.selector, badRecipient));
         _deliverToBatch(packet);
@@ -242,7 +249,7 @@ contract InboundValidationTest is CrossChainTest {
             IntexNFT1155RouterCodec.SEND_BATCH,
             abi.encode(
                 IntexNFT1155RouterCodec.BatchPayload({
-                    to: bytes32(0), intexIds: new uint256[](0), units: new uint256[](0)
+                    owner: OWNER, to: bytes32(0), intexIds: new uint256[](0), units: new uint256[](0)
                 })
             )
         );
@@ -258,7 +265,9 @@ contract InboundValidationTest is CrossChainTest {
         uint256[] memory intexIds = new uint256[](over);
         uint256[] memory amounts = new uint256[](over);
         bytes memory packet = IntexNFT1155RouterCodec.encodeMulti(
-            IntexNFT1155RouterCodec.MultiPayload({recipients: recipients, intexIds: intexIds, units: amounts})
+            IntexNFT1155RouterCodec.MultiPayload({
+                owner: OWNER, recipients: recipients, intexIds: intexIds, units: amounts
+            })
         );
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -283,7 +292,9 @@ contract InboundValidationTest is CrossChainTest {
             IntexNFT1155RouterCodec.BODY_VERSION_V1,
             IntexNFT1155RouterCodec.SEND_MULTI,
             abi.encode(
-                IntexNFT1155RouterCodec.MultiPayload({recipients: recipients, intexIds: intexIds, units: amounts})
+                IntexNFT1155RouterCodec.MultiPayload({
+                    owner: OWNER, recipients: recipients, intexIds: intexIds, units: amounts
+                })
             )
         );
         vm.expectRevert(IntexNFT1155RouterCodec.ArrayLengthMismatch.selector);
@@ -305,7 +316,7 @@ contract InboundValidationTest is CrossChainTest {
         amounts[0] = amount_;
         return IntexNFT1155RouterCodec.encodeBatch(
             IntexNFT1155RouterCodec.BatchPayload({
-                to: bytes32(uint256(uint160(to))), intexIds: intexIds, units: amounts
+                owner: OWNER, to: bytes32(uint256(uint160(to))), intexIds: intexIds, units: amounts
             })
         );
     }
