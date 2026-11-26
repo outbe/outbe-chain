@@ -374,12 +374,12 @@ fn cycle_tick_utc_boundary_gas_usage() {
         cycle_tick_receipt.success,
         "CycleTick must succeed, not OOG"
     );
-    let cycle_event = keccak256("CycleTaskExecuted(uint32,uint64,uint64,uint64)");
+    let cycle_event = keccak256("CycleTaskCompleted(uint8)");
     assert!(
         cycle_tick_receipt.logs.iter().any(|log| {
             log.address == CYCLE_ADDRESS && log.data.topics().first() == Some(&cycle_event)
         }),
-        "CycleTaskExecuted must be present in the system-tx receipt logs"
+        "CycleTaskCompleted must be present in the system-tx receipt logs"
     );
     assert_eq!(
         cycle_tick_receipt.cumulative_gas_used, visible_gas,

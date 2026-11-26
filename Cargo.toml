@@ -59,7 +59,7 @@ members = [
     "crates/core/credis",
     "crates/core/credisfactory",
     "crates/core/fidelity",
-    "crates/core/fidelity-math",
+    "crates/core/fidelitymath",
     "crates/core/metadosis",
     "crates/core/promislimit",
     "crates/core/worldwideday",
@@ -151,7 +151,7 @@ default-members = [
     "crates/core/credis",
     "crates/core/credisfactory",
     "crates/core/fidelity",
-    "crates/core/fidelity-math",
+    "crates/core/fidelitymath",
     "crates/core/metadosis",
     "crates/core/promislimit",
     "crates/core/worldwideday",
@@ -270,7 +270,7 @@ outbe-ccaregistry = { path = "crates/core/ccaregistry" }
 outbe-credis = { path = "crates/core/credis" }
 outbe-credisfactory = { path = "crates/core/credisfactory" }
 outbe-fidelity = { path = "crates/core/fidelity" }
-outbe-fidelity-math = { path = "crates/core/fidelity-math" }
+outbe-fidelitymath = { path = "crates/core/fidelitymath" }
 outbe-metadosis = { path = "crates/core/metadosis" }
 outbe-promislimit = { path = "crates/core/promislimit" }
 outbe-worldwideday = { path = "crates/core/worldwideday" }

@@ -1,5 +1,5 @@
 [package]
-name = "outbe-fidelity-math"
+name = "outbe-fidelitymath"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

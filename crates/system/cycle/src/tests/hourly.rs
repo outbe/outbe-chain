@@ -165,10 +165,7 @@ fn step_error_takes_its_fallback() {
     run_hour(&mut allocation, 20, fire_at).unwrap();
     let failed_allocation = emission_day_record(&mut allocation, day).unwrap();
     assert_eq!(failed_allocation.state, emission_day_state::COMPLETED);
-    assert_eq!(
-        failed_allocation.metadosis_state,
-        metadosis_state::CANCELLED
-    );
+    assert_eq!(failed_allocation.metadosis_state, metadosis_state::CANCELED);
     assert_eq!(
         failed_allocation.promis_limit,
         failed_allocation.emission_limit

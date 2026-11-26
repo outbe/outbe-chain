@@ -152,16 +152,16 @@ pub(super) fn with_storage_at<R>(
 
 /// Dispatches a reward claim with the EVM storage provider.
 /// Returns the ABI output and the logs the claim emitted, or the revert reason.
-pub(super) fn claim_reward(
+pub(super) fn redeem_agent_reward(
     db: &mut CacheDB<EmptyDB>,
     data: Vec<u8>,
     now: u64,
 ) -> Result<(Bytes, Vec<alloy_primitives::Log>), String> {
-    claim_reward_in_block(db, data, now, 1)
+    redeem_agent_reward_in_block(db, data, now, 1)
 }
 
-/// [`claim_reward`] in block `block`: one owner gets one Gem of a series in each block.
-pub(super) fn claim_reward_in_block(
+/// [`redeem_agent_reward`] in block `block`: one owner gets one Gem of a series in each block.
+pub(super) fn redeem_agent_reward_in_block(
     db: &mut CacheDB<EmptyDB>,
     data: Vec<u8>,
     now: u64,
@@ -229,7 +229,7 @@ pub(super) fn reward_world() -> CacheDB<EmptyDB> {
 pub(super) fn credit(db: &mut CacheDB<EmptyDB>, pool: RewardPool, amount: U256) {
     with_storage(db, |storage| {
         AgentRewardContract::new(storage)
-            .add_claimable_reward(pool, CCA, amount)
+            .add_agent_reward(pool, CCA, amount)
             .unwrap();
     });
 }
@@ -243,7 +243,7 @@ pub(super) fn claim_tx(
         db,
         AGENT_REWARD_ADDRESS,
         U256::ZERO,
-        IAgentReward::claimRewardCall {
+        IAgentReward::redeemAgentRewardCall {
             pool: pool as u8,
             promisLoadMinor: requested,
             issuanceCurrency: 840,
@@ -265,12 +265,12 @@ pub(super) fn claim_by_tx(
     let load = if requested.is_zero() { held } else { requested };
     let result = claim_tx(db, pool, requested);
     assert!(result.is_success(), "{result:?}");
-    let gem_id = IAgentReward::claimRewardCall::abi_decode_returns(&result.output).unwrap();
+    let gem_id = IAgentReward::redeemAgentRewardCall::abi_decode_returns(&result.output).unwrap();
     let claimed = result
         .logs
         .iter()
-        .find_map(|log| IAgentReward::RewardsClaimed::decode_log(log).ok())
-        .expect("the claim emits RewardsClaimed")
+        .find_map(|log| IAgentReward::AgentRewardRedeemed::decode_log(log).ok())
+        .expect("the claim emits AgentRewardRedeemed")
         .data;
     assert_eq!(claimed.account, CCA);
     assert_eq!(claimed.pool, pool as u8);
@@ -292,7 +292,7 @@ pub(super) fn claim_by_tx(
         assert_eq!(gem.item.issued_at, NOW);
         assert_eq!(
             AgentRewardContract::new(storage)
-                .get_pool_claimable_reward(pool, CCA)
+                .get_agent_reward(pool, CCA)
                 .unwrap(),
             held - load
         );
@@ -302,7 +302,7 @@ pub(super) fn claim_by_tx(
 }
 
 pub(super) fn expiration_call(account: Address, pool: RewardPool) -> Vec<u8> {
-    IAgentReward::returnExpiredRewardCall {
+    IAgentReward::expireAgentRewardCall {
         account,
         pool: pool as u8,
     }
@@ -318,7 +318,7 @@ pub(super) fn balance_deadline(
         db,
         AGENT_REWARD_ADDRESS,
         U256::ZERO,
-        IAgentReward::getPoolBalanceDeadlineCall {
+        IAgentReward::agentRewardDeadlineCall {
             account,
             pool: pool as u8,
         }
@@ -326,7 +326,7 @@ pub(super) fn balance_deadline(
         NOW,
     );
     assert!(result.is_success(), "{result:?}");
-    IAgentReward::getPoolBalanceDeadlineCall::abi_decode_returns(&result.output).unwrap()
+    IAgentReward::agentRewardDeadlineCall::abi_decode_returns(&result.output).unwrap()
 }
 
 pub(super) fn promis_limit(db: &mut CacheDB<EmptyDB>) -> U256 {

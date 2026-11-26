@@ -357,7 +357,7 @@
   },
   {
     "type": "event",
-    "name": "GemFactoryPositionGemIssued",
+    "name": "GemFactoryPositionRedeemed",
     "inputs": [
       {
         "name": "gemFactoryPositionId",
@@ -366,9 +366,21 @@
         "internalType": "uint256"
       },
       {
+        "name": "owner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "promisLoadMinor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
         "name": "gemId",
         "type": "uint256",
-        "indexed": true,
+        "indexed": false,
         "internalType": "uint256"
       }
     ],

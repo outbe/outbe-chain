@@ -25,9 +25,8 @@ impl CycleWorkerId {
     }
 }
 
-/// Stable on-chain identifier for each task. The module emits it as
-/// the indexed `id` in [`crate::ICycle::CycleTaskExecuted`] and
-/// [`crate::ICycle::CycleTaskFailed`], and persists it in the
+/// Stable on-chain identifier for each task. The module emits it as the indexed
+/// `task` of [`crate::ICycle::CycleTaskCompleted`] and persists it in the
 /// [`crate::schema::Cycle`] mappings.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
@@ -435,30 +434,42 @@ mod protocol_parameter_tests {
     use super::*;
 
     #[test]
-    fn cycle_worker_ids_and_worker_failed_abi_event_are_stable() {
+    fn cycle_ids_match_the_abi_task_enum_and_the_completed_event() {
+        use crate::ICycle::{CycleTask, CycleTaskCompleted};
         use alloy_sol_types::SolEvent;
 
         assert_eq!(CycleWorkerId::AgentRewards.as_u8(), 1);
         assert_eq!(CycleWorkerId::DesisCleanup.as_u8(), 2);
-        let event = crate::ICycle::CycleWorkerFailed {
-            workerId: 1,
-            blockNumber: 42,
-        };
-        let log = event.encode_log_data();
+        for (id, task) in [
+            (TaskId::ProcessEmissionDay, CycleTask::ProcessEmissionDay),
+            (
+                TaskId::ScheduleIntexCallPass,
+                CycleTask::ScheduleIntexCallPass,
+            ),
+            (TaskId::AdvanceAuctions, CycleTask::AdvanceAuctions),
+            (TaskId::ScheduleGemCallPass, CycleTask::ScheduleGemCallPass),
+            (TaskId::CompleteAuctions, CycleTask::CompleteAuctions),
+            (
+                TaskId::ScheduleCredisCallPass,
+                CycleTask::ScheduleCredisCallPass,
+            ),
+            (TaskId::ScheduleNodCallPass, CycleTask::ScheduleNodCallPass),
+        ] {
+            assert_eq!(id.as_u32(), u32::from(task as u8));
+        }
+        assert!(CycleTask::try_from(7u8).is_err());
+        let log = CycleTaskCompleted {
+            task: CycleTask::ScheduleGemCallPass,
+        }
+        .encode_log_data();
+        assert_eq!(CycleTaskCompleted::SIGNATURE, "CycleTaskCompleted(uint8)");
         assert_eq!(log.topics().len(), 2);
-        assert_eq!(
-            log.topics()[0],
-            crate::ICycle::CycleWorkerFailed::SIGNATURE_HASH
-        );
+        assert_eq!(log.topics()[0], CycleTaskCompleted::SIGNATURE_HASH);
         assert_eq!(
             log.topics()[1],
-            alloy_primitives::B256::from(alloy_primitives::U256::from(1))
+            alloy_primitives::B256::from(alloy_primitives::U256::from(3))
         );
-        assert_eq!(log.data.len(), 32);
-        let decoded = crate::ICycle::CycleWorkerFailed::decode_log_data(&log)
-            .expect("worker failure event round-trips");
-        assert_eq!(decoded.workerId, event.workerId);
-        assert_eq!(decoded.blockNumber, event.blockNumber);
+        assert!(log.data.is_empty());
     }
 
     #[test]
