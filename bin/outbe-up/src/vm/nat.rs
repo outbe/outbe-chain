@@ -12,7 +12,7 @@ use outbe_operator_vm::nat::{
 use crate::network::{
     build::DeploymentKind,
     config::Ssh,
-    remote::{NetworkArtifacts, SshOptions},
+    remote::{DirectSshOptions as SshOptions, NetworkArtifacts},
 };
 
 /// Options for `outbe-up vm host-nat`.

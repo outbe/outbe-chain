@@ -15,7 +15,7 @@ fn read_config(s: &StorageHandle) -> AuctionConfig {
 }
 
 /// The AUCTION_STAGE_START payload the stored day config gives.
-fn announced(config: &AuctionConfig) -> crate::sol_ext::IOriginRouter::IntexAuctionStartParams {
+fn announced(config: &AuctionConfig) -> outbe_intexfactory::transport::wire::IntexAuctionStart {
     runtime::intex_auction_start_params(runtime::IntexAuctionStart {
         emission_day: EMISSION_DAY,
         config,
@@ -85,25 +85,25 @@ fn the_start_message_carries_only_the_stored_day_config() {
         select_profile(&s, outbe_intex::config::PROFILE_TESTNET);
 
         let message = announced(&config);
-        assert_eq!(message.emissionDay, EMISSION_DAY.value());
-        assert_eq!(message.promisLoadMinor, config.promis_load_minor);
-        assert_eq!(message.minBidRate, config.min_bid_rate);
-        assert_eq!(message.minBidQuantity, config.min_bid_quantity);
-        assert_eq!(message.bidBondMinor, config.bid_bond_minor);
-        assert_eq!(message.callWindow, config.call_trigger.call_window_seconds);
+        assert_eq!(message.emission_day, EMISSION_DAY.value());
+        assert_eq!(message.promis_load_minor, config.promis_load_minor);
+        assert_eq!(message.min_bid_rate, config.min_bid_rate);
+        assert_eq!(message.min_bid_quantity, config.min_bid_quantity);
+        assert_eq!(message.bid_bond_minor, config.bid_bond_minor);
+        assert_eq!(message.call_window, config.call_trigger.call_window_seconds);
         assert_eq!(
-            message.callThreshold,
+            message.call_threshold,
             config.call_trigger.call_threshold_seconds
         );
         assert_eq!(
-            message.callNoticePeriod,
+            message.call_notice_period,
             config.call_trigger.call_notice_period_seconds
         );
         assert_eq!(message.prices.len(), config.reference_prices.len());
         for (wire, row) in message.prices.iter().zip(&config.reference_prices) {
-            assert_eq!(wire.isoCode, row.iso_code);
-            assert_eq!(U256::from(wire.entryPriceMinor), row.entry_price_minor);
-            assert_eq!(U256::from(wire.callPriceMinor), row.call_price_minor);
+            assert_eq!(wire.iso_code, row.iso_code);
+            assert_eq!(U256::from(wire.entry_price_minor), row.entry_price_minor);
+            assert_eq!(U256::from(wire.call_price_minor), row.call_price_minor);
         }
     });
 }
@@ -141,7 +141,7 @@ fn a_profile_change_after_the_start_leaves_the_series_conditions_fixed() {
         let message = announced(&config);
         let wire_row = &message.prices[0];
         assert_eq!(
-            U256::from(wire_row.callPriceMinor),
+            U256::from(wire_row.call_price_minor),
             call_price(ENTRY_PRICE, IntexParams::MAINNET)
         );
 
@@ -162,9 +162,9 @@ fn a_profile_change_after_the_start_leaves_the_series_conditions_fixed() {
         assert_eq!(result.issued_units, 2);
 
         let announced_trigger = outbe_intex::IntexCallTrigger {
-            call_window_seconds: message.callWindow,
-            call_threshold_seconds: message.callThreshold,
-            call_notice_period_seconds: message.callNoticePeriod,
+            call_window_seconds: message.call_window,
+            call_threshold_seconds: message.call_threshold,
+            call_notice_period_seconds: message.call_notice_period,
             transit_margin_seconds: IntexParams::TESTNET.transit_margin_seconds,
         };
         let series_id =
@@ -172,13 +172,16 @@ fn a_profile_change_after_the_start_leaves_the_series_conditions_fixed() {
         let series = outbe_intex::api::get_series(&s, series_id).unwrap();
         assert_eq!(
             series.promis_load_minor,
-            U256::from(message.promisLoadMinor)
+            U256::from(message.promis_load_minor)
         );
         assert_eq!(
             series.entry_price_minor,
-            U256::from(wire_row.entryPriceMinor)
+            U256::from(wire_row.entry_price_minor)
         );
-        assert_eq!(series.call_price_minor, U256::from(wire_row.callPriceMinor));
+        assert_eq!(
+            series.call_price_minor,
+            U256::from(wire_row.call_price_minor)
+        );
         assert_eq!(series.call_trigger(), announced_trigger);
 
         // The issuance gets the same conditions. IntexFactory builds the legs from them.
@@ -187,12 +190,15 @@ fn a_profile_change_after_the_start_leaves_the_series_conditions_fixed() {
             runtime::issuance_groups(&result, &config, EMISSION_DAY, &[SRC_CHAIN]).unwrap();
         assert_eq!(groups.len(), 1);
         let group = &groups[0];
-        assert_eq!(group.promis_load_minor, message.promisLoadMinor);
+        assert_eq!(group.promis_load_minor, message.promis_load_minor);
         assert_eq!(
             group.entry_price_minor,
-            U256::from(wire_row.entryPriceMinor)
+            U256::from(wire_row.entry_price_minor)
         );
-        assert_eq!(group.call_price_minor, U256::from(wire_row.callPriceMinor));
+        assert_eq!(
+            group.call_price_minor,
+            U256::from(wire_row.call_price_minor)
+        );
         assert_eq!(group.call_trigger, announced_trigger);
     });
 }

@@ -52,6 +52,8 @@ fn system_inputs() -> Vec<SystemTx> {
         SystemTx::BeginBlock { step_index: 6 },
         SystemTx::BeginBlock { step_index: 7 },
         SystemTx::BeginBlock { step_index: 8 },
+        SystemTx::BeginBlock { step_index: 9 },
+        SystemTx::BeginBlock { step_index: 10 },
     ]
 }
 
@@ -128,7 +130,7 @@ fn block_1_layout_requires_boundary_outcome_and_tee_bootstrap() {
         SystemTxStepId::consensus(CONSENSUS_TEE_BOOTSTRAP_STEP_INDEX),
         SystemTxStepId::consensus(CONSENSUS_VALIDATOR_LIVENESS_STEP_INDEX),
     ];
-    expected.extend((0..9).map(SystemTxStepId::begin_block));
+    expected.extend((0..11).map(SystemTxStepId::begin_block));
     assert_eq!(plan.expected_prefix_steps(), expected);
     assert!(plan.expected_end_block_steps().is_empty());
 }
@@ -240,7 +242,7 @@ fn stage_ordering_is_canonical() {
         expected.push(SystemTxStepId::consensus(
             CONSENSUS_VALIDATOR_LIVENESS_STEP_INDEX,
         ));
-        expected.extend((0..9).map(SystemTxStepId::begin_block));
+        expected.extend((0..11).map(SystemTxStepId::begin_block));
         let plan = BlockSystemPlan::for_block(42, flags, &TEST_BLOCK_ORDER);
         assert_eq!(plan.expected_prefix_steps(), expected);
         assert_eq!(

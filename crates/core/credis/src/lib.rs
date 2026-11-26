@@ -15,7 +15,7 @@ pub mod schema;
 pub mod state;
 
 pub use runtime::{outcome, settlement_deadline, Outcome};
-pub use schema::{Credis, CredisContract, CredisState, SubSeriesSummary};
+pub use schema::{CallTerms, Credis, CredisContract, CredisState, CredisView, SubSeriesSummary};
 pub use state::{CallBins, CleanupQueue, ForfeitQueue};
 
 #[cfg(test)]

@@ -2769,62 +2769,71 @@ fn query_vm_block_hash(
         })
 }
 
-/// Query cumulative per-epoch `missedVotes` for every active validator via `outbe_getValidators`
-/// followed by a single batched `outbe_getParticipation` JSON-RPC call to `service_ip`.
-/// Fails closed on RPC error, empty validator set, or missing/malformed fields.
+/// Query cumulative per-epoch `missedVotes` for every active validator via `eth_call` to the
+/// `ValidatorSet` precompile (`0x...EE00`): `getActiveValidators()` followed by a single batched
+/// `validatorByAddress(address)` `eth_call` to `service_ip`.
+/// Fails closed on RPC error, empty validator set, or missing/malformed ABI return data.
 pub(super) fn query_validators_missed_votes(
     exec: &dyn HostExec,
     ssh: &Ssh,
     label: &str,
     service_ip: Ipv4Addr,
 ) -> Result<BTreeMap<String, u64>> {
+    use outbe_operator_node_role::rpc::{
+        decode_get_active_validators, decode_validator_missed_votes, encode_get_active_validators,
+        encode_validator_by_address, VALIDATOR_SET,
+    };
+
     let url = format!("http://{service_ip}:8545");
     let cmd = format!(
         "curl -fsS --connect-timeout 5 --max-time 30 -H 'content-type: application/json' --data-binary @- {}",
         shell_quote(&url)
     );
+    let precompile = format!("{VALIDATOR_SET:#x}");
 
-    // 1. Fetch active validator addresses.
+    // 1. Fetch active validator addresses via IValidatorSet.getActiveValidators().
     let val_req = json!({
         "jsonrpc": "2.0",
         "id": 1,
-        "method": "outbe_getValidators",
-        "params": []
+        "method": "eth_call",
+        "params": [{
+            "to": precompile,
+            "data": format!("0x{}", hex::encode(encode_get_active_validators())),
+        }, "finalized"]
     });
     let raw_vals = exec
         .capture_stdin(ssh, label, &cmd, &serde_json::to_vec(&val_req)?)
-        .wrap_err_with(|| format!("query outbe_getValidators from {label} ({service_ip})"))?;
-    let val_resp: Value = serde_json::from_str(&raw_vals)
-        .wrap_err_with(|| format!("parse outbe_getValidators response from {url}"))?;
-    if let Some(err) = val_resp.get("error").filter(|e| !e.is_null()) {
-        bail!("outbe_getValidators returned RPC error on {label} ({service_ip}): {err}");
-    }
-    let val_entries = val_resp
-        .get("result")
-        .and_then(Value::as_array)
-        .ok_or_else(|| {
-            eyre::eyre!("outbe_getValidators returned no result array on {label} ({service_ip})")
+        .wrap_err_with(|| {
+            format!("query IValidatorSet.getActiveValidators from {label} ({service_ip})")
         })?;
-    ensure!(
-        !val_entries.is_empty(),
-        "outbe_getValidators returned empty validator list on {label} ({service_ip})"
-    );
-    let mut addresses = Vec::with_capacity(val_entries.len());
-    for (idx, entry) in val_entries.iter().enumerate() {
-        let addr = entry
-            .get("address")
-            .and_then(Value::as_str)
-            .map(|s| s.trim().to_ascii_lowercase())
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| {
-                eyre::eyre!(
-                    "outbe_getValidators entry {idx} missing address on {label} ({service_ip})"
-                )
-            })?;
-        addresses.push(addr);
+    let val_resp: Value = serde_json::from_str(&raw_vals)
+        .wrap_err_with(|| format!("parse IValidatorSet.getActiveValidators response from {url}"))?;
+    if let Some(err) = val_resp.get("error").filter(|e| !e.is_null()) {
+        bail!(
+            "IValidatorSet.getActiveValidators returned RPC error on {label} ({service_ip}): {err}"
+        );
     }
+    let val_hex = val_resp
+        .get("result")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            eyre::eyre!(
+                "IValidatorSet.getActiveValidators returned no hex result on {label} ({service_ip})"
+            )
+        })?;
+    let val_bytes =
+        hex::decode(val_hex.strip_prefix("0x").unwrap_or(val_hex)).wrap_err_with(|| {
+            format!("decode IValidatorSet.getActiveValidators hex on {label} ({service_ip})")
+        })?;
+    let addresses = decode_get_active_validators(&val_bytes).wrap_err_with(|| {
+        format!("ABI-decode IValidatorSet.getActiveValidators on {label} ({service_ip})")
+    })?;
+    ensure!(
+        !addresses.is_empty(),
+        "IValidatorSet.getActiveValidators returned empty validator list on {label} ({service_ip})"
+    );
 
-    // 2. Fetch `outbe_getParticipation(addr)` for all validators in a single JSON-RPC batch.
+    // 2. Fetch `IValidatorSet.validatorByAddress(addr)` for all active validators in one JSON-RPC batch.
     let batch_req: Vec<Value> = addresses
         .iter()
         .enumerate()
@@ -2832,51 +2841,64 @@ pub(super) fn query_validators_missed_votes(
             json!({
                 "jsonrpc": "2.0",
                 "id": (idx + 1) as u64,
-                "method": "outbe_getParticipation",
-                "params": [addr]
+                "method": "eth_call",
+                "params": [{
+                    "to": precompile,
+                    "data": format!("0x{}", hex::encode(encode_validator_by_address(*addr))),
+                }, "finalized"]
             })
         })
         .collect();
     let raw_part = exec
         .capture_stdin(ssh, label, &cmd, &serde_json::to_vec(&batch_req)?)
         .wrap_err_with(|| {
-            format!("query outbe_getParticipation batch from {label} ({service_ip})")
+            format!("query IValidatorSet.validatorByAddress batch from {label} ({service_ip})")
         })?;
-    let items: Vec<Value> = serde_json::from_str(&raw_part)
-        .wrap_err_with(|| format!("parse outbe_getParticipation batch response from {url}"))?;
+    let items: Vec<Value> = serde_json::from_str(&raw_part).wrap_err_with(|| {
+        format!("parse IValidatorSet.validatorByAddress batch response from {url}")
+    })?;
 
     let mut missed_by_addr: BTreeMap<String, u64> = BTreeMap::new();
     for item in items {
         let id = item.get("id").and_then(Value::as_u64).ok_or_else(|| {
             eyre::eyre!(
-                "outbe_getParticipation batch item missing numeric id on {label} ({service_ip})"
+                "IValidatorSet.validatorByAddress batch item missing numeric id on {label} ({service_ip})"
             )
         })?;
         let idx = usize::try_from(id.saturating_sub(1)).unwrap_or(usize::MAX);
         let addr = addresses.get(idx).ok_or_else(|| {
             eyre::eyre!(
-                "outbe_getParticipation batch returned unexpected id {id} on {label} ({service_ip})"
+                "IValidatorSet.validatorByAddress batch returned unexpected id {id} on {label} ({service_ip})"
             )
         })?;
+        let addr_key = format!("{addr:#x}");
         if let Some(err) = item.get("error").filter(|e| !e.is_null()) {
             bail!(
-                "outbe_getParticipation({addr}) returned RPC error on {label} ({service_ip}): {err}"
+                "IValidatorSet.validatorByAddress({addr_key}) returned RPC error on {label} ({service_ip}): {err}"
             );
         }
-        let missed = item
-            .pointer("/result/missedVotes")
-            .and_then(Value::as_u64)
-            .ok_or_else(|| {
-                eyre::eyre!(
-                    "outbe_getParticipation({addr}) missing numeric `missedVotes` on {label} ({service_ip})"
+        let result_hex = item.get("result").and_then(Value::as_str).ok_or_else(|| {
+            eyre::eyre!(
+                "IValidatorSet.validatorByAddress({addr_key}) missing hex result on {label} ({service_ip})"
+            )
+        })?;
+        let result_bytes = hex::decode(result_hex.strip_prefix("0x").unwrap_or(result_hex))
+            .wrap_err_with(|| {
+                format!(
+                    "decode IValidatorSet.validatorByAddress({addr_key}) hex on {label} ({service_ip})"
                 )
             })?;
-        missed_by_addr.insert(addr.clone(), missed);
+        let missed = decode_validator_missed_votes(&result_bytes).wrap_err_with(|| {
+            format!(
+                "ABI-decode IValidatorSet.validatorByAddress({addr_key}) on {label} ({service_ip})"
+            )
+        })?;
+        missed_by_addr.insert(addr_key, missed);
     }
 
     ensure!(
         missed_by_addr.len() == addresses.len(),
-        "outbe_getParticipation batch on {label} ({service_ip}) returned {} of {} validator(s)",
+        "IValidatorSet.validatorByAddress batch on {label} ({service_ip}) returned {} of {} validator(s)",
         missed_by_addr.len(),
         addresses.len()
     );

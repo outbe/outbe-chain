@@ -8,9 +8,10 @@ use std::{
 
 use eyre::{bail, ensure, Context, Result};
 
-pub(crate) const ROOT: &str = "/opt/outbe-chain";
-pub(crate) const STATE_ROOT: &str = "/opt/outbe-chain/state/operator";
-pub(crate) const HYPERLANE_STATE_ROOT: &str = "/opt/outbe-chain/state/hyperlane";
+pub const ROOT: &str = "/opt/outbe-chain";
+pub const STATE_ROOT: &str = "/opt/outbe-chain/state/operator";
+pub const HYPERLANE_STATE_ROOT: &str = "/opt/outbe-chain/state/hyperlane";
+pub const SERVICES_ENABLED_MARKER: &str = "/opt/outbe-chain/state/services-enabled";
 const LOCK_PATH: &str = "/run/lock/outbe-validator.lock";
 
 pub(crate) struct LifecycleLock {
@@ -120,6 +121,15 @@ pub(crate) fn systemctl_is_active(unit: &str) -> bool {
         .args(["is-active", "--quiet", unit])
         .status()
         .is_ok_and(|status| status.success())
+}
+
+pub fn mark_services_enabled() -> Result<()> {
+    let marker = Path::new(SERVICES_ENABLED_MARKER);
+    let parent = marker
+        .parent()
+        .ok_or_else(|| eyre::eyre!("services marker has no parent directory"))?;
+    std::fs::create_dir_all(parent)?;
+    write_file(marker, b"enabled\n", 0o644)
 }
 
 fn output_text(program: &Path, output: Output) -> Result<String> {

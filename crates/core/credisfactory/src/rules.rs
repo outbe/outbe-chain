@@ -5,15 +5,14 @@
 use alloy_primitives::{Address, U256};
 use outbe_core_common::series_id::SeriesId;
 use outbe_credis::errors::CredisError;
+use outbe_credis::precompile::ICredis;
 use outbe_credis::runtime::effective_state;
-use outbe_credis::{Credis, CredisContract, CredisState};
+use outbe_credis::{CallTerms, Credis, CredisContract, CredisState, CredisView};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 use outbe_system_common::time::{timestamp_to_date_key, SECONDS_PER_DAY};
 
-use crate::called::emit;
 use crate::errors::CredisFactoryError;
-use crate::precompile::ICredisFactory;
 
 /// Current execution timestamp's UTC reward day key (YYYYMMDD).
 fn reward_day(storage: &StorageHandle<'_>) -> Result<u32> {
@@ -36,8 +35,10 @@ pub struct IssueCredisParams {
     pub owner: Address,
     pub cca: Address,
     /// Main account whose pledged Gratis backs the Credis.
-    pub source: Address,
+    pub pledge_account: Address,
     pub asset: Address,
+    /// Decimals of `asset` at the reservation.
+    pub asset_decimals: u8,
     /// ISO 4217 numeric code of the disbursed `asset`.
     pub issuance_currency: u16,
     /// ISO 4217 numeric code of the reference currency elected at the reservation and
@@ -75,7 +76,6 @@ pub struct Repayment {
     pub amount_minor: U256,
     /// Collateral freed and owed back to the pledger.
     pub unpledged_gratis_minor: U256,
-    pub asset: Address,
     /// True when this repayment drove the outstanding amount to zero.
     pub closed: bool,
 }
@@ -137,8 +137,8 @@ pub fn issue_in_series(
         if terms.iter().any(U256::is_zero) {
             return Err(CredisFactoryError::ZeroIssueTerm.into());
         }
-        if params.source.is_zero() {
-            return Err(CredisFactoryError::InvalidSource.into());
+        if params.pledge_account.is_zero() {
+            return Err(CredisFactoryError::InvalidPledgeAccount.into());
         }
         if params.owner.is_zero() {
             return Err(CredisFactoryError::InvalidOwner.into());
@@ -168,9 +168,10 @@ pub fn issue_in_series(
             owner: params.owner,
             cca: params.cca,
             asset: params.asset,
+            asset_decimals: params.asset_decimals,
             issuance_currency: params.issuance_currency,
             reference_currency: params.reference_currency,
-            source: params.source,
+            pledge_account: params.pledge_account,
             amount_minor: params.amount_minor,
             outstanding_amount_minor: params.amount_minor,
             gratis_minor: params.gratis_minor,
@@ -180,13 +181,8 @@ pub fn issue_in_series(
             call_price_minor,
             issued_at: params.issued_at,
             last_settled_at: params.issued_at,
-            called_at: 0,
             series_id,
             sub_series: params.sub_series,
-            call_notice_period_seconds: params.call_notice_period_seconds,
-            call_rate: params.call_rate,
-            call_window_seconds: params.call_window_seconds,
-            call_threshold_seconds: params.call_threshold_seconds,
             settled_fee_minor: U256::ZERO,
         };
         outbe_ccaregistry::api::credis_issued(
@@ -195,7 +191,12 @@ pub fn issue_in_series(
             reward_day(&credis.storage)?,
             params.gratis_minor,
         )?;
-        let newly_opened = credis.create_credis_record(&record, call_start_day)?;
+        let terms = CallTerms {
+            call_window_seconds: params.call_window_seconds,
+            call_threshold_seconds: params.call_threshold_seconds,
+            call_notice_period_seconds: params.call_notice_period_seconds,
+        };
+        let newly_opened = credis.create_credis_record(&record, &terms, call_start_day)?;
 
         Ok((credis_id, newly_opened))
     })
@@ -218,6 +219,7 @@ pub fn settle(
     credis_id: U256,
     amount: U256,
     now: u64,
+    paid_asset: Address,
 ) -> Result<Repayment> {
     let mut record = credis.load_credis(credis_id)?;
     if record.is_settled() {
@@ -270,57 +272,61 @@ pub fn settle(
         .ok_or(CredisError::ArithmeticOverflow)?;
 
     let closed = record.is_settled();
-    // A settled Credis keeps the call and terms it read from its group.
     credis.update_credis_record(&record)?;
     credis.take_owner_outstanding(record.owner, amount_paid)?;
     credis.take_outstanding_amount(&record, amount_paid)?;
-    if closed {
-        credis.leave_group(&record)?;
-    }
 
     let total_paid = fee
         .checked_add(amount_paid)
         .ok_or(CredisError::ArithmeticOverflow)?;
-    emit(
-        &credis.storage,
-        &ICredisFactory::CredisSettled {
+    credis.emit(ICredis::CredisSettled {
+        credisId: credis_id,
+        owner: record.owner,
+        issuanceCurrency: record.issuance_currency,
+        referenceCurrency: record.reference_currency,
+        asset: paid_asset,
+        amountMinor: total_paid,
+        feeMinor: fee,
+        unpledgedGratisMinor: unpledged_gratis_minor,
+    })?;
+    if closed {
+        credis.leave_group(&record)?;
+        credis.delete_credis_record(credis_id)?;
+        credis.emit(ICredis::CredisBurned {
             credisId: credis_id,
             owner: record.owner,
-            asset: record.asset,
-            issuanceCurrency: record.issuance_currency,
-            referenceCurrency: record.reference_currency,
-            amountMinor: total_paid,
-            settledFeeMinor: fee,
-            settledAmountMinor: amount_paid,
-        },
-    )?;
+        })?;
+    }
 
     Ok(Repayment {
         settled_fee_minor: fee,
         settled_amount_minor: amount_paid,
         amount_minor: total_paid,
         unpledged_gratis_minor,
-        asset: record.asset,
         closed,
     })
+}
+
+/// A Credis id holds its issue block, so the id of this block names a Credis issued in it.
+pub(crate) fn in_issue_block(credis: &CredisContract<'_>, record: &Credis) -> Result<bool> {
+    Ok(record.credis_id
+        == CredisContract::generate_credis_id(
+            record.series_id,
+            record.owner,
+            credis.storage.block_number()?,
+        ))
 }
 
 /// Validates that `caller` may forfeit `record` in the current block.
 pub(crate) fn validate_forfeit_by_owner(
     credis: &CredisContract<'_>,
-    record: &Credis,
+    record: &CredisView,
     caller: Address,
 ) -> Result<()> {
     if caller != record.owner {
         return Err(CredisFactoryError::NotCredisOwner.into());
     }
-    if record.credis_id
-        == CredisContract::generate_credis_id(
-            record.series_id,
-            record.owner,
-            credis.storage.block_number()?,
-        )
-    {
+    if in_issue_block(credis, record)? {
         return Err(CredisFactoryError::CannotForfeitInIssueBlock.into());
     }
     match effective_state(record, credis.storage.now_secs()?)? {
@@ -351,14 +357,15 @@ pub fn delete_forfeited(credis: &mut CredisContract<'_>, record: Credis) -> Resu
         reward_day(&credis.storage)?,
         forfeit.forfeited_gratis_minor,
     )?;
-    credis.emit(outbe_credis::precompile::ICredis::CredisForfeited {
+    credis.emit(ICredis::CredisForfeited {
         credisId: credis_id,
         owner: record.owner,
-        cca: record.cca,
-        asset: record.asset,
         issuanceCurrency: record.issuance_currency,
         referenceCurrency: record.reference_currency,
-        forfeitedAmountMinor: forfeit.forfeited_amount_minor,
+        cca: record.cca,
+        asset: record.asset,
+        unsettledAmountMinor: forfeit.forfeited_amount_minor,
+        burnedGratisMinor: forfeit.forfeited_gratis_minor,
     })?;
     credis.leave_group(&record)?;
     credis.take_outstanding_amount(&record, forfeit.forfeited_amount_minor)?;

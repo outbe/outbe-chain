@@ -13,6 +13,7 @@ pub mod seed_alloc;
 pub mod seed_codec;
 pub mod seed_economy;
 pub mod seed_genesis;
+pub mod seed_intex;
 pub mod seed_oracle;
 pub mod seed_p2p;
 pub mod seed_system;

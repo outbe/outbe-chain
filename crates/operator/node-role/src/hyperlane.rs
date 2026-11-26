@@ -88,18 +88,14 @@ pub(crate) async fn ensure_setup(
 
     if rpc.balance(hyperlane).await?.is_zero() {
         progress.stage("funding the Hyperlane signer");
-        let (hash, submitted) = transaction(
-            state.funding_transaction.as_deref(),
-            request.validator_key,
-            request.rpc_url,
-            &[
-                "validator",
-                "fund-operational-key",
-                &format!("{hyperlane:#x}"),
-                &request.funding.to_string(),
-            ],
-            true,
-        )?;
+        let (hash, submitted) = match state.funding_transaction.as_deref() {
+            Some(existing) => (existing.to_owned(), false),
+            None => (
+                send_value_transfer(&rpc, request.validator_key, hyperlane, request.funding)
+                    .await?,
+                true,
+            ),
+        };
         if submitted {
             state.funding_transaction = Some(hash.clone());
             save(&state)?;
@@ -345,6 +341,16 @@ async fn ensure_setup_cooperative<T: HyperlaneSetupTransport>(
         );
     }
     Ok((state, true))
+}
+
+/// Sign and broadcast a plain native value transfer from `key_path` to `to` via `eth_sendRawTransaction`.
+pub async fn send_value_transfer(
+    rpc: &RpcClient,
+    key_path: &Path,
+    to: Address,
+    amount: U256,
+) -> Result<String> {
+    send_signed_tx(rpc, key_path, to, Vec::new(), amount).await
 }
 
 async fn send_signed_tx(

@@ -40,8 +40,8 @@ pub struct IssuanceParams {
     pub call_trigger: IntexCallTrigger,
     pub issuance_currency: u16,
     pub reference_currency: u16,
-    /// Every target chain of the day's snapshot. Each one creates the series.
-    pub snapshot_chains: Vec<u32>,
+    /// Every target chain that is not Off. Each one creates the series.
+    pub target_chains: Vec<u32>,
 }
 
 /// EVM storage layout: settlement bookkeeping (mine_seq), the call notice outbox and
@@ -53,27 +53,50 @@ pub struct IntexFactoryContract {
     #[attribute(order = 1)]
     pub mine_seq: outbe_primitives::storage::dsl::Map<B256, u32>,
 
+    /// The target chains that are not Off, each `chain_id | mode << 32`. The genesis seeds it.
+    #[attribute(order = 2)]
+    pub target_chains: outbe_primitives::storage::dsl::List<u64>,
+    /// The chains in Auctions that a day started on.
+    #[attribute(order = 3)]
+    pub day_targets: outbe_primitives::storage::dsl::Map<
+        EmissionDate,
+        outbe_primitives::storage::dsl::List<u32>,
+    >,
+
     // Call notices waiting to be sent after the call slice, in order. Head and tail
     // reset to 0 whenever the queue drains empty.
     #[attribute(order = 24)]
     pub notify_head: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 25)]
     pub notify_tail: outbe_primitives::storage::dsl::Value<u32>,
-    /// Queue index -> a Called series' word packed with its call time, the router calls
-    /// it was refused, and the time it may go out again.
+    /// Queue index -> a Called series' word packed with its call time.
     #[attribute(order = 26)]
     pub notify_at: outbe_primitives::storage::dsl::Map<u32, U256>,
 
-    // Call notice legs the router kept for one chain each, retried in order. Head and tail
-    // reset to 0 whenever the queue drains empty.
-    #[attribute(order = 27)]
-    pub leg_head: outbe_primitives::storage::dsl::Value<u32>,
-    #[attribute(order = 28)]
-    pub leg_tail: outbe_primitives::storage::dsl::Value<u32>,
-    /// Queue index -> the router's kept message index packed with its chain, its failed tries
-    /// and the time it may go out again.
-    #[attribute(order = 29)]
-    pub leg_at: outbe_primitives::storage::dsl::Map<u32, U256>,
+    /// The outbox to the target chains, see `crate::transport::outbox`.
+    #[attribute(order = 30)]
+    pub outbox_head: outbe_primitives::storage::dsl::Map<u32, u32>,
+    #[attribute(order = 31)]
+    pub outbox_tail: outbe_primitives::storage::dsl::Map<u32, u32>,
+    #[attribute(order = 32)]
+    pub outbox_meta: outbe_primitives::storage::dsl::Map<u64, U256>,
+    #[attribute(order = 33)]
+    pub outbox_label: outbe_primitives::storage::dsl::Map<u64, U256>,
+    #[attribute(order = 34)]
+    pub outbox_payload:
+        outbe_primitives::storage::dsl::Map<u64, outbe_primitives::storage::dsl::Bytes>,
+}
+
+impl<'storage> IntexFactoryContract<'storage> {
+    pub fn outbox(&self) -> crate::transport::outbox::Outbox<'storage> {
+        crate::transport::outbox::Outbox {
+            head: self.outbox_head.clone(),
+            tail: self.outbox_tail.clone(),
+            meta: self.outbox_meta.clone(),
+            label: self.outbox_label.clone(),
+            payload: self.outbox_payload.clone(),
+        }
+    }
 }
 
 impl IntexFactoryContract<'_> {

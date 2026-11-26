@@ -179,7 +179,7 @@ fn apply_pre_execution_changes_emits_phase1_slashing_logs_in_system_receipt() {
             .expect("Phase 1 slashing system tx should execute");
     }
 
-    assert_eq!(executor.receipts().len(), 12);
+    assert_eq!(executor.receipts().len(), 14);
     let phase1_logs = &executor.receipts()[0].logs;
     let voter_misdemeanor = keccak256("VoterMisdemeanor(address,uint64)");
     let voter_felony = keccak256("VoterFelony(address,uint64,uint64)");

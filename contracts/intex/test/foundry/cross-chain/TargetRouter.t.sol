@@ -4,11 +4,16 @@ pragma solidity 0.8.30;
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
-import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
 import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 import {ITargetRouter} from "@contracts/target/interfaces/ITargetRouter.sol";
 import {IIntexNFT1155Bridge} from "@contracts/shared/interfaces/IIntexNFT1155Bridge.sol";
 import {MockDesis} from "@test-mocks/MockDesis.sol";
+import {DESIS} from "@precompiles/IDesis.sol";
+import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
+import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
+import {InboundReason} from "@contracts/shared/libs/InboundReason.sol";
+import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
+import {ReferenceCurrencyPriceLib} from "../helpers/ReferenceCurrencyPriceLib.sol";
 
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
@@ -25,7 +30,6 @@ contract TargetRouterTest is CrossChainTest {
     uint32 private constant OUTBE_CHAIN_ID = 2;
 
     TargetRouter private targetRouter;
-    OriginRouter private originRouter;
     IntexNFT1155Bridge private nftBridge;
 
     // Mock contracts
@@ -35,8 +39,7 @@ contract TargetRouterTest is CrossChainTest {
     address private admin = address(this);
     address private user = address(0x1);
 
-    // Stand-in Desis recipient that advertises `IDesis` via ERC-165 - declared in setUp().
-    address private desis;
+    address private outbeIca = makeAddr("outbeIca");
 
     uint32 private constant SERIES_ID_DAY = 20250115;
     bytes14 private constant SERIES_ID = "20250115-USD-U"; // yyyymmdd format
@@ -49,10 +52,6 @@ contract TargetRouterTest is CrossChainTest {
         vm.deal(admin, 1000 ether);
         vm.deal(user, 1000 ether);
 
-        // Stand-in Desis recipient.
-        desis = address(new MockDesis());
-        vm.deal(desis, 1000 ether);
-
         // Deploy mock contracts
         auction = DeployProxy.intexAuction(admin, admin);
         intex = DeployProxy.intexNFT1155(admin, admin);
@@ -60,21 +59,13 @@ contract TargetRouterTest is CrossChainTest {
         // Deploy BNB adapter
         targetRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
 
-        // Deploy Outbe adapter (for cross-chain testing)
-        originRouter = DeployProxy.originRouter(address(bridge), admin);
-
         // Deploy batch adapter on BNB
         nftBridge = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
 
-        // Wire adapters (register remote messengers)
-        targetRouter.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(originRouter)));
-        originRouter.registerRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(targetRouter)));
+        _wireOutbeIca(targetRouter, outbeIca);
 
         // Wire BNB adapter dependencies
         targetRouter.setDependencies(address(auction), address(intex), admin);
-
-        // Wire Outbe adapter dependencies
-        originRouter.setDependencies(desis, makeAddr("factory"));
 
         // Grant ROUTER_ROLE to the router
         auction.grantRole(auction.RELAYER_ROLE(), address(targetRouter));
@@ -99,13 +90,6 @@ contract TargetRouterTest is CrossChainTest {
         vm.expectEmit(true, true, true, true, address(fresh));
         emit ITargetRouter.TargetRouterDependenciesSet(address(auction), address(intex), admin);
         fresh.setDependencies(address(auction), address(intex), admin);
-
-        address originRecipient = makeAddr("originRouter");
-        fresh.setProceedsRoute(makeAddr("tokenBridge"), originRecipient);
-        address rotatedBridge = makeAddr("rotatedTokenBridge");
-        vm.expectEmit(true, true, true, true, address(fresh));
-        emit ITargetRouter.TargetRouterProceedsRouteSet(rotatedBridge, originRecipient);
-        fresh.setProceedsRoute(rotatedBridge, originRecipient);
     }
 
     function test_wire_revert_zero_address() public {
@@ -127,6 +111,84 @@ contract TargetRouterTest is CrossChainTest {
 
         vm.expectRevert(abi.encodeWithSelector(ITargetRouter.ZeroAddress.selector, "escrow"));
         newRouter.setDependencies(address(auction), address(intex), address(0));
+    }
+
+    // --- Inbound from Outbe ---
+    function _start(uint32 commitEnd) private pure returns (bytes memory) {
+        return BridgeMsgCodec.encodeIntexAuctionStart(
+            SERIES_ID_DAY,
+            commitEnd,
+            commitEnd + 1 days,
+            commitEnd + 2 days,
+            1e6,
+            60e6,
+            ReferenceCurrencyPriceLib.one(840, 100e6, 100e6),
+            0,
+            0,
+            0,
+            1,
+            0
+        );
+    }
+
+    function test_receiveFromOutbe_revert_without_the_ica_role() public {
+        bytes memory start = _start(uint32(block.timestamp + 1 days));
+        bytes32 role = targetRouter.OUTBE_ICA_ROLE();
+        assertEq(role, keccak256("OUTBE_ICA_ROLE"));
+
+        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, user, role));
+        vm.prank(user);
+        targetRouter.receiveFromOutbe(start);
+
+        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, admin, role));
+        targetRouter.receiveFromOutbe(start);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, address(bridge), role)
+        );
+        vm.prank(address(bridge));
+        targetRouter.receiveFromOutbe(start);
+    }
+
+    function test_receiveFromOutbe_start_opens_the_auction_and_a_repeat_is_a_duplicate() public {
+        bytes memory start = _start(uint32(block.timestamp + 1 days));
+
+        vm.prank(outbeIca);
+        targetRouter.receiveFromOutbe(start);
+        assertEq(uint8(auction.auctionStage(SERIES_ID_DAY)), uint8(IIntexAuction.AuctionStage.CommittingBids));
+
+        vm.expectEmit(true, true, false, true, address(targetRouter));
+        emit ITargetRouter.IntexAuctionMessageIgnored(
+            BridgeMsgCodec.MSG_INTEX_AUCTION_START, SERIES_ID_DAY, InboundReason.DUPLICATE
+        );
+        vm.prank(outbeIca);
+        targetRouter.receiveFromOutbe(start);
+        assertEq(uint8(auction.auctionStage(SERIES_ID_DAY)), uint8(IIntexAuction.AuctionStage.CommittingBids));
+    }
+
+    function test_bids_leave_for_desis_on_outbe() public {
+        vm.etch(DESIS, address(new MockDesis()).code);
+        vm.deal(address(targetRouter), 1 ether);
+        uint32 commitEnd = uint32(block.timestamp + 1 days);
+        _deliver(OUTBE_CHAIN_ID, outbeIca, address(targetRouter), _start(commitEnd));
+        vm.warp(commitEnd + 1);
+
+        bridge.setAutoDeliver(true);
+        _deliver(
+            OUTBE_CHAIN_ID,
+            outbeIca,
+            address(targetRouter),
+            BridgeMsgCodec.encodeIntexAuctionClearingStart(SERIES_ID_DAY)
+        );
+
+        assertEq(bridge.lastRecipient(), _interop(OUTBE_CHAIN_ID, DESIS), "the bids go to Desis on Outbe");
+        assertEq(MockDesis(DESIS).received(), 2, "the empty page and the totals marker");
+        assertEq(MockDesis(DESIS).lastSender(), _interop(uint32(block.chainid), address(targetRouter)));
+        assertEq(
+            MockDesis(DESIS).lastPayloadHash(),
+            keccak256(BridgeMsgCodec.encodeBidsTotals(SERIES_ID_DAY, uint32(block.chainid), 1, 0)),
+            "the totals marker closes the relay"
+        );
     }
 
     // --- ERC165 Tests ---

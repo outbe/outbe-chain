@@ -526,6 +526,8 @@ mod tests {
             SystemTx::BeginBlock { step_index: 6 },
             SystemTx::BeginBlock { step_index: 7 },
             SystemTx::BeginBlock { step_index: 8 },
+            SystemTx::BeginBlock { step_index: 9 },
+            SystemTx::BeginBlock { step_index: 10 },
         ];
         let end_inputs = [
             SystemTx::EndBlock { step_index: 0 },

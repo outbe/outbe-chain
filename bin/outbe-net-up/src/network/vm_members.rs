@@ -136,7 +136,12 @@ pub(crate) trait JoinChainDriver: Send + Sync {
         role: u8,
     ) -> Pin<Box<dyn Future<Output = Result<Address>> + Send + '_>>;
     fn finalized_block(&self) -> Pin<Box<dyn Future<Output = Result<Block>> + Send + '_>>;
-    fn fund_address(&self, from_key: &Path, to: Address, amount: U256) -> Result<String>;
+    fn fund_address(
+        &self,
+        from_key: &Path,
+        to: Address,
+        amount: U256,
+    ) -> Pin<Box<dyn Future<Output = Result<String>> + Send + '_>>;
     fn stake(
         &self,
         joiner_keys_dir: &Path,
@@ -236,13 +241,19 @@ impl JoinChainDriver for RealJoinChainDriver {
         Box::pin(async move { self.rpc.finalized_block().await })
     }
 
-    fn fund_address(&self, from_key: &Path, to: Address, amount: U256) -> Result<String> {
-        let to_arg = format!("{to:#x}");
-        let amount_arg = amount.to_string();
-        self.run_cli(
-            from_key,
-            &["validator", "fund-operational-key", &to_arg, &amount_arg],
-        )
+    fn fund_address(
+        &self,
+        from_key: &Path,
+        to: Address,
+        amount: U256,
+    ) -> Pin<Box<dyn Future<Output = Result<String>> + Send + '_>> {
+        let from_key = from_key.to_path_buf();
+        Box::pin(async move {
+            outbe_operator_node_role::hyperlane::send_value_transfer(
+                &self.rpc, &from_key, to, amount,
+            )
+            .await
+        })
     }
 
     fn stake(
@@ -891,7 +902,9 @@ pub(crate) async fn add_validator_with_exec(
                 "funding joining validator `{}` ({validator_addr:#x}) before VM start with {topup} wei (min_stake + feeder + gas reserve)",
                 member.name
             ));
-            let tx = driver.fund_address(&founder0_key, validator_addr, topup)?;
+            let tx = driver
+                .fund_address(&founder0_key, validator_addr, topup)
+                .await?;
             driver.wait_tx_finalized(&tx, deadline).await?;
             ensure!(
                 driver.balance(validator_addr).await? >= required_balance,
@@ -989,8 +1002,9 @@ pub(crate) async fn add_validator_with_exec(
             "funding oracle feeder {feeder_addr:#x} for `{}`",
             member.name
         ));
-        let tx =
-            driver.fund_address(&joiner_evm_key, feeder_addr, U256::from(FEEDER_FUNDING_WEI))?;
+        let tx = driver
+            .fund_address(&joiner_evm_key, feeder_addr, U256::from(FEEDER_FUNDING_WEI))
+            .await?;
         driver.wait_tx_finalized(&tx, deadline).await?;
         ensure!(
             !driver.balance(feeder_addr).await?.is_zero(),

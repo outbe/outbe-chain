@@ -14,22 +14,22 @@ use outbe_system_common::units::SCALE_1E6_U256;
 
 use crate::constants::DAYS_PER_YEAR;
 use crate::errors::CredisError;
-use crate::schema::{Credis, CredisContract, CredisState};
+use crate::schema::{CredisContract, CredisState, CredisView};
 
 /// Timestamp after which a called Credis's remainder may be forfeited.
 ///
 /// Reads the notice period its group sealed at issuance, so switching the profile
 /// cannot move the deadline of a Credis that is already live.
-pub fn settlement_deadline(record: &Credis) -> u64 {
+pub fn settlement_deadline(credis: &CredisView) -> u64 {
     outbe_core_common::settlement::settlement_deadline_of(
-        record.called_at,
-        record.call_notice_period_seconds,
+        credis.called_at,
+        credis.terms.call_notice_period_seconds,
     )
 }
 
 /// The state a reader sees at `now`: a Called Credis past its deadline reads Forfeited
 /// until the cleanup deletes it.
-pub fn effective_state(record: &Credis, now: u64) -> Result<CredisState> {
+pub fn effective_state(record: &CredisView, now: u64) -> Result<CredisState> {
     use outbe_core_common::settlement::RightState;
     Ok(
         match outbe_core_common::settlement::effective_state(
@@ -59,7 +59,7 @@ pub struct Outcome {
     pub forfeited_gratis_minor: U256,
 }
 
-pub fn outcome(record: &Credis, now: u64) -> Result<Outcome> {
+pub fn outcome(record: &CredisView, now: u64) -> Result<Outcome> {
     let settled_amount_minor = record
         .amount_minor
         .checked_sub(record.outstanding_amount_minor)
@@ -92,7 +92,7 @@ impl CredisContract<'_> {
     /// for the fee and the amount by which the accrual anchor advances.
     /// The function deliberately does not consume the sub-day remainder. The
     /// remainder stays on the Credis, and a later settlement charges it.
-    pub fn elapsed_days(record: &Credis, now: u64) -> u64 {
+    pub fn elapsed_days(record: &crate::schema::Credis, now: u64) -> u64 {
         now.saturating_sub(record.last_settled_at) / SECONDS_PER_DAY
     }
 
@@ -100,7 +100,7 @@ impl CredisContract<'_> {
     /// The fee is simple and non-compounding, ACT/365 over whole elapsed days.
     /// It is floored in the user's favor to the asset's minor unit (C34).
     /// A Forfeited Credis accrues nothing.
-    pub fn accrued_fee(record: &Credis, now: u64) -> Result<U256> {
+    pub fn accrued_fee(record: &CredisView, now: u64) -> Result<U256> {
         let days = Self::elapsed_days(record, now);
         if days == 0
             || record.outstanding_amount_minor.is_zero()
@@ -127,7 +127,7 @@ impl CredisContract<'_> {
     // ---------------------------------------------------------------------
 
     /// Loads the Credis as its group sees it. Reverts on missing.
-    pub fn get_credis(&self, credis_id: U256) -> Result<Credis> {
+    pub fn get_credis(&self, credis_id: U256) -> Result<CredisView> {
         self.load_credis(credis_id)
     }
 

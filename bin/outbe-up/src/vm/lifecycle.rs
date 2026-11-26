@@ -42,7 +42,9 @@ use crate::{
     network::{
         build::DeploymentKind,
         config::{Ssh, VmFlavor},
-        remote::{rpc_client_via_ssh, shell_quote, NetworkArtifacts, SshOptions},
+        remote::{
+            rpc_client_via_ssh, shell_quote, DirectSshOptions as SshOptions, NetworkArtifacts,
+        },
         status::rpc_ready_for_hyperlane,
     },
     vm::{

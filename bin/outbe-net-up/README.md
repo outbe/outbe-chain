@@ -206,7 +206,7 @@ Safety checks built into `network update`:
 
 - **One VM at a time, strictly graceful:** calls `outbe-up vm update` (`ShutdownVm`, `UpdateVm`, `StartVm`) and rejects `--force`. Every VM keeps its UUID, MAC address, static IP, and `hda.img` data disk.
 - **Fail-closed peer and DKG guard:** before every stop, checks that all members are healthy, every validator reports `connectedPeers >= n - 1`, and `nextPlannedActivationHeight > 0`. Defers past the next DKG boundary when inside a ceremony or within the time-based guard window.
-- **Forward 60-block missed-vote check:** before every stop, snapshots `outbe_getParticipation` for all active validators and waits 60 finalized blocks. It requires `missedVotes` delta `0` for every validator. On epoch boundaries or transient missed votes, it retries the window up to `--timeout`. Each retry re-checks the DKG guard. Any RPC error or timeout fails closed.
+- **Forward 60-block missed-vote check:** before every stop, queries `IValidatorSet.getActiveValidators()` and `IValidatorSet.validatorByAddress(address)` via `eth_call` to `0x000000000000000000000000000000000000EE00` for all active validators and waits 60 finalized blocks. It requires `missedVotes` delta `0` for every validator. On epoch boundaries or transient missed votes, it retries the window up to `--timeout`. Each retry re-checks the DKG guard. Any RPC error or timeout fails closed.
 - **Resumable:** if interrupted, rerun the same `network update` command. It skips VMs already on the target image, resumes at most one interrupted VM, and refuses when two or more members are unhealthy.
 - **Post-rollout DKG check:** after the last VM returns in lockstep, waits for all validators to cross the next DKG boundary together. Every member must report matching finalized block hashes.
 
@@ -238,6 +238,6 @@ Do not SSH into guest VMs. Inspect networks from the operator machine and VMM ho
 
 - Run `outbe-net-up network status --artifacts ./out/network --json` for RPC, lag, VRF version, consensus peers, and TEE state.
 - Run `outbe-up vm logs --name <network>-<member> --lines 200` on the VMM host to read the guest serial log.
-- Query host-local JSON-RPC on `http://<bridge-ip>:8545` from the VMM host (for example `outbe_consensusStatus` or `outbe_getParticipation`).
+- Query host-local JSON-RPC on `http://<bridge-ip>:8545` from the VMM host (for example `outbe_consensusStatus` or `eth_call` to `IValidatorSet`).
 - Pass `--ssh-config /dev/null` on any SSH command to ignore local `~/.ssh/config` overrides.
 - Do not edit `<artifacts>/network-vm-state.json` by hand.

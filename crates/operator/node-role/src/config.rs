@@ -231,6 +231,8 @@ pub struct NetworkConfig {
     pub advertise_ip: Ipv4Addr,
     #[serde(default = "default_rpc_bind_ip")]
     pub rpc_bind_ip: Ipv4Addr,
+    #[serde(default)]
+    pub ports: NetworkPorts,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vm_prefix: Option<u8>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -249,6 +251,26 @@ pub struct NetworkConfig {
     pub consensus_peers: Vec<String>,
     #[serde(default)]
     pub use_local_defaults: bool,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct NetworkPorts {
+    pub reth_p2p: u16,
+    pub reth_discovery: u16,
+    pub consensus: u16,
+    pub radicle: u16,
+}
+
+impl Default for NetworkPorts {
+    fn default() -> Self {
+        Self {
+            reth_p2p: 30_303,
+            reth_discovery: 31_303,
+            consensus: 30_400,
+            radicle: 8_776,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -376,15 +398,30 @@ impl OperatorConfig {
         let role_line = vm_role
             .map(|role| format!("OUTBE_NODE_ROLE=\"{}\"\n", role.as_str()))
             .unwrap_or_default();
-        let vm_net_lines = render_optional_vm_static_env(
-            self.network.vm_prefix,
-            self.network.vm_gateway,
-            &self.network.vm_dns,
-            self.network.vm_consensus_port,
-            self.network.vm_reth_port,
-            self.network.vm_discv5_port,
-            self.network.vm_radicle_port,
-        );
+        let net_port_lines = if vm_role.is_some() || self.network.vm_prefix.is_some() {
+            render_optional_vm_static_env(
+                self.network.vm_prefix,
+                self.network.vm_gateway,
+                &self.network.vm_dns,
+                self.network.vm_consensus_port,
+                self.network.vm_reth_port,
+                self.network.vm_discv5_port,
+                self.network.vm_radicle_port,
+            )
+        } else {
+            format!(
+                concat!(
+                    "OUTBE_RETH_P2P_PORT=\"{}\"\n",
+                    "OUTBE_RETH_DISCOVERY_PORT=\"{}\"\n",
+                    "OUTBE_CONSENSUS_PORT=\"{}\"\n",
+                    "OUTBE_RADICLE_PORT=\"{}\"\n",
+                ),
+                self.network.ports.reth_p2p,
+                self.network.ports.reth_discovery,
+                self.network.ports.consensus,
+                self.network.ports.radicle,
+            )
+        };
         let env = format!(
             concat!(
                 "{}",
@@ -401,7 +438,7 @@ impl OperatorConfig {
             role_line,
             self.network.advertise_ip,
             self.network.rpc_bind_ip,
-            vm_net_lines,
+            net_port_lines,
             self.network.certified_rpc,
             validator,
             self.network.bootnodes.join(","),
@@ -433,6 +470,20 @@ impl OperatorConfig {
         ensure!(
             self.network.rpc_bind_ip.is_loopback() || self.network.rpc_bind_ip.is_private(),
             "network.rpc_bind_ip must be a loopback or private IPv4 address"
+        );
+        let ports = [
+            self.network.ports.reth_p2p,
+            self.network.ports.reth_discovery,
+            self.network.ports.consensus,
+            self.network.ports.radicle,
+        ];
+        ensure!(
+            ports.iter().all(|port| *port > 0),
+            "network.ports values must be positive"
+        );
+        ensure!(
+            ports.into_iter().collect::<BTreeSet<_>>().len() == ports.len(),
+            "network.ports values must be unique"
         );
         validate_optional_vm_static_network(
             self.network.rpc_bind_ip,
@@ -925,6 +976,10 @@ hyperlane:
             concat!(
                 "OUTBE_EXTERNAL_IP=\"192.0.2.10\"\n",
                 "OUTBE_RPC_BIND_IP=\"127.0.0.1\"\n",
+                "OUTBE_RETH_P2P_PORT=\"30303\"\n",
+                "OUTBE_RETH_DISCOVERY_PORT=\"31303\"\n",
+                "OUTBE_CONSENSUS_PORT=\"30400\"\n",
+                "OUTBE_RADICLE_PORT=\"8776\"\n",
                 "OUTBE_CERTIFIED_RPC=\"https://rpc.example\"\n",
                 "OUTBE_VALIDATOR_ADDRESS=\"0x1111111111111111111111111111111111111111\"\n",
                 "OUTBE_BOOTNODES=\"enode://abc@192.0.2.1:30303\"\n",

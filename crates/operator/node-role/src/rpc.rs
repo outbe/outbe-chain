@@ -22,7 +22,7 @@ mod bindings {
 use bindings::{IHyperlaneController, IStaking, IValidatorSet};
 
 const STAKING: Address = address!("000000000000000000000000000000000000EE02");
-pub(crate) const VALIDATOR_SET: Address = address!("000000000000000000000000000000000000EE00");
+pub const VALIDATOR_SET: Address = address!("000000000000000000000000000000000000EE00");
 pub(crate) const HYPERLANE_CONTROLLER: Address =
     address!("000000000000000000000000000000000000EE14");
 
@@ -371,6 +371,53 @@ impl RpcClient {
         }
         Ok(response.result)
     }
+}
+
+pub fn encode_get_active_validators() -> Vec<u8> {
+    IValidatorSet::getActiveValidatorsCall {}.abi_encode()
+}
+
+pub fn decode_get_active_validators(bytes: &[u8]) -> Result<Vec<Address>> {
+    IValidatorSet::getActiveValidatorsCall::abi_decode_returns(bytes)
+        .wrap_err("decode IValidatorSet.getActiveValidators return value")
+}
+
+pub fn encode_active_validators_return(validators: &[Address]) -> Vec<u8> {
+    IValidatorSet::getActiveValidatorsCall::abi_encode_returns(&validators.to_vec())
+}
+
+pub fn encode_validator_by_address(addr: Address) -> Vec<u8> {
+    IValidatorSet::validatorByAddressCall { addr }.abi_encode()
+}
+
+pub fn decode_validator_by_address_arg(calldata: &[u8]) -> Result<Address> {
+    IValidatorSet::validatorByAddressCall::abi_decode(calldata)
+        .map(|call| call.addr)
+        .wrap_err("decode IValidatorSet.validatorByAddress calldata")
+}
+
+pub fn decode_validator_missed_votes(bytes: &[u8]) -> Result<u64> {
+    IValidatorSet::validatorByAddressCall::abi_decode_returns(bytes)
+        .map(|record| record.missedVotes)
+        .wrap_err("decode IValidatorSet.validatorByAddress return value")
+}
+
+pub fn encode_validator_missed_votes_return(addr: Address, missed_votes: u64) -> Vec<u8> {
+    let ret = IValidatorSet::validatorByAddressReturn {
+        validatorAddress: addr,
+        consensusPubkey: Default::default(),
+        stake: U256::ZERO,
+        status: 2,
+        slashCount: 0,
+        missedBlocks: 0,
+        missedVotes: missed_votes,
+        blocksProposed: 10,
+        joinedAtHeight: 0,
+        deactivatedAtHeight: 0,
+        unbondingEnd: 0,
+        hasBLSShare: true,
+    };
+    IValidatorSet::validatorByAddressCall::abi_encode_returns(&ret)
 }
 
 pub(crate) fn encode_set_delegate(role: u8, delegate: Address) -> Vec<u8> {

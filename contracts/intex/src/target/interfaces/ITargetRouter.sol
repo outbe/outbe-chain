@@ -3,10 +3,10 @@ pragma solidity 0.8.30;
 
 /// @title ITargetRouter
 /// @author Outbe
-/// @notice Interface for a target-chain router. Relays revealed bids to Outbe and receives auction/series messages
-///         from Outbe over the protocol-agnostic ERC-7786 bridge.
+/// @notice Interface for a target-chain router. Relays revealed bids to Outbe over the protocol-agnostic ERC-7786
+///         bridge and receives auction/series messages from the Interchain Account of Outbe.
 /// @dev Deployed on each target chain behind a UUPS proxy. Inbound delivery arrives via
-///      {ERC7786MessengerBase-receiveMessage}. The inbound INTEX_AUCTION_CLEARING_START triggers the bids relay,
+///      {receiveFromOutbe}. The inbound INTEX_AUCTION_CLEARING_START triggers the bids relay,
 ///      and the contract's relay float funds it. Auction messages are keyed by `emissionDay`. Series
 ///      (issuance/mark) messages are keyed by `seriesId`.
 interface ITargetRouter {
@@ -37,21 +37,17 @@ interface ITargetRouter {
     ///         little gas. `errorData` is empty when no send failed.
     event IntexAuctionBidsSendFailed(uint32 indexed emissionDay, uint32 nextPage, uint32 totalPages, bytes errorData);
 
-    /// @notice Emitted when a whole message arrives and the router does nothing with it.
+    /// @notice Emitted when a whole message of Outbe arrives and the router does nothing with it.
+    ///         The delivery transaction also holds the Hyperlane `ProcessId` of the message.
     /// @param reason One of the `InboundReason` codes.
-    event MessageIgnored(bytes32 indexed receiveId, uint32 indexed srcChainId, uint8 reason);
+    event IntexAuctionMessageIgnored(uint8 indexed msgType, uint32 indexed emissionDay, uint8 reason);
 
     /// @notice Emitted once the last page of a day's Intex series from `srcChainId` is applied on this chain.
     event IntexSeriesAllReceived(uint32 indexed emissionDay, uint32 indexed srcChainId, uint32 totalPages);
 
     /// @notice Emitted when a page of the winners arrives. The last page closes the day in the escrow.
     event IntexAuctionWinnersReceived(
-        bytes32 indexed receiveId,
-        uint32 indexed emissionDay,
-        uint32 indexed srcChainId,
-        uint32 pageIndex,
-        uint32 totalPages,
-        uint32 winnersCount
+        uint32 indexed emissionDay, uint32 indexed srcChainId, uint32 pageIndex, uint32 totalPages, uint32 winnersCount
     );
 
     /// @notice Emitted when the proceeds of one page leave for Outbe, at the first try or at a retry that works.
@@ -63,9 +59,6 @@ interface ITargetRouter {
     event IntexAuctionProceedsSendFailed(
         uint256 indexed idx, uint32 indexed emissionDay, uint32 pageIndex, uint256 amountMinor, bytes errorData
     );
-
-    /// @notice Emitted when an admin sets the token transfer contract and the origin router.
-    event TargetRouterProceedsRouteSet(address tokenBridge, address originRouter);
 
     /// @notice Emitted when an admin sets IntexAuction, the Intex contract and the escrow. Only the new values.
     event TargetRouterDependenciesSet(address intexAuction, address intexContract, address escrow);
@@ -99,8 +92,6 @@ interface ITargetRouter {
     error AlreadyResolved(uint256 idx);
     /// @notice A day's proceeds are in a token the proceeds bridge does not move.
     error ProceedsTokenNotBridged(address dayToken, address bridgeToken);
-    /// @notice An inbound message came from a chain other than Outbe.
-    error UnexpectedSourceChain(uint32 srcChainId);
 
     // --- Admin ---
     /// @notice Wire contract dependencies.
@@ -109,8 +100,7 @@ interface ITargetRouter {
     /// @param escrow EscrowAdapter contract address.
     function setDependencies(address intexAuction, address intexContract, address escrow) external;
 
-    /// @notice Register (or clear) the matching messenger on `chainId` as an ERC-7930 interoperable address.
-    /// @param chainId Destination/source chainId.
-    /// @param interop ERC-7930 interoperable address (empty to clear).
-    function registerRemoteMessenger(uint32 chainId, bytes calldata interop) external;
+    /// @notice A message of Desis or IntexFactory on Outbe, which the Interchain Account of Outbe on
+    ///         this chain calls. Only the holder of `OUTBE_ICA_ROLE` may call it.
+    function receiveFromOutbe(bytes calldata message) external;
 }

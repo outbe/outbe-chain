@@ -509,7 +509,7 @@ struct FakeHostState {
     rounds_since_target_update: Option<usize>,
     rpc_connected_peers_override: BTreeMap<String, u64>,
     /// Optional per-call `missedVotes` schedule for validator-1 (`0x...0002`) returned by
-    /// `outbe_getParticipation` batches (pops front or repeats last).
+    /// `IValidatorSet.validatorByAddress` `eth_call` batches (pops front or repeats last).
     rpc_participation_missed_schedule: Vec<u64>,
     /// If non-zero, validator-1's `missedVotes` increments by this amount on every participation call.
     rpc_participation_persistent_step: u64,
@@ -1146,8 +1146,8 @@ impl HostExec for FakeHostExec {
             let parsed: Value = serde_json::from_slice(stdin_bytes)?;
             if parsed.is_object() {
                 let method = parsed.get("method").and_then(Value::as_str).unwrap_or("");
-                if method == "outbe_getValidators" {
-                    let vals: Vec<Value> = g
+                if method == "eth_call" {
+                    let addrs: Vec<alloy_primitives::Address> = g
                         .vms
                         .values()
                         .filter(|v| {
@@ -1156,18 +1156,17 @@ impl HostExec for FakeHostExec {
                         })
                         .enumerate()
                         .map(|(i, _)| {
-                            json!({
-                                "address": format!("0x{:040x}", i + 1),
-                                "consensusPubkey": format!("{:096x}", i + 1),
-                                "status": 1,
-                                "stake": "1000000000000000000"
-                            })
+                            format!("0x{:040x}", i + 1)
+                                .parse::<alloy_primitives::Address>()
+                                .unwrap()
                         })
                         .collect();
+                    let encoded =
+                        outbe_operator_node_role::rpc::encode_active_validators_return(&addrs);
                     return Ok(json!({
                         "jsonrpc": "2.0",
                         "id": 1,
-                        "result": vals,
+                        "result": format!("0x{}", hex::encode(encoded)),
                     })
                     .to_string());
                 }
@@ -1192,7 +1191,7 @@ impl HostExec for FakeHostExec {
                 .first()
                 .and_then(|item| item.get("method"))
                 .and_then(Value::as_str)
-                == Some("outbe_getParticipation")
+                == Some("eth_call")
             {
                 let call_idx = g.rpc_participation_calls;
                 g.rpc_participation_calls += 1;
@@ -1203,13 +1202,14 @@ impl HostExec for FakeHostExec {
                             json!({
                                 "jsonrpc": "2.0",
                                 "id": item["id"],
-                                "error": { "code": -32000, "message": "simulated participation RPC error" }
+                                "error": { "code": -32000, "message": "simulated validatorByAddress eth_call error" }
                             })
                         })
                         .collect();
                     return Ok(Value::Array(err_items).to_string());
                 }
-                let val1_addr = format!("0x{:040x}", 2usize);
+                let val1_addr: alloy_primitives::Address =
+                    format!("0x{:040x}", 2usize).parse().unwrap();
                 let val1_missed = if g.rpc_participation_persistent_step > 0 {
                     (call_idx as u64) * g.rpc_participation_persistent_step
                 } else {
@@ -1222,21 +1222,25 @@ impl HostExec for FakeHostExec {
                 let resp_items: Vec<Value> = batch
                     .iter()
                     .map(|item| {
-                        let addr = item
-                            .pointer("/params/0")
+                        let data_hex = item
+                            .pointer("/params/0/data")
                             .and_then(Value::as_str)
-                            .unwrap_or("")
-                            .to_ascii_lowercase();
+                            .unwrap_or("");
+                        let calldata = hex::decode(data_hex.strip_prefix("0x").unwrap_or(data_hex))
+                            .expect("valid eth_call calldata hex");
+                        let addr = outbe_operator_node_role::rpc::decode_validator_by_address_arg(
+                            &calldata,
+                        )
+                        .expect("valid validatorByAddress calldata");
                         let missed = if addr == val1_addr { val1_missed } else { 0 };
+                        let encoded =
+                            outbe_operator_node_role::rpc::encode_validator_missed_votes_return(
+                                addr, missed,
+                            );
                         json!({
                             "jsonrpc": "2.0",
                             "id": item["id"],
-                            "result": {
-                                "address": addr,
-                                "blocksProposed": 10,
-                                "missedBlocks": 0,
-                                "missedVotes": missed,
-                            }
+                            "result": format!("0x{}", hex::encode(encoded)),
                         })
                     })
                     .collect();
@@ -2733,23 +2737,25 @@ impl JoinChainDriver for FakeJoinDriver {
         _from_key: &Path,
         to: alloy_primitives::Address,
         amount: alloy_primitives::U256,
-    ) -> Result<String> {
-        let mut g = self.inner.lock().unwrap();
-        let entry = g.balances.entry(to).or_default();
-        *entry = entry.saturating_add(amount);
-        g.funded_calls.push((to, amount));
-        // F1: resident TEE (`registerEnclave`) requires a non-zero balance and becomes ready only
-        // once funded; record whether funding occurred BEFORE the joiner VM was started.
-        if to == g.joiner_addr && !g.balances[&to].is_zero() {
-            let already_started = {
-                let mut h = g.host_state.lock().unwrap();
-                let started = h.vm_start_calls.iter().any(|(n, _)| n == &g.joiner_vm_name);
-                h.joiner_enclave_ready = Some(true);
-                started
-            };
-            g.funded_before_vm_start = !already_started;
-        }
-        Ok(format!("0x{}", "1".repeat(64)))
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String>> + Send + '_>> {
+        Box::pin(async move {
+            let mut g = self.inner.lock().unwrap();
+            let entry = g.balances.entry(to).or_default();
+            *entry = entry.saturating_add(amount);
+            g.funded_calls.push((to, amount));
+            // F1: resident TEE (`registerEnclave`) requires a non-zero balance and becomes ready only
+            // once funded; record whether funding occurred BEFORE the joiner VM was started.
+            if to == g.joiner_addr && !g.balances[&to].is_zero() {
+                let already_started = {
+                    let mut h = g.host_state.lock().unwrap();
+                    let started = h.vm_start_calls.iter().any(|(n, _)| n == &g.joiner_vm_name);
+                    h.joiner_enclave_ready = Some(true);
+                    started
+                };
+                g.funded_before_vm_start = !already_started;
+            }
+            Ok(format!("0x{}", "1".repeat(64)))
+        })
     }
 
     fn stake(
@@ -4533,9 +4539,9 @@ async fn s7_pre_stop_missed_votes_fails_closed_and_retries_across_epoch_boundary
         Arc::clone(&exec),
     )
     .await
-    .expect_err("must fail closed when outbe_getParticipation returns an RPC error");
+    .expect_err("must fail closed when IValidatorSet.validatorByAddress returns an RPC error");
     assert!(
-        format!("{rpc_err:#}").contains("outbe_getParticipation"),
+        format!("{rpc_err:#}").contains("validatorByAddress"),
         "{rpc_err:#}"
     );
     assert!(fake.state.lock().unwrap().vm_update_calls.is_empty());

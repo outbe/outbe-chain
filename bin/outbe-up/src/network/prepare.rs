@@ -10,10 +10,7 @@ use outbe_operator_node_role::progress::Progress;
 
 use super::{
     build::DeploymentKind,
-    remote::{
-        capture_founder, copy_to_founder, run_founder, run_quiet_founder, NetworkArtifacts,
-        SshOptions,
-    },
+    remote::{NetworkArtifacts, SshOptions},
 };
 
 const INSTALLER: &str = r#"#!/bin/sh
@@ -62,7 +59,7 @@ as_root "$base/validator-${index}/install-systemd.sh" --prepare-only
 pub async fn run(
     artifacts: &Path,
     ssh_key: Option<&Path>,
-    ssh_config: Option<&Path>,
+    _ssh_config: Option<&Path>,
 ) -> Result<()> {
     let mut progress = Progress::new();
     progress.stage("verifying network artifacts and software bundle");
@@ -71,7 +68,7 @@ pub async fn run(
         build.manifest.deployment == DeploymentKind::Host,
         "network prepare only supports bare-host deployments; use outbe-up vm disk / vm create for VM deployments"
     );
-    let ssh = SshOptions::new(ssh_key, ssh_config)?;
+    let ssh = SshOptions::new(ssh_key, &build.manifest.genesis.final_sha256)?;
     let temporary = tempfile::tempdir()?;
     let software = temporary.path().join("software");
     fs::create_dir(&software)?;
@@ -87,13 +84,18 @@ pub async fn run(
 
     progress.stage(&format!(
         "preparing {} founding validators",
-        build.config.founders.len()
+        build.manifest.founders.len()
     ));
     let mut tasks = JoinSet::new();
-    for (index, founder) in build.config.founders.into_iter().enumerate() {
+    for founder in build.manifest.founders.clone() {
         let ssh = ssh.clone();
-        let archive = build.root.join(format!("dist/validator-{index}.tgz"));
-        let archive_sha = build.manifest.founders[index]
+        let index = founder.index;
+        let archive_rel = founder
+            .archive
+            .as_deref()
+            .ok_or_else(|| eyre::eyre!("founder {index} manifest has no archive"))?;
+        let archive = build.root.join(archive_rel);
+        let archive_sha = founder
             .archive_sha256
             .clone()
             .ok_or_else(|| eyre::eyre!("founder {index} manifest has no archive_sha256"))?;
@@ -134,7 +136,7 @@ pub async fn run(
 
 struct PrepareFounder<'a> {
     ssh: &'a SshOptions,
-    founder: &'a super::config::Founder,
+    founder: &'a super::build::FounderArtifact,
     index: usize,
     binaries: &'a Path,
     archive: &'a Path,
@@ -145,28 +147,36 @@ struct PrepareFounder<'a> {
 }
 
 fn prepare_founder(input: PrepareFounder<'_>) -> Result<()> {
-    let advertise_ip = input.founder.advertise_ip;
-    let rpc_bind_check =
-        if input.founder.rpc_bind_ip.is_loopback() || input.founder.rpc_bind_ip == advertise_ip {
-            String::new()
-        } else {
-            format!(
-                "ip -4 -o addr show | grep -Fq ' {0}/' \
-|| {{ echo 'rpc_bind_ip {0} is not configured on this host' >&2; exit 1; }};",
-                input.founder.rpc_bind_ip,
-            )
-        };
-    let remote = capture_founder(
-        input.ssh,
+    let private_ip = input.founder.private_ip;
+    let ports = &input.founder.ports;
+    let required_ports = [
+        8_545,
+        ports.reth_p2p,
+        ports.reth_discovery,
+        ports.consensus,
+        ports.radicle,
+        8_551,
+        8_876,
+        9_002,
+        9_101,
+        9_000,
+        9_003,
+    ]
+    .map(|port| port.to_string())
+    .join(" ");
+    let remote = input.ssh.capture(
         input.founder,
         &format!(
             "set -eu; test \"$(uname -s)\" = Linux; test \"$(uname -m)\" = x86_64; \
 command -v systemctl >/dev/null; command -v tar >/dev/null; command -v sha256sum >/dev/null; \
-command -v curl >/dev/null; command -v ip >/dev/null; \
+command -v curl >/dev/null; command -v ip >/dev/null; command -v ss >/dev/null; \
 if [ \"$(id -u)\" -ne 0 ]; then command -v sudo >/dev/null; sudo -n true; fi; \
-ip -4 -o addr show | grep -Fq ' {advertise_ip}/' \
-  || {{ echo 'advertise_ip {advertise_ip} is not configured on this host' >&2; exit 1; }}; \
-{rpc_bind_check} \
+ip -4 -o addr show | grep -Fq ' {private_ip}/' \
+  || {{ echo 'private_ip {private_ip} is not configured on this VM' >&2; exit 1; }}; \
+for port in {required_ports}; do \
+  ! ss -H -lntu | grep -Eq \"[:.]$port[[:space:]]\" \
+    || {{ echo \"required port $port is already in use\" >&2; exit 1; }}; \
+done; \
 available=\"$(df -Pk /opt 2>/dev/null | awk 'NR==2 {{print $4}}')\"; \
 [ -n \"$available\" ] || available=\"$(df -Pk / | awk 'NR==2 {{print $4}}')\"; \
 [ \"$available\" -ge {} ] \
@@ -185,16 +195,16 @@ mktemp -d /tmp/outbe-network.XXXXXX",
     );
     let remote_quoted = quote(&remote);
     let result = (|| {
-        copy_to_founder(input.ssh, input.founder, &[input.binaries], &remote, true)?;
-        copy_to_founder(
-            input.ssh,
+        input
+            .ssh
+            .copy_to(input.founder, &[input.binaries], &remote, true)?;
+        input.ssh.copy_to(
             input.founder,
             &[input.archive, input.installer],
             &remote,
             false,
         )?;
-        run_quiet_founder(
-            input.ssh,
+        input.ssh.run_quiet(
             input.founder,
             &format!(
                 "cd {remote_quoted} && sh install-founder.sh {} {} {}",
@@ -202,11 +212,9 @@ mktemp -d /tmp/outbe-network.XXXXXX",
             ),
         )
     })();
-    let cleanup = run_founder(
-        input.ssh,
-        input.founder,
-        &format!("rm -rf -- {remote_quoted}"),
-    );
+    let cleanup = input
+        .ssh
+        .run(input.founder, &format!("rm -rf -- {remote_quoted}"));
     result?;
     cleanup?;
     Ok(())

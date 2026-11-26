@@ -33,6 +33,7 @@ contract PrepareUpgradeTest is Test {
     uint256 internal constant PK = 0xA11CE;
     uint32 internal constant OUTBE = 54_322_345;
     address internal constant HUB = address(0xB0B);
+    address internal constant WCOEN_BRIDGE = address(0xC0E);
     address internal constant GOVERNANCE = address(0x60F);
 
     PrepareUpgradeHarness internal script;
@@ -49,7 +50,7 @@ contract PrepareUpgradeTest is Test {
         vm.setEnv("CREATE3_FACTORY_ADDRESS", vm.toString(address(factory)));
         vm.setEnv("CONTRACT_SALT", SALT);
 
-        // A remote target stack: no OriginRouter, EscrowAdapter or IntexAuction here.
+        // A remote target stack: no EscrowAdapter or IntexAuction here.
         vm.startPrank(deployer);
         nft = IntexNFT1155(
             _deploy("IntexNFT1155", address(new IntexNFT1155()), abi.encodeCall(IntexNFT1155.initialize, (deployer)))
@@ -64,7 +65,7 @@ contract PrepareUpgradeTest is Test {
         router = TargetRouter(
             payable(_deploy(
                     "TargetRouter",
-                    address(new TargetRouter(HUB, OUTBE)),
+                    address(new TargetRouter(HUB, OUTBE, WCOEN_BRIDGE)),
                     abi.encodeCall(TargetRouter.initialize, (deployer))
                 ))
         );
@@ -79,6 +80,11 @@ contract PrepareUpgradeTest is Test {
         assertTrue(_implementation(address(router)) != oldImpl, "router upgraded");
         assertEq(address(TargetRouter(payable(_implementation(address(router)))).BRIDGE()), HUB, "hub kept");
         assertEq(TargetRouter(payable(_implementation(address(router)))).OUTBE_CHAIN_ID(), OUTBE, "outbe kept");
+        assertEq(
+            address(TargetRouter(payable(_implementation(address(router)))).erc20Router()),
+            WCOEN_BRIDGE,
+            "erc20Router kept"
+        );
         assertEq(bytes(script.proposal()).length, 0, "no payload");
     }
 
@@ -109,6 +115,7 @@ contract PrepareUpgradeTest is Test {
         TargetRouter routerImpl = TargetRouter(payable(impls[1]));
         assertEq(address(routerImpl.BRIDGE()), HUB, "router hub kept");
         assertEq(routerImpl.OUTBE_CHAIN_ID(), OUTBE, "outbe kept");
+        assertEq(address(routerImpl.erc20Router()), WCOEN_BRIDGE, "erc20Router kept");
     }
 
     function test_RevertWhen_PayloadHasNoSourceCommit() public {

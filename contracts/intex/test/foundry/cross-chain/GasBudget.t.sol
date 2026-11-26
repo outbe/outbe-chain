@@ -9,7 +9,6 @@ import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
-import {IOriginRouter} from "@contracts/origin/interfaces/IOriginRouter.sol";
 import {IntexGas} from "@contracts/shared/libs/IntexGas.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
@@ -17,19 +16,13 @@ import {MarkBatchLib} from "../helpers/MarkBatchLib.sol";
 import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 import {MultiRecipientSendParam} from "@contracts/shared/interfaces/IIntexNFT1155Bridge.sol";
 import {IntexNFT1155BridgeCodec} from "@contracts/shared/libs/IntexNFT1155BridgeCodec.sol";
-import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
-import {IOriginRouter} from "@contracts/origin/interfaces/IOriginRouter.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
-import {ReferenceCurrencyPriceLib} from "../helpers/ReferenceCurrencyPriceLib.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
-import {IDesis} from "@precompiles/IDesis.sol";
-import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
-import {BidPackLib} from "../helpers/BidPackLib.sol";
 
-/// @dev The origin buys destination gas from `IntexGas` before it knows what the target will spend.
+/// @dev Outbe buys destination gas from `IntexGas` before it knows what the target will spend.
 ///      The budgets were last sized by estimate rather than measurement. These tests pin each
 ///      formula against the real consumption of a realistic message. A budget below actual cost
 ///      strands the delivery in redelivery, and one far above it just overpays every send.
@@ -42,13 +35,13 @@ contract GasBudgetTest is CrossChainTest {
     TargetRouter internal router;
     IntexNFT1155 internal intex;
     address internal admin = address(this);
-    address internal originPeer = address(0x0B1);
+    address internal outbeIca = address(0x0B1);
 
     function setUp() public {
         _setUpBridge();
         intex = DeployProxy.intexNFT1155(admin, admin);
         router = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
-        router.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originPeer));
+        _wireOutbeIca(router, outbeIca);
         router.setDependencies(makeAddr("auction"), address(intex), makeAddr("escrow"));
         intex.grantRole(intex.ROUTER_ROLE(), address(router));
     }
@@ -56,7 +49,7 @@ contract GasBudgetTest is CrossChainTest {
     function _measure(bytes14[] memory batch) internal returns (uint256 spent) {
         bytes memory packet = BridgeMsgCodec.encodeIntexSeriesCallNotice(EMISSION_DAY, uint32(block.timestamp), batch);
         uint256 before = gasleft();
-        _deliver(OUTBE_CHAIN_ID, originPeer, address(router), packet);
+        _deliver(OUTBE_CHAIN_ID, outbeIca, address(router), packet);
         spent = before - gasleft();
     }
 
@@ -83,18 +76,16 @@ contract GasBudgetTest is CrossChainTest {
     function test_TheQuoteSurvivesOneRunawaySeriesInAFullBatch() public {
         GasBurningIntex poisoned = new GasBurningIntex(POISON);
         TargetRouter mocked = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
-        mocked.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originPeer));
+        _wireOutbeIca(mocked, outbeIca);
         mocked.setDependencies(makeAddr("auction"), address(poisoned), makeAddr("escrow"));
 
         bytes14[] memory batch = MarkBatchLib.sized(SERIES_PREFIX, BridgeMsgCodec.MAX_SERIES_PER_CALL_NOTICE);
         batch[0] = POISON;
         bytes memory packet = BridgeMsgCodec.encodeIntexSeriesCallNotice(EMISSION_DAY, uint32(block.timestamp), batch);
-        bytes memory call = abi.encodeCall(
-            bridge.deliverAs,
-            (_interop(OUTBE_CHAIN_ID, originPeer), _interop(uint32(block.chainid), address(mocked)), packet)
-        );
+        bytes memory call = abi.encodeCall(TargetRouter.receiveFromOutbe, (packet));
 
-        (bool ok,) = address(bridge).call{gas: IntexGas.intexSeriesCallNotice(batch.length)}(call);
+        vm.prank(outbeIca);
+        (bool ok,) = address(mocked).call{gas: IntexGas.intexSeriesCallNotice(batch.length)}(call);
 
         assertTrue(ok, "the message must land inside the gas its quote buys");
         assertEq(
@@ -125,13 +116,11 @@ contract GasBudgetTest is CrossChainTest {
         _seed(batch);
         intex.revokeRole(intex.ROUTER_ROLE(), address(router));
         bytes memory packet = BridgeMsgCodec.encodeIntexSeriesCallNotice(EMISSION_DAY, uint32(block.timestamp), batch);
-        bytes memory call = abi.encodeCall(
-            bridge.deliverAs,
-            (_interop(OUTBE_CHAIN_ID, originPeer), _interop(uint32(block.chainid), address(router)), packet)
-        );
+        bytes memory call = abi.encodeCall(TargetRouter.receiveFromOutbe, (packet));
 
+        vm.prank(outbeIca);
         uint256 before = gasleft();
-        (bool ok,) = address(bridge).call{gas: IntexGas.intexSeriesCallNotice(batch.length)}(call);
+        (bool ok,) = address(router).call{gas: IntexGas.intexSeriesCallNotice(batch.length)}(call);
         emit log_named_uint("refused_batch8", before - gasleft());
 
         assertTrue(ok, "the message must land inside the gas its quote buys");
@@ -177,7 +166,7 @@ contract GasBudgetTest is CrossChainTest {
 
         bytes memory packet = BridgeMsgCodec.encodeIntexSeries(EMISSION_DAY, 0, 1, batch);
         uint256 before = gasleft();
-        _deliver(OUTBE_CHAIN_ID, originPeer, address(router), packet);
+        _deliver(OUTBE_CHAIN_ID, outbeIca, address(router), packet);
         uint256 spent = before - gasleft();
 
         emit log_named_uint("issuance_full_series", spent);
@@ -278,17 +267,15 @@ contract GasBudgetTest is CrossChainTest {
     function test_ARunawaySeriesIsParkedAndTheBatchContinues() public {
         GasBurningIntex poisoned = new GasBurningIntex(POISON);
         TargetRouter mocked = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
-        mocked.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originPeer));
+        _wireOutbeIca(mocked, outbeIca);
         mocked.setDependencies(makeAddr("auction"), address(poisoned), makeAddr("escrow"));
 
         bytes memory packet = BridgeMsgCodec.encodeIntexSeriesCallNotice(
             EMISSION_DAY, uint32(block.timestamp), MarkBatchLib.two(POISON, SERIES_PREFIX)
         );
-        bytes memory call = abi.encodeCall(
-            bridge.deliverAs,
-            (_interop(OUTBE_CHAIN_ID, originPeer), _interop(uint32(block.chainid), address(mocked)), packet)
-        );
-        (bool ok,) = address(bridge).call{gas: IntexGas.intexSeriesCallNotice(2)}(call);
+        bytes memory call = abi.encodeCall(TargetRouter.receiveFromOutbe, (packet));
+        vm.prank(outbeIca);
+        (bool ok,) = address(mocked).call{gas: IntexGas.intexSeriesCallNotice(2)}(call);
 
         assertTrue(ok, "the message must land, not bounce back into redelivery");
         assertEq(
@@ -352,27 +339,26 @@ contract AuctionGasBudgetTest is CrossChainTest {
     uint64 internal constant ENTRY_PRICE = 100e6;
 
     TargetRouter internal router;
-    OriginRouter internal originRouter;
     IntexAuction internal auction;
     IntexNFT1155 internal intex;
     EscrowAdapter internal escrow;
     MockTheCompact internal compact;
     MockWCOEN internal paymentToken;
     address internal admin = address(this);
+    address internal outbeIca = address(0x0B1);
 
     function setUp() public {
         _setUpBridge();
         intex = DeployProxy.intexNFT1155(admin, admin);
         auction = DeployProxy.intexAuction(admin, admin);
         router = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
-        originRouter = DeployProxy.originRouter(address(bridge), admin);
         escrow = DeployProxy.escrowAdapter(admin, admin);
         compact = new MockTheCompact();
         paymentToken = new MockWCOEN();
         escrow.setDependencies(admin, address(compact), address(paymentToken));
         compact.setResetPeriodSeconds(0);
 
-        router.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(originRouter)));
+        _wireOutbeIca(router, outbeIca);
         router.setDependencies(address(auction), address(intex), address(escrow));
         auction.grantRole(auction.RELAYER_ROLE(), address(router));
         intex.grantRole(intex.ROUTER_ROLE(), address(router));
@@ -384,15 +370,15 @@ contract AuctionGasBudgetTest is CrossChainTest {
 
     function _deliver(bytes memory packet) internal returns (uint256 spent) {
         uint256 before = gasleft();
-        _deliver(OUTBE_CHAIN_ID, address(originRouter), address(router), packet);
+        _deliver(OUTBE_CHAIN_ID, outbeIca, address(router), packet);
         spent = before - gasleft();
     }
 
     /// @dev An AUCTION_STAGE_START with `rows` reference prices.
     function _startPacket(uint256 rows) internal view returns (bytes memory) {
-        IOriginRouter.ReferenceCurrencyPrice[] memory prices = new IOriginRouter.ReferenceCurrencyPrice[](rows);
+        IIntexAuction.ReferenceCurrencyPrice[] memory prices = new IIntexAuction.ReferenceCurrencyPrice[](rows);
         for (uint256 i = 0; i < rows; ++i) {
-            prices[i] = IOriginRouter.ReferenceCurrencyPrice({
+            prices[i] = IIntexAuction.ReferenceCurrencyPrice({
                 isoCode: uint16(840 + i), entryPriceMinor: ENTRY_PRICE, callPriceMinor: ENTRY_PRICE
             });
         }
@@ -490,13 +476,13 @@ contract ClearingRelayGasTest is CrossChainTest {
     TargetRouter internal router;
     BidStub internal stub;
     address internal admin = address(this);
-    address internal originPeer = address(0x0B1);
+    address internal outbeIca = address(0x0B1);
 
     function setUp() public {
         _setUpBridge();
         stub = new BidStub();
         router = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
-        router.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originPeer));
+        _wireOutbeIca(router, outbeIca);
         router.setDependencies(address(stub), makeAddr("intex"), makeAddr("escrow"));
         vm.deal(address(router), 100 ether);
     }
@@ -506,19 +492,15 @@ contract ClearingRelayGasTest is CrossChainTest {
     function _clearingWithin(uint256 bids, uint256 gasCap) internal returns (bool delivered) {
         stub.setBidCount(bids);
         bytes memory packet = BridgeMsgCodec.encodeIntexAuctionClearingStart(EMISSION_DAY);
-        (delivered,) = address(bridge).call{gas: gasCap}(
-            abi.encodeCall(
-                bridge.deliverAs,
-                (_interop(OUTBE_CHAIN_ID, originPeer), _interop(uint32(block.chainid), address(router)), packet)
-            )
-        );
+        vm.prank(outbeIca);
+        (delivered,) = address(router).call{gas: gasCap}(abi.encodeCall(TargetRouter.receiveFromOutbe, (packet)));
     }
 
     function _clearingCost(uint256 bids) internal returns (uint256 spent) {
         stub.setBidCount(bids);
         uint256 before = gasleft();
         _deliver(
-            OUTBE_CHAIN_ID, originPeer, address(router), BridgeMsgCodec.encodeIntexAuctionClearingStart(EMISSION_DAY)
+            OUTBE_CHAIN_ID, outbeIca, address(router), BridgeMsgCodec.encodeIntexAuctionClearingStart(EMISSION_DAY)
         );
         spent = before - gasleft();
     }
@@ -618,101 +600,6 @@ contract BidStub {
     }
 }
 
-/// @dev The Outbe-side receives: a target relays its bids as BIDS_BATCH chunks and closes the relay
-///      with a BIDS_TOTALS. Both land on OriginRouter and forward to Desis.
-contract OriginInboundGasTest is CrossChainTest {
-    uint32 internal constant BNB_CHAIN_ID = 1;
-    uint32 internal constant EMISSION_DAY = 20250101;
-    uint64 internal constant ENTRY_PRICE = 100e6;
-
-    OriginRouter internal originRouter;
-    DesisSink internal desis;
-    address internal admin = address(this);
-    address internal targetPeer = address(0x7A6);
-
-    function setUp() public {
-        _setUpBridge();
-        desis = new DesisSink();
-        originRouter = DeployProxy.originRouter(address(bridge), admin);
-        originRouter.registerRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, targetPeer));
-        originRouter.setDependencies(address(desis), makeAddr("factory"));
-        originRouter.addTarget(BNB_CHAIN_ID);
-
-        // Freeze the day's snapshot so the target is allowed to feed bids into it.
-        IOriginRouter.IntexAuctionStartParams memory p;
-        p.emissionDay = EMISSION_DAY;
-        p.prices = ReferenceCurrencyPriceLib.one(840, ENTRY_PRICE, ENTRY_PRICE);
-        vm.prank(address(desis));
-        originRouter.sendIntexAuctionStart(p);
-    }
-
-    function _deliver(bytes memory packet) internal returns (uint256 spent) {
-        uint256 before = gasleft();
-        _deliver(BNB_CHAIN_ID, targetPeer, address(originRouter), packet);
-        spent = before - gasleft();
-    }
-
-    function test_TheQuoteCoversABidsBatchAtItsWidest() public {
-        uint256 count = BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN;
-        address[] memory bidders = new address[](count);
-        uint16[] memory quantities = new uint16[](count);
-        uint32[] memory rates = new uint32[](count);
-        uint32[] memory timestamps = new uint32[](count);
-        for (uint256 i = 0; i < count; ++i) {
-            bidders[i] = address(uint160(0x6000 + i));
-            quantities[i] = 1;
-            rates[i] = uint32(ENTRY_PRICE);
-            timestamps[i] = uint32(block.timestamp);
-        }
-
-        uint256 spent = _deliver(
-            BridgeMsgCodec.encodeBidsPage(
-                EMISSION_DAY, BNB_CHAIN_ID, 0, 1, bidders, BidPackLib.pack(quantities, rates, timestamps)
-            )
-        );
-
-        emit log_named_uint("bids_batch_full_chunk", spent);
-        assertLt(spent, IntexGas.bidsPage(count), "the widest bids batch must fit the quote");
-    }
-
-    function test_TheQuoteCoversBidsDone() public {
-        uint256 spent = _deliver(BridgeMsgCodec.encodeBidsTotals(EMISSION_DAY, BNB_CHAIN_ID, 1, 0));
-
-        emit log_named_uint("bids_done", spent);
-        assertLt(spent, IntexGas.BIDS_TOTALS, "bids done must fit the quote");
-    }
-
-    /// @dev The dearest of the inbound bids messages: its handler answers with an outbound CLEARING, so the
-    ///      budget has to cover a dispatch as well as the decode.
-    function test_TheQuoteCoversBidsRemaining() public {
-        uint256 spent = _deliver(BridgeMsgCodec.encodeBidsPause(EMISSION_DAY, BNB_CHAIN_ID, 1, 3));
-
-        emit log_named_uint("bids_remaining", spent);
-        assertLt(spent, IntexGas.BIDS_PAUSE, "the remainder report must fit the quote");
-    }
-}
-
-/// @dev On Outbe the real Desis is a precompile, so these measure the router's own share of an inbound
-///      bids message. The precompile's work sits outside this harness and outside the numbers below.
-contract DesisSink {
-    function supportsInterface(bytes4 interfaceId) external pure returns (bool) {
-        return interfaceId == type(IDesis).interfaceId || interfaceId == type(IERC165).interfaceId;
-    }
-
-    function collectIntexAuctionBids(bytes32, uint32, uint32, uint16, uint16, address[] calldata, uint256[] calldata)
-        external {}
-
-    function completeIntexAuctionBids(bytes32, uint32, uint32, uint16, uint32) external {}
-
-    function auctionStage(uint32) external pure returns (uint8) {
-        return 0;
-    }
-
-    function intexAuctionBidsCount(uint32) external pure returns (uint256) {
-        return 0;
-    }
-}
-
 /// @dev A chunk that lands two months after the run's first one, for series this chain already holds.
 contract GasBudgetLateIssuanceTest is CrossChainTest {
     uint32 internal constant OUTBE_CHAIN_ID = 2;
@@ -722,18 +609,18 @@ contract GasBudgetLateIssuanceTest is CrossChainTest {
 
     TargetRouter internal router;
     IntexNFT1155 internal intex;
-    address internal originPeer = address(0x0B1);
+    address internal outbeIca = address(0x0B1);
 
     function setUp() public {
         _setUpBridge();
         intex = DeployProxy.intexNFT1155(address(this), address(this));
         router = DeployProxy.targetRouter(address(bridge), address(this), OUTBE_CHAIN_ID);
-        router.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originPeer));
+        _wireOutbeIca(router, outbeIca);
         router.setDependencies(makeAddr("auction"), address(intex), makeAddr("escrow"));
         intex.grantRole(intex.ROUTER_ROLE(), address(router));
 
         vm.warp(ISSUED_AT);
-        _deliver(OUTBE_CHAIN_ID, originPeer, address(router), _chunk(0));
+        _deliver(OUTBE_CHAIN_ID, outbeIca, address(router), _chunk(0));
         vm.warp(ISSUED_AT + 62 days);
     }
 
@@ -764,7 +651,7 @@ contract GasBudgetLateIssuanceTest is CrossChainTest {
         uint256 seriesCount = BridgeMsgCodec.MAX_SERIES_PER_ISSUANCE;
         bytes memory packet = _chunk(1);
         uint256 before = gasleft();
-        _deliver(OUTBE_CHAIN_ID, originPeer, address(router), packet);
+        _deliver(OUTBE_CHAIN_ID, outbeIca, address(router), packet);
         uint256 spent = before - gasleft();
 
         emit log_named_uint("issuance_late_known_series", spent);

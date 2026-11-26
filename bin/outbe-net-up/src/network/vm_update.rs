@@ -61,7 +61,7 @@ const BLOCK_RATE_SAMPLE_INTERVAL: Duration = Duration::from_millis(10);
 const DKG_BOOT_AND_TEE_BUDGET_SECS: f64 = 60.0;
 const DKG_GUARD_MARGIN_BLOCKS: u64 = 15;
 /// Forward finalized-block observation window for verifying zero missed votes across all
-/// validators (`outbe_getParticipation`) before stopping any VM.
+/// validators (`IValidatorSet.validatorByAddress`) before stopping any VM.
 const MISSED_VOTE_OBSERVATION_BLOCKS: u64 = 60;
 
 #[derive(Clone, Debug)]
@@ -967,7 +967,7 @@ enum MissedVoteOutcome {
 ///   and defers if inside an active DKG ceremony or within `effective_dkg_guard + 60` blocks of
 ///   `next_planned_activation_height`.
 /// - Phase 2: observes `MISSED_VOTE_OBSERVATION_BLOCKS` (60) finalized blocks across all active
-///   validators via `outbe_getValidators` + `outbe_getParticipation` and requires `missedVotes`
+///   validators via `IValidatorSet.getActiveValidators` + `validatorByAddress` and requires `missedVotes`
 ///   delta == 0 for every validator. If an epoch boundary falls inside OR any validator records a
 ///   non-zero missed-vote delta, resets the baseline, re-checks the DKG guard (returning to
 ///   Phase 1 if inside the guard/ceremony), and retries the 60-block window until `deadline`.
@@ -1097,9 +1097,9 @@ async fn pre_stop_health_and_dkg_gate(
             return Ok(());
         }
 
-        // Phase 2: Forward 60-block missed-vote observation (`outbe_getParticipation` delta == 0 for
-        // every validator; retries window on epoch boundary or transient missed votes up to
-        // `deadline`, re-checking DKG guard each retry).
+        // Phase 2: Forward 60-block missed-vote observation (`IValidatorSet.validatorByAddress`
+        // `missedVotes` delta == 0 for every validator; retries window on epoch boundary or
+        // transient missed votes up to `deadline`, re-checking DKG guard each retry).
         match observe_zero_missed_votes_window(
             ctx,
             member,
@@ -1122,7 +1122,7 @@ async fn pre_stop_health_and_dkg_gate(
     }
 }
 
-/// Forward observation before stopping `member`: snapshot `outbe_getParticipation` for every
+/// Forward observation before stopping `member`: snapshot `IValidatorSet.validatorByAddress` for every
 /// active validator, wait `MISSED_VOTE_OBSERVATION_BLOCKS` (60) finalized blocks, and snapshot
 /// again. Requires `missedVotes` delta == 0 for every validator. Retries the 60-block window up
 /// to `deadline` on epoch boundaries / counter resets or transient missed votes (re-checking the
@@ -1173,7 +1173,7 @@ async fn observe_zero_missed_votes_window(
     )
     .wrap_err_with(|| {
         format!(
-            "refusing to stop `{}`: failed initial `outbe_getParticipation` check (fail-closed)",
+            "refusing to stop `{}`: failed initial `IValidatorSet.validatorByAddress` check (fail-closed)",
             member.name
         )
     })?;
@@ -1271,7 +1271,7 @@ async fn observe_zero_missed_votes_window(
             )
             .wrap_err_with(|| {
                 format!(
-                    "refusing to stop `{}`: failed post-boundary `outbe_getParticipation` check (fail-closed)",
+                    "refusing to stop `{}`: failed post-boundary `IValidatorSet.validatorByAddress` check (fail-closed)",
                     member.name
                 )
             })?;
@@ -1297,7 +1297,7 @@ async fn observe_zero_missed_votes_window(
         )
         .wrap_err_with(|| {
             format!(
-                "refusing to stop `{}`: failed end-of-window `outbe_getParticipation` check (fail-closed)",
+                "refusing to stop `{}`: failed end-of-window `IValidatorSet.validatorByAddress` check (fail-closed)",
                 member.name
             )
         })?;

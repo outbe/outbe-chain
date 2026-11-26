@@ -271,7 +271,8 @@ vm:
         founders.push(serde_json::json!({
             "index": index,
             "name": format!("validator-{index}"),
-            "advertise_ip": format!("10.77.0.{}", 10 + index),
+            "public_ip": format!("10.77.0.{}", 10 + index),
+            "private_ip": format!("10.77.0.{}", 10 + index),
             "validator_address": "0x1111111111111111111111111111111111111111",
             "hyperlane_address": "0x2222222222222222222222222222222222222222",
             "consensus_public_key": "aa",
@@ -295,7 +296,7 @@ vm:
     let op_bundle = build_operator_bundle(&joining_dir, chain_id);
 
     let manifest = serde_json::json!({
-        "version": 1,
+        "version": 2,
         "state": "ready",
         "deployment": "vm",
         "name": "s3-test",

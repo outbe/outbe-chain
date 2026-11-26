@@ -26,7 +26,7 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
 
     TargetRouter internal router;
     IntexNFT1155 internal intex;
-    address internal originSender = makeAddr("originSender");
+    address internal outbeIca = makeAddr("outbeIca");
     bytes14 internal series;
 
     function setUp() public {
@@ -35,7 +35,7 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
         // The origin-as-target shape: a mark is a pure state flip here as anywhere.
         router = DeployProxy.targetRouter(address(bridge), address(this), uint32(block.chainid));
 
-        router.registerRemoteMessenger(uint32(block.chainid), _interop(uint32(block.chainid), originSender));
+        _wireOutbeIca(router, outbeIca);
         router.setDependencies(makeAddr("auction"), address(intex), makeAddr("escrow"));
         intex.grantRole(intex.ROUTER_ROLE(), address(router));
         series = CreateSeriesLib.seriesId(DAY);
@@ -44,7 +44,7 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
     // --- helpers ---
 
     function _deliver(bytes memory packet) internal {
-        _deliver(uint32(block.chainid), originSender, address(router), packet);
+        _deliver(uint32(block.chainid), outbeIca, address(router), packet);
     }
 
     function _called() internal view returns (bytes memory) {
@@ -70,13 +70,15 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
     }
 
     function _expectIgnored(uint8 msgType, uint8 reason) internal {
-        vm.expectEmit(false, true, false, true, address(router));
-        emit ITargetRouter.MessageIgnored(bytes32(0), uint32(block.chainid), reason);
+        vm.expectEmit(true, true, false, true, address(router));
+        emit ITargetRouter.IntexAuctionMessageIgnored(msgType, DAY, reason);
     }
 
     function _expectZeroCallTimeIgnored() internal {
-        vm.expectEmit(false, true, false, true, address(router));
-        emit ITargetRouter.MessageIgnored(bytes32(0), uint32(block.chainid), InboundReason.INVALID);
+        vm.expectEmit(true, true, false, true, address(router));
+        emit ITargetRouter.IntexAuctionMessageIgnored(
+            BridgeMsgCodec.MSG_INTEX_SERIES_CALL_NOTICE, DAY, InboundReason.INVALID
+        );
     }
 
     // --- unknown series: slot, then apply on creation ---
@@ -229,7 +231,7 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
         _deliver(_called());
         Vm.Log[] memory logs = vm.getRecordedLogs();
         for (uint256 i; i < logs.length; ++i) {
-            assertTrue(logs[i].topics[0] != ITargetRouter.MessageIgnored.selector, "no ignore event");
+            assertTrue(logs[i].topics[0] != ITargetRouter.IntexAuctionMessageIgnored.selector, "no ignore event");
             assertTrue(logs[i].topics[0] != ITargetRouter.IntexSeriesCallNoticeApplyFailed.selector, "no failure event");
         }
     }

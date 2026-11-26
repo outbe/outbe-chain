@@ -55,7 +55,7 @@ pub use engine::{
 };
 pub use protocol::{
     derive_gratis_keys_message, gratis_op_attestation_preimage, gratis_op_canonical_hash, GratisOp,
-    GratisOpRequest, GratisOpResult, GratisOpStatus, ModifyAuth,
+    GratisOpRequest, GratisOpResult, GratisOpStatus, ModifyAuth, SealedPledge,
 };
 pub use schema::Gratis;
 

@@ -147,6 +147,18 @@ fn with_factory<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
     })
 }
 
+/// Registers `chains` in Series, as the genesis does.
+fn seed_series_targets(s: &StorageHandle<'_>, chains: &[u32]) {
+    use crate::targets::{pack_target, TargetMode};
+    let factory = IntexFactoryContract::new(s.clone());
+    for &chain in chains {
+        factory
+            .target_chains
+            .push(pack_target(chain, TargetMode::Series))
+            .unwrap();
+    }
+}
+
 fn factory_provider() -> HashMapStorageProvider {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(ISSUED_AT));
@@ -155,9 +167,9 @@ fn factory_provider() -> HashMapStorageProvider {
         crate::constants::INTEX_NFT1155_ADDRESS,
         alloy_primitives::Bytes::from(vec![0u8; 32]),
     );
-    // Stub OriginRouter: send* calls return bytes32 sendId (32 bytes). The value is ignored.
+    // Stub CrosschainBridge: `callRemoteWithGasLimit` returns a bytes32 message id.
     storage.stub_sub_call_at(
-        crate::constants::ORIGIN_ROUTER_ADDRESS,
+        outbe_system_common::addresses::CROSSCHAIN_BRIDGE_ADDRESS,
         alloy_primitives::Bytes::from(vec![0u8; 32]),
     );
     fund_payer(&mut storage, settlement_asset());
@@ -244,8 +256,8 @@ fn sample(emission_day: u32) -> IssuanceParams {
         call_trigger: prod_trigger(),
         issuance_currency: 840,
         reference_currency: 840,
-        // One target in the snapshot exercises the per-chain ISSUANCE loop.
-        snapshot_chains: vec![1],
+        // One target chain exercises the per-chain ISSUANCE loop.
+        target_chains: vec![1],
     }
 }
 
@@ -274,6 +286,7 @@ impl SeedCalledGroup for IntexContract<'_> {
     }
 }
 
+mod bridge_fault;
 mod capacity_conservation;
 mod direct_fx_admission;
 mod entrypoints;
@@ -283,9 +296,9 @@ mod lifecycle;
 mod mining_after_deadline;
 mod mining_sequence;
 mod proceeds;
-mod router_fault;
 mod scans;
 mod settlement;
+mod targets_and_outbox;
 
 // --- // --- Shared across the test modules ---
 const PAIR_ID: u32 = 1;

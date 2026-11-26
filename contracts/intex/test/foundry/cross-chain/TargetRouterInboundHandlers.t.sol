@@ -10,7 +10,6 @@ import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 import {ITargetRouter} from "@contracts/target/interfaces/ITargetRouter.sol";
-import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
@@ -21,15 +20,16 @@ import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
 import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
+import {InboundReason} from "@contracts/shared/libs/InboundReason.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 import {IssuanceBatchLib} from "../helpers/IssuanceBatch.sol";
 
 /// @dev End-to-end traversal of the five `TargetRouter` inbound handlers. These handlers
 ///      previously had only codec-level round-trip coverage. Each test hand-builds a
-///      `BridgeMsgCodec` packet and drives `lzReceive` from the endpoint address. Then it asserts
+///      `BridgeMsgCodec` packet and drives `receiveFromOutbe` from the Interchain Account of Outbe. Then it asserts
 ///      the downstream side-effect on the wired contract. This proves the full
-///      receiveMessage -> dispatchInbound -> _handleX -> X path under the current
+///      receiveFromOutbe -> _dispatch -> _handleX -> X path under the current
 ///      fail-don't-drop model.
 contract TargetRouterInboundHandlersTest is CrossChainTest {
     uint32 internal constant BNB_CHAIN_ID = 1;
@@ -43,7 +43,6 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
     uint16 internal constant REFERENCE_CURRENCY = 840;
 
     TargetRouter internal bnbRouter;
-    OriginRouter internal outbeRouter;
     IntexAuction internal auction;
     IntexNFT1155 internal intex;
     EscrowAdapter internal escrow;
@@ -53,6 +52,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
 
     address internal admin = address(this);
     address internal bidder = address(0xB1);
+    address internal outbeIca = makeAddr("outbeIca");
 
     function setUp() public {
         _setUpBridge();
@@ -61,7 +61,6 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         auction = DeployProxy.intexAuction(admin, admin);
 
         bnbRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
-        outbeRouter = DeployProxy.originRouter(address(bridge), admin);
         nftBridge = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
 
         escrow = DeployProxy.escrowAdapter(admin, admin);
@@ -70,8 +69,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         escrow.setDependencies(admin, address(compact), address(paymentToken));
         compact.setResetPeriodSeconds(0);
 
-        bnbRouter.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbeRouter)));
-        outbeRouter.registerRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(bnbRouter)));
+        _wireOutbeIca(bnbRouter, outbeIca);
 
         bnbRouter.setDependencies(address(auction), address(intex), address(escrow));
 
@@ -129,28 +127,16 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         assertEq(_countLogs(ITargetRouter.IntexAuctionBidsTotalsSent.selector), 0, "no re-relay");
     }
 
-    // --- Source: only Outbe drives a target router ---
-    function test_aMessageFromAnotherChainIsRefused() public {
-        uint32 otherChain = 77;
-        address otherPeer = makeAddr("otherPeer");
-        bnbRouter.registerRemoteMessenger(otherChain, _interop(otherChain, otherPeer));
-
-        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.UnexpectedSourceChain.selector, otherChain));
-        _deliver(
-            otherChain, otherPeer, address(bnbRouter), BridgeMsgCodec.encodeIntexAuctionClearingStart(EMISSION_DAY)
-        );
-    }
-
     // --- _handleMarkCalled: the mark is a pure state flip and never touches balances ---
     function test_handleMarkCalled_leavesBalancesUntouched() public {
         uint32 local = uint32(block.chainid);
         TargetRouter localRouter = DeployProxy.targetRouter(address(bridge), admin, local);
-        address localOrigin = makeAddr("localOrigin");
-        localRouter.registerRemoteMessenger(local, _interop(local, localOrigin));
+        address localIca = makeAddr("localIca");
+        _wireOutbeIca(localRouter, localIca);
         localRouter.setDependencies(address(auction), address(intex), address(escrow));
         intex.grantRole(intex.ROUTER_ROLE(), address(localRouter));
 
-        _deliver(local, localOrigin, address(localRouter), _issuancePacket());
+        _deliver(local, localIca, address(localRouter), _issuancePacket());
         intex.grantRole(intex.AUCTION_ROLE(), admin);
         intex.issueIntex(bidder, 5, SERIES_ID);
 
@@ -159,7 +145,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
 
         _deliver(
             local,
-            localOrigin,
+            localIca,
             address(localRouter),
             BridgeMsgCodec.encodeIntexSeriesCallNotice(
                 EMISSION_DAY, uint32(block.timestamp), MarkBatchLib.one(SERIES_ID)
@@ -297,8 +283,10 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
     function test_cancel_before_the_result_twice_is_a_duplicate() public {
         _seedAuction();
         _cancel();
-        vm.expectEmit(false, true, false, true, address(bnbRouter));
-        emit ITargetRouter.MessageIgnored(bytes32(0), OUTBE_CHAIN_ID, 1);
+        vm.expectEmit(true, true, false, true, address(bnbRouter));
+        emit ITargetRouter.IntexAuctionMessageIgnored(
+            BridgeMsgCodec.MSG_INTEX_AUCTION_CANCEL, EMISSION_DAY, InboundReason.DUPLICATE
+        );
         _cancel();
     }
 
@@ -310,8 +298,10 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         auction.completeAuction(EMISSION_DAY, 0, 0, 0, 0, 0);
         vm.stopPrank();
 
-        vm.expectEmit(false, true, false, true, address(bnbRouter));
-        emit ITargetRouter.MessageIgnored(bytes32(0), OUTBE_CHAIN_ID, 2);
+        vm.expectEmit(true, true, false, true, address(bnbRouter));
+        emit ITargetRouter.IntexAuctionMessageIgnored(
+            BridgeMsgCodec.MSG_INTEX_AUCTION_CANCEL, EMISSION_DAY, InboundReason.OBSOLETE
+        );
         _cancel();
         assertEq(uint8(auction.auctionStage(EMISSION_DAY)), uint8(IIntexAuction.AuctionStage.Completed));
     }
@@ -328,13 +318,17 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         assertGt(amount, 0, "the lock is owed");
         assertEq(returnableAt, 0, "at once");
 
-        vm.expectEmit(false, true, false, true, address(bnbRouter));
-        emit ITargetRouter.MessageIgnored(bytes32(0), OUTBE_CHAIN_ID, 2);
+        vm.expectEmit(true, true, false, true, address(bnbRouter));
+        emit ITargetRouter.IntexAuctionMessageIgnored(
+            BridgeMsgCodec.MSG_INTEX_AUCTION_RESULT, EMISSION_DAY, InboundReason.OBSOLETE
+        );
         _deliver(BridgeMsgCodec.encodeIntexAuctionResult(EMISSION_DAY, AuctionResultLib.day(0, 0, 0)));
         address[] memory winners = new address[](1);
         winners[0] = bidder;
-        vm.expectEmit(false, true, false, true, address(bnbRouter));
-        emit ITargetRouter.MessageIgnored(bytes32(0), OUTBE_CHAIN_ID, 2);
+        vm.expectEmit(true, true, false, true, address(bnbRouter));
+        emit ITargetRouter.IntexAuctionMessageIgnored(
+            BridgeMsgCodec.MSG_INTEX_AUCTION_WINNERS, EMISSION_DAY, InboundReason.OBSOLETE
+        );
         _deliver(BridgeMsgCodec.encodeIntexAuctionWinners(EMISSION_DAY, 0, 1, 500_000, 1e6, winners, 0, 0));
         assertEq(uint8(auction.auctionStage(EMISSION_DAY)), uint8(IIntexAuction.AuctionStage.Canceled));
     }
@@ -343,8 +337,10 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         _cancel();
         assertEq(uint8(auction.auctionStage(EMISSION_DAY)), uint8(IIntexAuction.AuctionStage.Canceled));
 
-        vm.expectEmit(false, true, false, true, address(bnbRouter));
-        emit ITargetRouter.MessageIgnored(bytes32(0), OUTBE_CHAIN_ID, 3);
+        vm.expectEmit(true, true, false, true, address(bnbRouter));
+        emit ITargetRouter.IntexAuctionMessageIgnored(
+            BridgeMsgCodec.MSG_INTEX_AUCTION_START, EMISSION_DAY, InboundReason.CONFLICT
+        );
         _deliver(
             BridgeMsgCodec.encodeIntexAuctionStart(
                 EMISSION_DAY,
@@ -390,6 +386,6 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
     }
 
     function _deliver(bytes memory packet) internal {
-        _deliver(OUTBE_CHAIN_ID, address(outbeRouter), address(bnbRouter), packet);
+        _deliver(OUTBE_CHAIN_ID, outbeIca, address(bnbRouter), packet);
     }
 }

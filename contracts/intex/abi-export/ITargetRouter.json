@@ -1,15 +1,10 @@
 [
   {
     "type": "function",
-    "name": "registerRemoteMessenger",
+    "name": "receiveFromOutbe",
     "inputs": [
       {
-        "name": "chainId",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "interop",
+        "name": "message",
         "type": "bytes",
         "internalType": "bytes"
       }
@@ -203,6 +198,31 @@
   },
   {
     "type": "event",
+    "name": "IntexAuctionMessageIgnored",
+    "inputs": [
+      {
+        "name": "msgType",
+        "type": "uint8",
+        "indexed": true,
+        "internalType": "uint8"
+      },
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "reason",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "IntexAuctionProceedsSendFailed",
     "inputs": [
       {
@@ -273,12 +293,6 @@
     "type": "event",
     "name": "IntexAuctionWinnersReceived",
     "inputs": [
-      {
-        "name": "receiveId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
       {
         "name": "emissionDay",
         "type": "uint32",
@@ -364,31 +378,6 @@
   },
   {
     "type": "event",
-    "name": "MessageIgnored",
-    "inputs": [
-      {
-        "name": "receiveId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "srcChainId",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "reason",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "uint8"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "TargetRouterDependenciesSet",
     "inputs": [
       {
@@ -405,25 +394,6 @@
       },
       {
         "name": "escrow",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "TargetRouterProceedsRouteSet",
-    "inputs": [
-      {
-        "name": "tokenBridge",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      },
-      {
-        "name": "originRouter",
         "type": "address",
         "indexed": false,
         "internalType": "address"
@@ -514,17 +484,6 @@
         "name": "totalPages",
         "type": "uint16",
         "internalType": "uint16"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "UnexpectedSourceChain",
-    "inputs": [
-      {
-        "name": "srcChainId",
-        "type": "uint32",
-        "internalType": "uint32"
       }
     ]
   },

@@ -194,17 +194,6 @@ fn managed_units(profile: &ManagedProfile<'_>) -> Vec<UnitFile> {
     hyperlane_directives.push(wait_rpc.clone());
     hyperlane_directives.push(internal_cmd("hyperlane"));
 
-    let radicle_listen = if profile.is_vm {
-        "  --listen 0.0.0.0:${OUTBE_RADICLE_PORT} \\"
-    } else {
-        "  --listen 0.0.0.0:8776 \\"
-    };
-    let radicle_advertise = if profile.is_vm {
-        "  --advertise ${OUTBE_EXTERNAL_IP}:${OUTBE_RADICLE_PORT}"
-    } else {
-        "  --advertise ${OUTBE_EXTERNAL_IP}:8776"
-    };
-
     let sidecar_unit_directives = if profile.is_vm {
         // Order after whichever validator service `vm-boot` started without pulling in both.
         with_vm_boot(lines(&[
@@ -234,11 +223,11 @@ fn managed_units(profile: &ManagedProfile<'_>) -> Vec<UnitFile> {
                 &format!("ExecStart={}/outbe-radicle \\", profile.bin_dir),
                 "  --home /opt/outbe-chain/keys/radicle \\",
                 "  --control-socket /opt/outbe-chain/keys/radicle/node/outbe-control.sock \\",
-                radicle_listen,
+                "  --listen 0.0.0.0:${OUTBE_RADICLE_PORT} \\",
                 "  --status-listen 127.0.0.1:8876 \\",
                 "  --max-validators 128 \\",
                 "  --external-inbound-reserve 16 \\",
-                radicle_advertise,
+                "  --advertise ${OUTBE_EXTERNAL_IP}:${OUTBE_RADICLE_PORT}",
             ]),
             sandbox_directives: lines(&["ReadWritePaths=/opt/outbe-chain/keys"]),
             limit_nofile: 65_535,
@@ -374,25 +363,21 @@ pub fn founding_units(config: FoundingConfig<'_>) -> Vec<UnitFile> {
 
 /// Single-source Reth / `outbe-chain node` base arguments shared by every managed node role
 /// (bare-host joining validator, VM founder, VM joining validator, and VM keyless full node).
-fn common_node_exec_lines(
-    bin_dir: &str,
-    explicit_ports: bool,
-    p2p_secret_key: Option<&str>,
-) -> Vec<String> {
-    let reth_port_line = if explicit_ports {
+fn common_node_exec_lines(bin_dir: &str, is_vm: bool, p2p_secret_key: Option<&str>) -> Vec<String> {
+    let reth_port_line = if is_vm {
         "  --port ${OUTBE_RETH_PORT} \\"
     } else {
-        "  --port 30303 \\"
+        "  --port ${OUTBE_RETH_P2P_PORT} \\"
     };
-    let discovery_port_line = if explicit_ports {
+    let discovery_port_line = if is_vm {
         "  --discovery.port ${OUTBE_RETH_PORT} \\"
     } else {
-        "  --discovery.port 30303 \\"
+        "  --discovery.port ${OUTBE_RETH_P2P_PORT} \\"
     };
-    let discv5_port_line = if explicit_ports {
+    let discv5_port_line = if is_vm {
         "  --discovery.v5.port ${OUTBE_DISCV5_PORT} \\"
     } else {
-        "  --discovery.v5.port 31303 \\"
+        "  --discovery.v5.port ${OUTBE_RETH_DISCOVERY_PORT} \\"
     };
     let mut args = lines(&[
         &format!("ExecStart={bin_dir}/outbe-chain node \\"),
@@ -430,11 +415,6 @@ fn managed_validator_spec(
     description: &'static str,
     joining: bool,
 ) -> ServiceSpec {
-    let consensus_listen_line = if profile.is_vm {
-        "  --consensus.listen-addr 0.0.0.0:${OUTBE_CONSENSUS_PORT} \\"
-    } else {
-        "  --consensus.listen-addr 0.0.0.0:30400 \\"
-    };
     let mut directives = lines(&[
         "EnvironmentFile=/opt/outbe-chain/validator.env",
         "Environment=RUST_MIN_STACK=16777216",
@@ -456,8 +436,9 @@ fn managed_validator_spec(
     if joining {
         directives.push("  --consensus.keys-dir /opt/outbe-chain/keys \\".to_owned());
     }
-    directives.push(consensus_listen_line.to_owned());
+    directives.push("  --consensus.listen-addr 0.0.0.0:${OUTBE_CONSENSUS_PORT} \\".to_owned());
     if joining {
+        directives.push("  --tee-bootstrap-timeout-secs 300 \\".to_owned());
         directives.push("  --consensus.peers ${OUTBE_CONSENSUS_PEERS} \\".to_owned());
     }
     directives.push("  $OUTBE_CONSENSUS_EXTRA_ARGS \\".to_owned());
@@ -739,6 +720,11 @@ mod tests {
             .contains("ExecStartPre=/usr/local/bin/outbe-up internal wait-validator-dependencies"));
         assert!(validator.contains("--validator"));
         assert!(validator.contains("radicle.control-socket"));
+        assert!(validator.contains("${OUTBE_RETH_P2P_PORT}"));
+        assert!(validator.contains("${OUTBE_RETH_DISCOVERY_PORT}"));
+        assert!(validator.contains("${OUTBE_CONSENSUS_PORT}"));
+        assert!(validator.contains("--tee-bootstrap-timeout-secs 300"));
+        assert!(unit(&joining, "outbe-radicle.service").contains("${OUTBE_RADICLE_PORT}"));
         assert!(unit(&founding, "outbe-validator.service")
             .contains("/opt/outbe-chain/validator-2/run-node.sh"));
 
@@ -871,11 +857,11 @@ mod tests {
                     "ExecStart=/opt/outbe-chain/outbe-radicle \\\n",
                     "  --home /opt/outbe-chain/keys/radicle \\\n",
                     "  --control-socket /opt/outbe-chain/keys/radicle/node/outbe-control.sock \\\n",
-                    "  --listen 0.0.0.0:8776 \\\n",
+                    "  --listen 0.0.0.0:${OUTBE_RADICLE_PORT} \\\n",
                     "  --status-listen 127.0.0.1:8876 \\\n",
                     "  --max-validators 128 \\\n",
                     "  --external-inbound-reserve 16 \\\n",
-                    "  --advertise ${OUTBE_EXTERNAL_IP}:8776\n",
+                    "  --advertise ${OUTBE_EXTERNAL_IP}:${OUTBE_RADICLE_PORT}\n",
                     "Restart=always\n",
                     "RestartMode=direct\n",
                     "RestartSec=5\n",
@@ -926,11 +912,11 @@ mod tests {
                     "  --http.port 8545 \\\n",
                     "  --http.api eth,net,web3,outbe \\\n",
                     "  --authrpc.port 8551 \\\n",
-                    "  --port 30303 \\\n",
-                    "  --discovery.port 30303 \\\n",
+                    "  --port ${OUTBE_RETH_P2P_PORT} \\\n",
+                    "  --discovery.port ${OUTBE_RETH_P2P_PORT} \\\n",
                     "  --nat extip:${OUTBE_EXTERNAL_IP} \\\n",
                     "  --discovery.v5.addr 0.0.0.0 \\\n",
-                    "  --discovery.v5.port 31303 \\\n",
+                    "  --discovery.v5.port ${OUTBE_RETH_DISCOVERY_PORT} \\\n",
                     "  --p2p-secret-key /opt/outbe-chain/keys/reth-p2p-secret.hex \\\n",
                     "  --bootnodes ${OUTBE_BOOTNODES} \\\n",
                     "  --metrics 127.0.0.1:9101 \\\n",
@@ -940,7 +926,8 @@ mod tests {
                     "  --consensus.signing-key /opt/outbe-chain/keys/signing-key.hex \\\n",
                     "  --validator.evm-key /opt/outbe-chain/keys/evm-key.hex \\\n",
                     "  --consensus.keys-dir /opt/outbe-chain/keys \\\n",
-                    "  --consensus.listen-addr 0.0.0.0:30400 \\\n",
+                    "  --consensus.listen-addr 0.0.0.0:${OUTBE_CONSENSUS_PORT} \\\n",
+                    "  --tee-bootstrap-timeout-secs 300 \\\n",
                     "  --consensus.peers ${OUTBE_CONSENSUS_PEERS} \\\n",
                     "  $OUTBE_CONSENSUS_EXTRA_ARGS \\\n",
                     "  --upstream ${OUTBE_CERTIFIED_RPC} \\\n",
@@ -1207,7 +1194,7 @@ mod tests {
 
         assert_eq!(vm_flags, expected_founding_flags);
 
-        // Verify joining adds only its three join-specific flags relative to VM.
+        // Verify joining adds only its four join-specific flags relative to VM founder.
         let joining = joining_units("/usr/local/bin/outbe-up");
         let joining_exec = exec_start_tokens(unit(&joining, "outbe-validator.service"));
         let joining_flags = node_flag_set(&joining_exec[2..]);
@@ -1216,7 +1203,12 @@ mod tests {
         let vm_only: BTreeSet<&str> = vm_flags.difference(&joining_flags).copied().collect();
         assert_eq!(
             joining_only,
-            BTreeSet::from(["--consensus.keys-dir", "--consensus.peers", "--upstream"])
+            BTreeSet::from([
+                "--consensus.keys-dir",
+                "--consensus.peers",
+                "--tee-bootstrap-timeout-secs",
+                "--upstream",
+            ])
         );
         assert!(vm_only.is_empty(), "unexpected VM-only flags: {vm_only:?}");
     }

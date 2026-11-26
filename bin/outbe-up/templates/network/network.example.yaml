@@ -1,43 +1,35 @@
-# Minimal four-founder test network. Add more `founders` entries for a larger founding committee.
+# Minimal four-founder test network. Multiple VM validators may share one bare-metal machine.
 # This workflow uses in-process TEE without attestation and is limited to devnet and testnet.
-version: 1
-name: local-testnet
+version: 2
+name: outbe-testnet
 network: testnet
 chain_id: 54322345
-certified_rpc: "http://10.0.0.10:8545"
+certified_rpc: "https://rpc.testnet.outbe.net"
+
+machines:
+  fr5:
+    public_ip: 203.0.113.10
+    ssh_user: ubuntu
+    # ssh_port: 22
+    # vm_ssh_user: root
+  fr6:
+    public_ip: 203.0.113.20
+    ssh_user: ubuntu
+
 founders:
   - name: validator-0
-    ssh:
-      host: 192.0.2.10
-      user: ubuntu
-      port: 22
-    advertise_ip: 10.0.0.10
-    rpc_bind_ip: 10.0.0.10
-    hyperlane_public_url: "http://192.0.2.10:9000"
+    machine: fr5
+    private_ip: 10.77.0.11
+    publish_rpc: true
   - name: validator-1
-    ssh:
-      host: 192.0.2.11
-      user: ubuntu
-      port: 22
-    advertise_ip: 10.0.0.11
-    rpc_bind_ip: 10.0.0.11
-    hyperlane_public_url: "http://192.0.2.11:9000"
+    machine: fr5
+    private_ip: 10.77.0.12
   - name: validator-2
-    ssh:
-      host: 192.0.2.12
-      user: ubuntu
-      port: 22
-    advertise_ip: 10.0.0.12
-    rpc_bind_ip: 10.0.0.12
-    hyperlane_public_url: "http://192.0.2.12:9000"
+    machine: fr6
+    private_ip: 10.77.0.11
   - name: validator-3
-    ssh:
-      host: 192.0.2.13
-      user: ubuntu
-      port: 22
-    advertise_ip: 10.0.0.13
-    rpc_bind_ip: 10.0.0.13
-    hyperlane_public_url: "http://192.0.2.13:9000"
+    machine: fr6
+    private_ip: 10.77.0.12
 
 hyperlane:
   gasless: true
@@ -57,8 +49,8 @@ hyperlane:
       reorg_period: 2
 
 topology:
-  # Enable only when consensus peers use private/RFC1918 addresses.
-  use_local_defaults: true
+  # Enable only when consensus peers use private/RFC1918 advertised addresses.
+  use_local_defaults: false
 
 genesis:
   # Optional pre-TEE genesis JSON. Paths are resolved relative to this file.
@@ -71,9 +63,8 @@ genesis:
   dkg_activation_grace_blocks: 300
   prefunded_accounts:
     "0x1111111111111111111111111111111111111111": "1000000000000000000000"
-  # Additional keys accepted by outbe-genesis-cli, for example oracle or
-  # protocol overrides. Network identity, hosts, keys, and runtime fields are
-  # managed by outbe-up and cannot be overridden here.
+  # Additional keys accepted by outbe-genesis-cli. Network identity, topology,
+  # keys, and runtime fields are managed by outbe-up and cannot be overridden.
   overrides: {}
 
 # Optional VM deployment (devnet and testnet only). When present, replace each

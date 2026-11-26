@@ -57,7 +57,10 @@ pub async fn run() -> Result<()> {
         progress.stage("bonding the network minimum stake");
         let validator_arg = format!("{validator:#x}");
         let amount = minimum.to_string();
-        let symmetric = format!("{}:30400", journal.config.network.advertise_ip);
+        let symmetric = format!(
+            "{}:{}",
+            journal.config.network.advertise_ip, journal.config.network.ports.consensus
+        );
         let output = run_outbe_cli(&[
             "staking",
             "stake",
@@ -149,13 +152,14 @@ async fn ensure_feeder_funded(
     let hash = if let Some(hash) = journal.feeder_funding_transaction.clone() {
         hash
     } else {
-        let output = run_outbe_cli(&[
-            "validator",
-            "fund-operational-key",
-            &format!("{feeder:#x}"),
-            &FEEDER_FUNDING_WEI.to_string(),
-        ])?;
-        let hash = transaction_hash(&output)?;
+        let validator_key = Path::new(process::ROOT).join("keys/evm-key.hex");
+        let hash = hyperlane::send_value_transfer(
+            remote,
+            &validator_key,
+            feeder,
+            alloy_primitives::U256::from(FEEDER_FUNDING_WEI),
+        )
+        .await?;
         journal.feeder_funding_transaction = Some(hash.clone());
         journal.save()?;
         hash

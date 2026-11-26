@@ -1,5 +1,6 @@
 //! Error types for the PromisLimit module.
 
+use alloy_sol_types::SolError;
 use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
 
@@ -9,10 +10,19 @@ use thiserror::Error;
 pub enum PromisLimitError {
     #[error("promis limit overflow")]
     Overflow,
+    #[error("WCOEN refused the burn transfer")]
+    WcoenBurnRefused,
 }
 
 impl From<PromisLimitError> for PrecompileError {
     fn from(err: PromisLimitError) -> Self {
-        PrecompileError::FatalWithCause(Box::new(err))
+        match err {
+            PromisLimitError::Overflow => PrecompileError::FatalWithCause(Box::new(err)),
+            PromisLimitError::WcoenBurnRefused => PrecompileError::RevertBytes(
+                crate::precompile::IPromisLimit::WcoenBurnRefused {}
+                    .abi_encode()
+                    .into(),
+            ),
+        }
     }
 }

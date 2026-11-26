@@ -1,18 +1,22 @@
 use std::{
+    fs::{self, OpenOptions},
     future::Future,
+    os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
     pin::Pin,
+    process::Command,
 };
 
-use eyre::{ensure, Context, Result};
-pub(crate) use outbe_operator_remote::{shell_quote, SshJsonRpc, SshOptions};
+use eyre::{bail, ensure, Context, Result};
+use outbe_genesis_cli::launch_bundle::quote;
+pub(crate) use outbe_operator_remote::{shell_quote, SshJsonRpc, SshOptions as DirectSshOptions};
 use outbe_software_bundle::sha256_file;
 
 use outbe_operator_node_role::rpc::{JsonRpcTransport, RpcClient};
 
 use super::{
-    build::{BuildState, DeploymentKind, NetworkManifest},
-    config::{Founder, NetworkConfig, Ssh},
+    build::{BuildState, DeploymentKind, FounderArtifact, NetworkManifest, MANIFEST_VERSION},
+    config::{NetworkConfig, Ssh},
 };
 
 pub(crate) struct NetworkArtifacts {
@@ -34,7 +38,7 @@ impl NetworkArtifacts {
         let manifest: NetworkManifest = serde_json::from_slice(&std::fs::read(&manifest_path)?)
             .wrap_err_with(|| format!("invalid network manifest: {}", manifest_path.display()))?;
         ensure!(
-            manifest.version == 1,
+            manifest.version == MANIFEST_VERSION,
             "unsupported network manifest version"
         );
         ensure!(
@@ -77,23 +81,28 @@ impl NetworkArtifacts {
                 "base genesis is missing or changed after network build"
             );
         }
-        for (index, (founder, artifact)) in
-            config.founders.iter().zip(&manifest.founders).enumerate()
-        {
-            ensure!(
-                artifact.index == index
-                    && artifact.name == founder.name
-                    && artifact.advertise_ip == founder.advertise_ip,
-                "founder {index} does not match its network manifest"
-            );
-            match manifest.deployment {
-                DeploymentKind::Host => {
-                    let ssh = founder.ssh.as_ref().ok_or_else(|| {
-                        eyre::eyre!("founder {index} is missing ssh configuration")
-                    })?;
+        match manifest.deployment {
+            DeploymentKind::Host => {
+                let resolved = config.resolve_topology()?;
+                ensure!(
+                    manifest.firewall_mappings == super::build::firewall_mappings(&resolved),
+                    "firewall mappings do not match network.yaml"
+                );
+                for (index, (founder, artifact)) in
+                    resolved.iter().zip(&manifest.founders).enumerate()
+                {
                     let expected = format!("dist/validator-{index}.tgz");
                     ensure!(
-                        artifact.ssh_host.as_deref() == Some(ssh.host.as_str())
+                        artifact.index == index
+                            && artifact.name == founder.name
+                            && artifact.machine == founder.machine
+                            && artifact.public_ip == founder.public_ip
+                            && artifact.private_ip == founder.private_ip
+                            && artifact.offset == founder.offset
+                            && artifact.jump_user == founder.jump_user
+                            && artifact.jump_port == founder.jump_port
+                            && artifact.vm_user == founder.vm_user
+                            && artifact.ports == founder.ports
                             && artifact.archive.as_deref() == Some(expected.as_str()),
                         "founder {index} does not match its network manifest"
                     );
@@ -105,14 +114,20 @@ impl NetworkArtifacts {
                         "founder {index} archive changed after network build"
                     );
                 }
-                DeploymentKind::Vm => {
+            }
+            DeploymentKind::Vm => {
+                for (index, (founder, artifact)) in
+                    config.founders.iter().zip(&manifest.founders).enumerate()
+                {
                     let expected = format!("vm/validator-{index}");
                     let vm = artifact.vm.as_ref().ok_or_else(|| {
                         eyre::eyre!("founder {index} manifest is missing vm metadata")
                     })?;
                     let resolved = config.resolve_founder_vm(founder)?;
                     ensure!(
-                        vm.data_tree == expected
+                        artifact.index == index
+                            && artifact.name == founder.name
+                            && vm.data_tree == expected
                             && vm.vmm_host == resolved.vmm_host.host
                             && vm.bridge_ip == resolved.bridge_ip
                             && root.join(&expected).is_dir(),
@@ -129,45 +144,6 @@ impl NetworkArtifacts {
     }
 }
 
-pub(super) fn capture_founder(
-    ssh: &SshOptions,
-    founder: &Founder,
-    command: &str,
-) -> Result<String> {
-    ssh.capture_ssh(founder_ssh(founder)?, &founder.name, command)
-}
-
-pub(super) fn run_founder(ssh: &SshOptions, founder: &Founder, command: &str) -> Result<()> {
-    ssh.run_ssh(founder_ssh(founder)?, &founder.name, command)
-}
-
-pub(super) fn run_quiet_founder(ssh: &SshOptions, founder: &Founder, command: &str) -> Result<()> {
-    ssh.run_quiet_ssh(founder_ssh(founder)?, &founder.name, command)
-}
-
-pub(super) fn copy_to_founder(
-    ssh: &SshOptions,
-    founder: &Founder,
-    sources: &[&Path],
-    destination: &str,
-    recursive: bool,
-) -> Result<()> {
-    ssh.copy_to_ssh(
-        founder_ssh(founder)?,
-        &founder.name,
-        sources,
-        destination,
-        recursive,
-    )
-}
-
-fn founder_ssh(founder: &Founder) -> Result<&Ssh> {
-    founder
-        .ssh
-        .as_ref()
-        .ok_or_else(|| eyre::eyre!("founder {} has no host SSH endpoint", founder.name))
-}
-
 struct SshJsonRpcTransport(SshJsonRpc);
 
 impl JsonRpcTransport for SshJsonRpcTransport {
@@ -179,10 +155,196 @@ impl JsonRpcTransport for SshJsonRpcTransport {
     }
 }
 
+#[derive(Clone)]
+pub(super) struct SshOptions {
+    ssh_key: Option<PathBuf>,
+    known_hosts: PathBuf,
+    identity: String,
+}
+
+impl SshOptions {
+    pub(super) fn new(ssh_key: Option<&Path>, manifest_identity: &str) -> Result<Self> {
+        if let Some(path) = ssh_key {
+            ensure!(path.is_file(), "SSH key does not exist: {}", path.display());
+        }
+        let state = operator_state_dir()?;
+        fs::create_dir_all(&state)?;
+        fs::set_permissions(&state, fs::Permissions::from_mode(0o700))?;
+        let identity = manifest_identity.chars().take(16).collect::<String>();
+        let known_hosts = state.join(format!("known-hosts-{identity}"));
+        OpenOptions::new()
+            .create(true)
+            .append(true)
+            .mode(0o600)
+            .open(&known_hosts)?;
+        fs::set_permissions(&known_hosts, fs::Permissions::from_mode(0o600))?;
+        Ok(Self {
+            ssh_key: ssh_key.map(Path::to_owned),
+            known_hosts,
+            identity,
+        })
+    }
+
+    pub(super) fn capture(&self, founder: &FounderArtifact, command: &str) -> Result<String> {
+        let mut process = Command::new("ssh");
+        self.ssh_args(&mut process, founder);
+        let output = process.arg(command).output().wrap_err("run ssh")?;
+        if !output.status.success() {
+            bail!(
+                "SSH command failed on {}: {}",
+                founder.name,
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+    }
+
+    pub(super) fn run(&self, founder: &FounderArtifact, command: &str) -> Result<()> {
+        let mut process = Command::new("ssh");
+        self.ssh_args(&mut process, founder);
+        let status = process.arg(command).status().wrap_err("run ssh")?;
+        ensure!(status.success(), "SSH command failed on {}", founder.name);
+        Ok(())
+    }
+
+    pub(super) fn run_quiet(&self, founder: &FounderArtifact, command: &str) -> Result<()> {
+        let mut process = Command::new("ssh");
+        self.ssh_args(&mut process, founder);
+        let output = process.arg(command).output().wrap_err("run ssh")?;
+        if !output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let details = [stdout.trim(), stderr.trim()]
+                .into_iter()
+                .filter(|value| !value.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n");
+            bail!("SSH command failed on {}:\n{}", founder.name, details);
+        }
+        Ok(())
+    }
+
+    pub(super) fn copy_to(
+        &self,
+        founder: &FounderArtifact,
+        sources: &[&Path],
+        destination: &str,
+        recursive: bool,
+    ) -> Result<()> {
+        let mut process = Command::new("scp");
+        process.args(["-q", "-P", "22"]);
+        self.transport_args(&mut process, founder);
+        if let Some(ssh_key) = &self.ssh_key {
+            process.arg("-i").arg(ssh_key);
+        }
+        if recursive {
+            process.arg("-r");
+        }
+        process.args(sources);
+        process.arg(format!(
+            "{}@{}:{destination}",
+            founder.vm_user,
+            scp_host(&founder.private_ip.to_string())
+        ));
+        let status = process.status().wrap_err("run scp")?;
+        ensure!(status.success(), "SCP failed for {}", founder.name);
+        Ok(())
+    }
+
+    fn ssh_args(&self, process: &mut Command, founder: &FounderArtifact) {
+        process.args(["-p", "22"]);
+        self.transport_args(process, founder);
+        if let Some(ssh_key) = &self.ssh_key {
+            process.arg("-i").arg(ssh_key);
+        }
+        process.arg(format!("{}@{}", founder.vm_user, founder.private_ip));
+    }
+
+    fn transport_args(&self, process: &mut Command, founder: &FounderArtifact) {
+        process.args([
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=10",
+            "-o",
+            "StrictHostKeyChecking=accept-new",
+            "-o",
+            &format!("UserKnownHostsFile={}", self.known_hosts.display()),
+            "-o",
+            &format!("HostKeyAlias=outbe-{}-{}-vm", self.identity, founder.name),
+            "-o",
+            &format!("ProxyCommand={}", self.proxy_command(founder)),
+        ]);
+        if self.ssh_key.is_some() {
+            process.args(["-o", "IdentitiesOnly=yes"]);
+        }
+    }
+
+    fn proxy_command(&self, founder: &FounderArtifact) -> String {
+        let mut args = vec![
+            "ssh".to_owned(),
+            "-W".to_owned(),
+            "%h:%p".to_owned(),
+            "-p".to_owned(),
+            founder.jump_port.to_string(),
+            "-o".to_owned(),
+            "BatchMode=yes".to_owned(),
+            "-o".to_owned(),
+            "ConnectTimeout=10".to_owned(),
+            "-o".to_owned(),
+            "StrictHostKeyChecking=accept-new".to_owned(),
+            "-o".to_owned(),
+            format!("UserKnownHostsFile={}", self.known_hosts.display()),
+            "-o".to_owned(),
+            format!(
+                "HostKeyAlias=outbe-{}-{}-jump",
+                self.identity, founder.machine
+            ),
+        ];
+        if let Some(ssh_key) = &self.ssh_key {
+            args.push("-o".to_owned());
+            args.push("IdentitiesOnly=yes".to_owned());
+            args.push("-i".to_owned());
+            args.push(ssh_key.display().to_string());
+        }
+        args.push(format!("{}@{}", founder.jump_user, founder.public_ip));
+        args.into_iter()
+            .map(|argument| quote(&argument))
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+}
+
+fn operator_state_dir() -> Result<PathBuf> {
+    let base = if let Some(path) =
+        std::env::var_os("XDG_STATE_HOME").filter(|path| !path.is_empty())
+    {
+        PathBuf::from(path)
+    } else {
+        let home = std::env::var_os("HOME")
+            .filter(|path| !path.is_empty())
+            .ok_or_else(|| eyre::eyre!("HOME is not set; cannot locate outbe-up operator state"))?;
+        PathBuf::from(home).join(".local/state")
+    };
+    ensure!(
+        base.is_absolute(),
+        "outbe-up operator state directory must be absolute"
+    );
+    Ok(base.join("outbe-up"))
+}
+
+fn scp_host(host: &str) -> String {
+    if host.contains(':') && !host.starts_with('[') {
+        format!("[{host}]")
+    } else {
+        host.to_owned()
+    }
+}
+
 pub(crate) fn rpc_client_via_ssh(
     url: impl Into<String>,
     ssh: Ssh,
-    ssh_options: SshOptions,
+    ssh_options: DirectSshOptions,
     label: impl Into<String>,
 ) -> RpcClient {
     RpcClient::with_transport(Box::new(SshJsonRpcTransport(SshJsonRpc::new(
@@ -191,4 +353,79 @@ pub(crate) fn rpc_client_via_ssh(
         ssh_options,
         label,
     ))))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::network::{build::FounderArtifact, config::ResolvedPorts};
+    use std::net::Ipv4Addr;
+
+    fn founder() -> FounderArtifact {
+        FounderArtifact {
+            index: 1,
+            name: "validator-1".into(),
+            machine: "fr5".into(),
+            public_ip: Ipv4Addr::new(203, 0, 113, 10),
+            private_ip: Ipv4Addr::new(10, 77, 0, 12),
+            offset: 1,
+            jump_user: "ubuntu".into(),
+            jump_port: 22,
+            vm_user: "root".into(),
+            ports: ResolvedPorts {
+                reth_p2p: 30_304,
+                reth_discovery: 31_304,
+                consensus: 30_401,
+                radicle: 8_777,
+                hyperlane_public: 9_001,
+                rpc_public: None,
+            },
+            validator_address: String::new(),
+            hyperlane_address: String::new(),
+            consensus_public_key: String::new(),
+            archive: Some("dist/validator-1.tgz".into()),
+            archive_sha256: Some(String::new()),
+            vm: None,
+        }
+    }
+
+    #[test]
+    fn ssh_and_scp_share_the_explicit_jump_transport() {
+        let options = SshOptions {
+            ssh_key: Some(PathBuf::from("/keys/operator")),
+            known_hosts: PathBuf::from("/state/known-hosts"),
+            identity: "0123456789abcdef".into(),
+        };
+        let founder = founder();
+        let proxy = options.proxy_command(&founder);
+        assert!(proxy.contains("ssh -W %h:%p"));
+        assert!(proxy.contains("IdentitiesOnly=yes"));
+        assert!(proxy.contains("-i /keys/operator"));
+        assert!(proxy.contains("ubuntu@203.0.113.10"));
+        assert!(proxy.contains("HostKeyAlias=outbe-0123456789abcdef-fr5-jump"));
+
+        let mut command = Command::new("ssh");
+        options.ssh_args(&mut command, &founder);
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(args.iter().any(|arg| arg.starts_with("ProxyCommand=ssh ")));
+        assert!(args.contains(&"HostKeyAlias=outbe-0123456789abcdef-validator-1-vm".into()));
+        assert_eq!(args.last().map(String::as_str), Some("root@10.77.0.12"));
+
+        let agent_options = SshOptions {
+            ssh_key: None,
+            known_hosts: PathBuf::from("/state/known-hosts"),
+            identity: "0123456789abcdef".into(),
+        };
+        assert!(!agent_options
+            .proxy_command(&founder)
+            .contains("IdentitiesOnly"));
+        let mut agent_command = Command::new("ssh");
+        agent_options.ssh_args(&mut agent_command, &founder);
+        assert!(!agent_command
+            .get_args()
+            .any(|argument| argument == "IdentitiesOnly=yes"));
+    }
 }

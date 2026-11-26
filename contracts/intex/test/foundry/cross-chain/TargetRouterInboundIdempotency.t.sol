@@ -33,7 +33,7 @@ contract TargetRouterInboundIdempotencyTest is CrossChainTest {
     TargetRouter internal router;
     IntexAuction internal auction;
     IntexNFT1155 internal intex;
-    address internal originSender = makeAddr("originSender");
+    address internal outbeIca = makeAddr("outbeIca");
     bytes32 internal dayKey = bytes32(uint256(DAY));
 
     function setUp() public {
@@ -42,7 +42,7 @@ contract TargetRouterInboundIdempotencyTest is CrossChainTest {
         auction = DeployProxy.intexAuction(address(this), address(this));
         router = DeployProxy.targetRouter(address(bridge), address(this), OUTBE_CHAIN_ID);
 
-        router.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originSender));
+        _wireOutbeIca(router, outbeIca);
         router.setDependencies(address(auction), address(intex), makeAddr("escrow"));
         auction.grantRole(auction.RELAYER_ROLE(), address(router));
         intex.grantRole(intex.ROUTER_ROLE(), address(router));
@@ -51,7 +51,7 @@ contract TargetRouterInboundIdempotencyTest is CrossChainTest {
     // --- helpers ---
 
     function _deliver(bytes memory packet) internal {
-        _deliver(OUTBE_CHAIN_ID, originSender, address(router), packet);
+        _deliver(OUTBE_CHAIN_ID, outbeIca, address(router), packet);
     }
 
     function _start(uint32 day, uint32 commitEnd, uint32 minRate) internal pure returns (bytes memory) {
@@ -81,8 +81,8 @@ contract TargetRouterInboundIdempotencyTest is CrossChainTest {
     }
 
     function _expectIgnored(uint8 msgType, uint8 reason) internal {
-        vm.expectEmit(false, true, false, true, address(router));
-        emit ITargetRouter.MessageIgnored(bytes32(0), OUTBE_CHAIN_ID, reason);
+        vm.expectEmit(true, true, false, true, address(router));
+        emit ITargetRouter.IntexAuctionMessageIgnored(msgType, DAY, reason);
     }
 
     // --- START ---

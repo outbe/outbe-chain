@@ -67,6 +67,7 @@ fn request(op: GratisOp, amount: U256, nonce: u64) -> GratisOpRequest {
         current_pledged: Vec::new(),
         modify_auth: empty_auth(nonce),
         fidelity: None,
+        sealed_pledge: None,
     }
 }
 
@@ -236,15 +237,14 @@ fn pledged_and_balance_blobs_are_not_interchangeable() {
 }
 
 #[test]
-fn pledge_moves_the_authorized_amount_into_the_pledged_balance() {
+fn pledge_moves_the_amount_into_the_pledged_balance() {
     let sk = state_key();
     let view = derive_view_key(&sk, alice()).unwrap();
     let mut mint = request(GratisOp::Mint, U256::from(100u64), 0);
     mint.modify_auth = auth(&sk, GratisOp::Mint, mint.amount, 0);
     let minted = apply_op(&sk, &mint);
-    let mut pledge = request(GratisOp::Pledge, U256::from(30u64), 1);
+    let mut pledge = request(GratisOp::PledgeCollateral, U256::from(30u64), 0);
     pledge.current_balance = minted.new_balance;
-    pledge.modify_auth = auth(&sk, GratisOp::Pledge, pledge.amount, 1);
     let result = apply_op(&sk, &pledge);
     assert_eq!(result.status, GratisOpStatus::Applied);
     assert_eq!(
@@ -255,17 +255,14 @@ fn pledge_moves_the_authorized_amount_into_the_pledged_balance() {
         decrypt_pledged(&view, alice(), &result.new_pledged).unwrap(),
         U256::from(30u64)
     );
-    assert_eq!(result.next_op_nonce, 2);
-    pledge.modify_auth = auth(&sk, GratisOp::Mint, pledge.amount, 1);
-    assert!(rejected(&apply_op(&sk, &pledge).status));
+    assert_eq!(result.next_op_nonce, 0);
 }
 
 #[test]
 fn pledge_requires_sufficient_liquid_balance() {
     let sk = state_key();
-    let mut pledge = request(GratisOp::Pledge, U256::from(1u64), 0);
+    let mut pledge = request(GratisOp::PledgeCollateral, U256::from(1u64), 0);
     pledge.current_pledged = pledged_blob(&sk, 100);
-    pledge.modify_auth = auth(&sk, GratisOp::Pledge, pledge.amount, 0);
     assert!(rejected(&apply_op(&sk, &pledge).status));
 }
 
@@ -398,11 +395,14 @@ fn should_apply(op: GratisOp, amount: U256, books: &Books) -> bool {
     match op {
         GratisOp::Mint => books.liquid.checked_add(amount).is_some(),
         GratisOp::Burn => books.liquid >= amount,
-        GratisOp::Pledge => books.liquid >= amount && books.pledged.checked_add(amount).is_some(),
         GratisOp::ReleasePledged => {
             books.pledged >= amount && books.liquid.checked_add(amount).is_some()
         }
         GratisOp::BurnPledged => books.pledged >= amount,
+        GratisOp::PledgeCollateral => {
+            books.liquid >= amount && books.pledged.checked_add(amount).is_some()
+        }
+        GratisOp::OpenSealedPledge => false,
     }
 }
 
@@ -418,11 +418,6 @@ fn note_applied(op: GratisOp, amount: U256, books: &mut Books) {
             books.liquid -= amount;
             books.burned += U512::from(amount);
         }
-        GratisOp::Pledge => {
-            books.nonce += 1;
-            books.liquid -= amount;
-            books.pledged += amount;
-        }
         GratisOp::ReleasePledged => {
             books.pledged -= amount;
             books.liquid += amount;
@@ -431,6 +426,11 @@ fn note_applied(op: GratisOp, amount: U256, books: &mut Books) {
             books.pledged -= amount;
             books.burned_pledged += U512::from(amount);
         }
+        GratisOp::PledgeCollateral => {
+            books.liquid -= amount;
+            books.pledged += amount;
+        }
+        GratisOp::OpenSealedPledge => {}
     }
 }
 
@@ -442,9 +442,9 @@ fn historical_steps() -> Vec<(GratisOp, U256)> {
         (GratisOp::Burn, U256::ZERO),
         (GratisOp::Burn, U256::from(2000u64)),
         (GratisOp::Burn, U256::from(400u64)),
-        (GratisOp::Pledge, U256::ZERO),
-        (GratisOp::Pledge, U256::from(700u64)),
-        (GratisOp::Pledge, U256::from(100u64)),
+        (GratisOp::PledgeCollateral, U256::ZERO),
+        (GratisOp::PledgeCollateral, U256::from(700u64)),
+        (GratisOp::PledgeCollateral, U256::from(100u64)),
         (GratisOp::ReleasePledged, U256::ZERO),
         (GratisOp::ReleasePledged, U256::from(101u64)),
         (GratisOp::ReleasePledged, U256::from(40u64)),
@@ -452,7 +452,7 @@ fn historical_steps() -> Vec<(GratisOp, U256)> {
         (GratisOp::BurnPledged, U256::from(100u64)),
         (GratisOp::BurnPledged, U256::from(60u64)),
         (GratisOp::Mint, U256::from(1u64)),
-        (GratisOp::Pledge, U256::MAX),
+        (GratisOp::PledgeCollateral, U256::MAX),
         (GratisOp::Burn, U256::MAX - U256::from(1u64)),
     ]
 }
@@ -474,7 +474,7 @@ fn sample_op(draw: u64) -> GratisOp {
     match draw % 5 {
         0 => GratisOp::Mint,
         1 => GratisOp::Burn,
-        2 => GratisOp::Pledge,
+        2 => GratisOp::PledgeCollateral,
         3 => GratisOp::ReleasePledged,
         _ => GratisOp::BurnPledged,
     }
@@ -532,7 +532,7 @@ fn conserve(steps: &[(GratisOp, U256)], label: &str) {
         let mut req = request(*op, *amount, books.nonce);
         req.current_balance = books.balance_blob.clone();
         req.current_pledged = books.pledged_blob.clone();
-        if matches!(op, GratisOp::Mint | GratisOp::Burn | GratisOp::Pledge) {
+        if matches!(op, GratisOp::Mint | GratisOp::Burn) {
             req.modify_auth = auth(&sk, *op, *amount, books.nonce);
         }
         let result = apply_op(&sk, &req);
@@ -598,7 +598,7 @@ fn gratis_op_strategy() -> impl proptest::strategy::Strategy<Value = GratisOp> {
     prop_oneof![
         Just(GratisOp::Mint),
         Just(GratisOp::Burn),
-        Just(GratisOp::Pledge),
+        Just(GratisOp::PledgeCollateral),
         Just(GratisOp::ReleasePledged),
         Just(GratisOp::BurnPledged),
     ]
@@ -655,16 +655,19 @@ fn assert_applied_shape(
             assert!(result.new_pledged.is_empty(), "{label}");
             assert_eq!(result.next_op_nonce, nonce + 1, "{label}");
         }
-        GratisOp::Pledge | GratisOp::ReleasePledged => {
+        GratisOp::ReleasePledged | GratisOp::PledgeCollateral => {
             assert!(!result.new_balance.is_empty(), "{label}");
             assert!(!result.new_pledged.is_empty(), "{label}");
-            let expected_nonce = if op == GratisOp::Pledge { nonce + 1 } else { 0 };
-            assert_eq!(result.next_op_nonce, expected_nonce, "{label}");
+            assert_eq!(result.next_op_nonce, 0, "{label}");
         }
         GratisOp::BurnPledged => {
             assert!(result.new_balance.is_empty(), "{label}");
             assert!(!result.new_pledged.is_empty(), "{label}");
             assert_eq!(result.next_op_nonce, 0, "{label}");
+        }
+        GratisOp::OpenSealedPledge => {
+            assert!(result.new_balance.is_empty(), "{label}");
+            assert!(result.new_pledged.is_empty(), "{label}");
         }
     }
 }

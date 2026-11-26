@@ -59,6 +59,7 @@ pub async fn run(snapshot_path: Option<&Path>) -> Result<()> {
 
     progress.stage("starting validator node");
     process::systemctl(&["enable", "--now", VALIDATOR_TARGET])?;
+    process::mark_services_enabled()?;
     let local = RpcClient::new(journal.config.network.local_rpc_url())?;
     let remote = RpcClient::new(journal.config.network.certified_rpc.clone())?;
     wait_for_rpc_chain(&local, journal.config.network.chain_id, &mut progress).await?;

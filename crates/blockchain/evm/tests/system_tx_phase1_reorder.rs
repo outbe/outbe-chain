@@ -81,7 +81,7 @@ fn phase1_reordering_preserves_body_order_and_suffix_ordinals() {
         expected.push(SystemTxStepId::consensus(
             CONSENSUS_VALIDATOR_LIVENESS_STEP_INDEX,
         ));
-        expected.extend((0..9).map(SystemTxStepId::begin_block));
+        expected.extend((0..11).map(SystemTxStepId::begin_block));
         let mut fsm = BlockExecutionFsm::for_block(42, flags, &TEST_BLOCK_ORDER);
         assert_eq!(fsm.plan().expected_prefix_steps(), expected);
         for (index, id) in expected.into_iter().enumerate() {

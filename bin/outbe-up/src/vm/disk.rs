@@ -100,11 +100,10 @@ mod tests {
         // Validate that a bare-host deployment kind is rejected.
         let artifacts = temp.path().join("host-artifacts");
         fs::create_dir_all(artifacts.join("dist")).unwrap();
-        fs::write(
-            artifacts.join("network.yaml"),
-            crate::network::config::EXAMPLE,
-        )
-        .unwrap();
+        let config_path = artifacts.join("network.yaml");
+        fs::write(&config_path, crate::network::config::EXAMPLE).unwrap();
+        let config = crate::network::config::NetworkConfig::read(&config_path).unwrap();
+        let resolved = config.resolve_topology().unwrap();
         fs::write(artifacts.join("software-bundle.tar.zst"), b"bundle").unwrap();
         let hash = alloy_primitives::B256::repeat_byte(0x42);
         let policy = outbe_primitives::tee_genesis_v1::initial_tee_policy_v1(
@@ -125,14 +124,20 @@ mod tests {
         )
         .unwrap();
         let mut founders = Vec::new();
-        for index in 0..4 {
+        for (index, founder) in resolved.iter().enumerate() {
             let rel = format!("dist/validator-{index}.tgz");
             fs::write(artifacts.join(&rel), b"tgz").unwrap();
             founders.push(serde_json::json!({
                 "index": index,
-                "name": format!("validator-{index}"),
-                "ssh_host": format!("192.0.2.{}", index + 10),
-                "advertise_ip": format!("10.0.0.{}", index + 10),
+                "name": founder.name,
+                "machine": founder.machine,
+                "public_ip": founder.public_ip,
+                "private_ip": founder.private_ip,
+                "offset": founder.offset,
+                "jump_user": founder.jump_user,
+                "jump_port": founder.jump_port,
+                "vm_user": founder.vm_user,
+                "ports": founder.ports,
                 "validator_address": "0x1111111111111111111111111111111111111111",
                 "hyperlane_address": "0x2222222222222222222222222222222222222222",
                 "consensus_public_key": "aa",
@@ -141,13 +146,13 @@ mod tests {
             }));
         }
         let manifest = serde_json::json!({
-            "version": 1,
+            "version": 2,
             "state": "ready",
             "deployment": "host",
-            "name": "local-testnet",
-            "network": "testnet",
-            "chain_id": 54_322_345,
-            "config_sha256": sha256_file(&artifacts.join("network.yaml")).unwrap(),
+            "name": config.name,
+            "network": config.network.as_str(),
+            "chain_id": config.chain_id,
+            "config_sha256": sha256_file(&config_path).unwrap(),
             "software": {
                 "archive_sha256": sha256_file(&artifacts.join("software-bundle.tar.zst")).unwrap(),
                 "commit": "abc",
@@ -162,6 +167,7 @@ mod tests {
                 "genesis_block_hash": format!("{hash:#x}"),
             },
             "founders": founders,
+            "firewall_mappings": crate::network::build::firewall_mappings(&resolved),
             "joining": {
                 "bundle": "joining/bundle.tar.zst",
                 "bundle_sha256": "00",
