@@ -81,7 +81,7 @@ grep -A2 '"bin/outbe-up"' ./out/cli/software-manifest.json
 Every guest runs `outbe-vm-agent vm-boot` before starting node services:
 
 1. Verifies `/opt/outbe-chain` mount flags (`noexec,nosuid,nodev`), ownership, and `OUTBE_NODE_ROLE` in `validator.env`.
-2. Reads static IPv4 settings (`OUTBE_RPC_BIND_IP`, `OUTBE_VM_PREFIX`, `OUTBE_VM_GATEWAY`, `OUTBE_VM_DNS`) from `validator.env`.
+2. Reads static IPv4 settings (`OUTBE_VM_IP`, `OUTBE_VM_PREFIX`, `OUTBE_VM_GATEWAY`, `OUTBE_VM_DNS`) from `validator.env`.
 3. Writes `/run/systemd/network/20-wired.network.d/80-outbe-static.conf` and reloads `systemd-networkd`.
 4. Starts the role's systemd units (`founder`, `joining-validator`, or `full-node`).
 
@@ -95,7 +95,7 @@ Guests do not depend on DHCP or `dnsmasq` reservations for their service IPs. Pi
 ## Dev-flavor guest SSH
 
 - The `dev` flavor includes `sshd` for emergency host-side debugging. The `prod` flavor omits `sshd`.
-- Normal operation and diagnostics never require SSH into guest VMs. Use `outbe-up vm status`, `outbe-up vm logs`, and host-local JSON-RPC at `http://<bridge-ip>:8545`.
+- Normal operation and diagnostics never require SSH into guest VMs. Use `outbe-up vm status`, `outbe-up vm logs`, and host-local JSON-RPC at `http://<vm_ip>:<rpc_port>` (`OUTBE_VM_IP:OUTBE_RPC_PORT`, default `8545`).
 - If you set `vm.authorized_keys` on a `dev` VM, `outbe-net-up` places it at `/opt/outbe-chain/dev/authorized_keys`. The `prod` flavor rejects `authorized_keys`.
 
 ## Known limitations

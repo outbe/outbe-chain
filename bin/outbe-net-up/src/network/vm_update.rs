@@ -195,6 +195,16 @@ pub(crate) async fn update_with_exec(
             )
         })?;
     state.ensure_matches_network(&build)?;
+    ensure!(
+        state.env_schema >= crate::network::vm_state::CURRENT_ENV_SCHEMA,
+        "refusing rolling update: existing network disks use validator.env schema v{} \
+         (missing OUTBE_VM_IP / OUTBE_RPC_PORT / OUTBE_RETH_P2P_PORT), but this outbe-net-up \
+         requires schema v{}; images built from this revision only boot freshly prepared v{} \
+         disks (or migrate validator.env on member disks before updating)",
+        state.env_schema,
+        crate::network::vm_state::CURRENT_ENV_SCHEMA,
+        crate::network::vm_state::CURRENT_ENV_SCHEMA,
+    );
 
     let mut desired_members = build_all_desired_members(&build, Some(&state), None, None, None)?;
     ensure!(

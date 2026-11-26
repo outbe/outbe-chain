@@ -183,7 +183,9 @@ fn read_environment_with_keys(
             return false;
         }
         if !require_vm_static_net
-            && (*name == "OUTBE_NODE_ROLE" || VM_STATIC_NET_KEYS.contains(name))
+            && (*name == "OUTBE_NODE_ROLE"
+                || *name == "OUTBE_RPC_PORT"
+                || VM_STATIC_NET_KEYS.contains(name))
         {
             return false;
         }
@@ -242,8 +244,10 @@ fn validate_environment_inner(
             "OUTBE_RPC_BIND_IP ({rpc_bind}) must be 127.0.0.1 or equal to OUTBE_VM_IP ({}) for VM roles",
             static_net.address
         );
+        let _ = crate::vm_network::VmPortsConfig::from_env(values)?;
+    } else {
+        let _ = crate::vm_network::VmPortsConfig::from_env_bare_host(values)?;
     }
-    let _ = crate::vm_network::VmPortsConfig::from_env(values)?;
     let rpc = &values["OUTBE_CERTIFIED_RPC"];
     ensure!(
         (rpc.starts_with("http://") || rpc.starts_with("https://"))
@@ -633,5 +637,50 @@ mod tests {
         fs::create_dir_all(crs.parent().unwrap()).unwrap();
         fs::write(crs, b"CRS").unwrap();
         validate_bundle(root.path()).unwrap();
+    }
+
+    #[test]
+    fn bare_host_env_without_rpc_port_remains_valid_while_vm_env_requires_it() {
+        let root = tempfile::tempdir().unwrap();
+        let peer_key = "a".repeat(96);
+        let bare_env = format!(
+            concat!(
+                "OUTBE_EXTERNAL_IP=\"192.0.2.10\"\n",
+                "OUTBE_RPC_BIND_IP=\"127.0.0.1\"\n",
+                "OUTBE_RETH_P2P_PORT=\"30303\"\n",
+                "OUTBE_RETH_DISCOVERY_PORT=\"31303\"\n",
+                "OUTBE_CONSENSUS_PORT=\"30400\"\n",
+                "OUTBE_RADICLE_PORT=\"8776\"\n",
+                "OUTBE_CERTIFIED_RPC=\"https://rpc.example\"\n",
+                "OUTBE_VALIDATOR_ADDRESS=\"0x1111111111111111111111111111111111111111\"\n",
+                "OUTBE_BOOTNODES=\"enode://abcd@192.0.2.1:30303\"\n",
+                "OUTBE_CONSENSUS_PEERS=\"{peer_key}@192.0.2.1:30400\"\n",
+                "OUTBE_CONSENSUS_EXTRA_ARGS=\"\"\n",
+                "OUTBE_CHAIN_ID=\"54322345\"\n",
+            ),
+            peer_key = peer_key
+        );
+        let env_path = root.path().join("validator.env");
+        fs::write(&env_path, &bare_env).unwrap();
+        let parsed = read_environment(&env_path).unwrap();
+        validate_environment(&parsed).unwrap();
+
+        // VM env without OUTBE_RPC_PORT must still fail closed.
+        let vm_env = format!(
+            concat!(
+                "OUTBE_NODE_ROLE=\"founder\"\n",
+                "OUTBE_VM_IP=\"10.77.0.10\"\n",
+                "OUTBE_VM_PREFIX=\"24\"\n",
+                "OUTBE_VM_GATEWAY=\"10.77.0.1\"\n",
+                "OUTBE_VM_DNS=\"1.1.1.1\"\n",
+                "{bare_env}",
+            ),
+            bare_env = bare_env
+        );
+        fs::write(&env_path, &vm_env).unwrap();
+        assert!(read_environment_for_role(&env_path, NodeRole::Founder)
+            .unwrap_err()
+            .to_string()
+            .contains("OUTBE_RPC_PORT"));
     }
 }

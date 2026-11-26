@@ -192,22 +192,41 @@ fn required_env(name: &str) -> Result<String> {
 }
 
 pub(crate) fn local_rpc_url() -> Result<String> {
-    let bind = required_env("OUTBE_RPC_BIND_IP")?
+    let bind_raw = required_env("OUTBE_RPC_BIND_IP")?;
+    let is_vm_role = env::var_os("OUTBE_NODE_ROLE").is_some_and(|v| !v.is_empty());
+    let port_raw = env::var("OUTBE_RPC_PORT").ok().filter(|v| !v.is_empty());
+    local_rpc_url_from(&bind_raw, port_raw.as_deref(), is_vm_role)
+}
+
+fn local_rpc_url_from(
+    bind_raw: &str,
+    port_raw: Option<&str>,
+    require_port: bool,
+) -> Result<String> {
+    let bind = bind_raw
         .parse::<std::net::Ipv4Addr>()
         .wrap_err("OUTBE_RPC_BIND_IP must be an IPv4 literal")?;
     ensure!(
         bind.is_loopback() || bind.is_private(),
         "OUTBE_RPC_BIND_IP must be a loopback or private IPv4 address"
     );
-    let raw_port = required_env("OUTBE_RPC_PORT")?;
-    ensure!(
-        raw_port.bytes().all(|b| b.is_ascii_digit()),
-        "OUTBE_RPC_PORT must be a decimal port in 1..=65535, got `{raw_port}`"
-    );
-    let port: u16 = raw_port
-        .parse()
-        .wrap_err_with(|| format!("OUTBE_RPC_PORT must be in 1..=65535, got `{raw_port}`"))?;
-    ensure!(port > 0, "OUTBE_RPC_PORT must be in 1..=65535, got 0");
+    let port: u16 = match port_raw {
+        Some(raw_port) => {
+            ensure!(
+                raw_port.bytes().all(|b| b.is_ascii_digit()),
+                "OUTBE_RPC_PORT must be a decimal port in 1..=65535, got `{raw_port}`"
+            );
+            let parsed: u16 = raw_port.parse().wrap_err_with(|| {
+                format!("OUTBE_RPC_PORT must be in 1..=65535, got `{raw_port}`")
+            })?;
+            ensure!(parsed > 0, "OUTBE_RPC_PORT must be in 1..=65535, got 0");
+            parsed
+        }
+        None if require_port => {
+            bail!("missing environment variable: OUTBE_RPC_PORT");
+        }
+        None => crate::vm_network::DEFAULT_RPC_PORT,
+    };
     Ok(format!("http://{bind}:{port}"))
 }
 
@@ -255,5 +274,27 @@ mod tests {
             ),
             PathBuf::from("/usr/local/bin/outbe-hyperlane-validator")
         );
+    }
+
+    #[test]
+    fn local_rpc_url_defaults_to_8545_on_bare_host_and_requires_port_on_vm() {
+        assert_eq!(
+            local_rpc_url_from("127.0.0.1", None, false).unwrap(),
+            "http://127.0.0.1:8545"
+        );
+        assert_eq!(
+            local_rpc_url_from("127.0.0.1", Some("18545"), false).unwrap(),
+            "http://127.0.0.1:18545"
+        );
+        assert_eq!(
+            local_rpc_url_from("10.77.0.10", Some("18545"), true).unwrap(),
+            "http://10.77.0.10:18545"
+        );
+        assert!(local_rpc_url_from("10.77.0.10", None, true)
+            .unwrap_err()
+            .to_string()
+            .contains("OUTBE_RPC_PORT"));
+        assert!(local_rpc_url_from("127.0.0.1", Some("0"), false).is_err());
+        assert!(local_rpc_url_from("127.0.0.1", Some("abc"), false).is_err());
     }
 }

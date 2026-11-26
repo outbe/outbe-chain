@@ -73,15 +73,6 @@ pub struct VmNetworkConfig {
     /// IPv4 DNS servers for VM static addressing (required non-empty, e.g. `[1.1.1.1, 8.8.8.8]`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dns: Vec<Ipv4Addr>,
-    /// Legacy optional dnsmasq DHCP hosts file override (hosts now auto-discover via `outbe-up host reserve`).
-    #[serde(default = "default_vm_dhcp_hosts_file")]
-    pub dhcp_hosts_file: PathBuf,
-    /// Legacy optional dnsmasq DHCP leases file override.
-    #[serde(default = "default_vm_dhcp_leases_file")]
-    pub dhcp_leases_file: PathBuf,
-    /// Legacy optional dnsmasq PID file override.
-    #[serde(default = "default_vm_dhcp_pid_file")]
-    pub dhcp_pid_file: PathBuf,
     #[serde(default = "default_vm_vcpu")]
     pub vcpu: u32,
     #[serde(default = "default_vm_memory_gib")]
@@ -225,12 +216,6 @@ pub struct ResolvedFounderVm {
     pub prefix: u8,
     pub gateway: Ipv4Addr,
     pub dns: Vec<Ipv4Addr>,
-    #[allow(dead_code)]
-    pub dhcp_hosts_file: PathBuf,
-    #[allow(dead_code)]
-    pub dhcp_leases_file: PathBuf,
-    #[allow(dead_code)]
-    pub dhcp_pid_file: PathBuf,
     pub vm_ip: Ipv4Addr,
     pub port_offset: u16,
     pub port_offset_explicit: bool,
@@ -438,18 +423,6 @@ impl NetworkConfig {
                 !vm.dns.is_empty(),
                 "vm.dns is required and must list at least one IPv4 DNS server"
             );
-            ensure!(
-                vm.dhcp_hosts_file.is_absolute(),
-                "vm.dhcp_hosts_file must be an absolute path"
-            );
-            ensure!(
-                vm.dhcp_leases_file.is_absolute(),
-                "vm.dhcp_leases_file must be an absolute path"
-            );
-            ensure!(
-                vm.dhcp_pid_file.is_absolute(),
-                "vm.dhcp_pid_file must be an absolute path"
-            );
             ensure!(vm.vcpu > 0, "vm.vcpu must be positive");
             ensure!(vm.memory_gib > 0, "vm.memory_gib must be positive");
             ensure!(vm.disk_gib > 0, "vm.disk_gib must be positive");
@@ -519,9 +492,12 @@ impl NetworkConfig {
                 );
                 let rpc_bind_ip = self.founder_rpc_bind_ip(founder)?;
                 ensure!(
-                    rpc_bind_ip == Ipv4Addr::LOCALHOST || rpc_bind_ip == resolved.vm_ip,
-                    "founder {} rpc_bind_ip ({rpc_bind_ip}) must be 127.0.0.1 or equal to vm.vm_ip ({})",
+                    rpc_bind_ip == resolved.vm_ip,
+                    "founder {} sets rpc_bind_ip={rpc_bind_ip} != vm.vm_ip={}; \
+                     outbe-net-up requires rpc_bind_ip to match vm_ip for RPC-based readiness checks \
+                     (omit rpc_bind_ip or set it to {})",
                     founder.name,
+                    resolved.vm_ip,
                     resolved.vm_ip
                 );
                 outbe_operator_node_role::vm_network::StaticVmNetworkConfig {
@@ -749,9 +725,6 @@ impl NetworkConfig {
             prefix,
             gateway,
             dns: defaults.dns.clone(),
-            dhcp_hosts_file: defaults.dhcp_hosts_file.clone(),
-            dhcp_leases_file: defaults.dhcp_leases_file.clone(),
-            dhcp_pid_file: defaults.dhcp_pid_file.clone(),
             vm_ip: override_cfg.vm_ip,
             port_offset: override_cfg.port_offset.unwrap_or(0),
             port_offset_explicit: override_cfg.port_offset.is_some(),
@@ -946,18 +919,6 @@ fn default_vm_vmm_home() -> String {
 
 fn default_vm_bridge() -> String {
     "obr0".to_owned()
-}
-
-fn default_vm_dhcp_hosts_file() -> PathBuf {
-    PathBuf::from("/var/lib/validator-vm/dhcp-hosts")
-}
-
-fn default_vm_dhcp_leases_file() -> PathBuf {
-    PathBuf::from("/var/lib/validator-vm/dhcp-leases")
-}
-
-fn default_vm_dhcp_pid_file() -> PathBuf {
-    PathBuf::from("/run/validator-vm-dhcp.pid")
 }
 
 const fn default_vm_vcpu() -> u32 {
@@ -1172,8 +1133,8 @@ genesis:
             ]
         );
 
-        // Missing static VM fields (prefix/gateway/dns) and unrelated rpc_bind_ip are rejected;
-        // loopback rpc_bind_ip (127.0.0.1) is allowed at config/build time (refused at deploy/start/update).
+        // Missing static VM fields (prefix/gateway/dns) and any rpc_bind_ip != vm.vm_ip (including
+        // 127.0.0.1) are rejected at config/build time; omitting rpc_bind_ip defaults to vm.vm_ip.
         let mut missing_prefix = mixed_host_vm_config([Some(0), Some(1), Some(0), Some(1)]);
         missing_prefix.vm.as_mut().unwrap().prefix = None;
         assert!(missing_prefix
@@ -1182,30 +1143,23 @@ genesis:
             .to_string()
             .contains("vm.prefix"));
 
-        let mut loopback_bind = mixed_host_vm_config([Some(0), Some(1), Some(0), Some(1)]);
-        loopback_bind.founders[0].rpc_bind_ip = Some(Ipv4Addr::LOCALHOST);
-        loopback_bind.validate().unwrap();
+        let default_bind = mixed_host_vm_config([Some(0), Some(1), Some(0), Some(1)]);
         assert_eq!(
-            loopback_bind
-                .founder_rpc_bind_ip(&loopback_bind.founders[0])
-                .unwrap(),
-            Ipv4Addr::LOCALHOST
-        );
-        // Omitting rpc_bind_ip in VM mode defaults to vm.vm_ip.
-        assert_eq!(
-            loopback_bind
-                .founder_rpc_bind_ip(&loopback_bind.founders[1])
+            default_bind
+                .founder_rpc_bind_ip(&default_bind.founders[1])
                 .unwrap(),
             Ipv4Addr::new(10, 77, 0, 11)
         );
 
-        let mut mismatch_bind = mixed_host_vm_config([Some(0), Some(1), Some(0), Some(1)]);
-        mismatch_bind.founders[0].rpc_bind_ip = Some(Ipv4Addr::new(10, 77, 0, 99));
-        assert!(mismatch_bind
-            .validate()
-            .unwrap_err()
-            .to_string()
-            .contains("must be 127.0.0.1 or equal to vm.vm_ip"));
+        for bad_bind in [Ipv4Addr::LOCALHOST, Ipv4Addr::new(10, 77, 0, 99)] {
+            let mut mismatch_bind = mixed_host_vm_config([Some(0), Some(1), Some(0), Some(1)]);
+            mismatch_bind.founders[0].rpc_bind_ip = Some(bad_bind);
+            let err = mismatch_bind.validate().unwrap_err().to_string();
+            assert!(
+                err.contains("rpc_bind_ip=") && err.contains("!= vm.vm_ip="),
+                "expected mismatch error for {bad_bind}, got: {err}"
+            );
+        }
     }
 
     #[test]

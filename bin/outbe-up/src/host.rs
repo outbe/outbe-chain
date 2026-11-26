@@ -1,4 +1,4 @@
-//! Thin local CLI wrapper for `outbe-up host status|setup|nat|reserve|release|publish|check`.
+//! Thin local CLI wrapper for `outbe-up host status|setup|nat|publish|check`.
 //!
 //! Strictly local and strictly read-only: uses only `outbe-operator-vm`, with zero SSH,
 //! zero remote dependencies, and zero mutations to host networking/DHCP/firewall configuration.
@@ -9,8 +9,7 @@ use eyre::{bail, Context, Result};
 use outbe_operator_vm::{
     host::{
         check_local_vm_host, evaluate_host_setup, inspect_host_status, plan_host_publish,
-        plan_local_host_nat, release_local_vm_dhcp, reserve_local_vm_dhcp, HostEnv,
-        DEFAULT_BRIDGE_NAME,
+        plan_local_host_nat, HostEnv, DEFAULT_BRIDGE_NAME,
     },
     local::{default_state_dir, expand_tilde, resolve_vmm_paths, LocalVmStore},
     vmm::{LocalUnixVmmTransport, VmmClient},
@@ -40,29 +39,6 @@ pub struct NatArgs {
     pub vmm_socket: Option<PathBuf>,
     pub vmm_home: Option<PathBuf>,
     pub sys_root: Option<PathBuf>,
-    pub json: bool,
-}
-
-pub struct ReserveArgs {
-    pub vm: String,
-    pub ip: Option<Ipv4Addr>,
-    pub bridge: Option<String>,
-    pub vmm_socket: Option<PathBuf>,
-    pub vmm_home: Option<PathBuf>,
-    pub state_dir: Option<PathBuf>,
-    pub sys_root: Option<PathBuf>,
-    pub expected_hosts_owner: Option<String>,
-    pub json: bool,
-}
-
-pub struct ReleaseArgs {
-    pub vm: String,
-    pub bridge: Option<String>,
-    pub vmm_socket: Option<PathBuf>,
-    pub vmm_home: Option<PathBuf>,
-    pub state_dir: Option<PathBuf>,
-    pub sys_root: Option<PathBuf>,
-    pub expected_hosts_owner: Option<String>,
     pub json: bool,
 }
 
@@ -378,101 +354,6 @@ pub fn nat(args: NatArgs) -> Result<()> {
             }
         }
     }
-    Ok(())
-}
-
-pub fn reserve(args: ReserveArgs) -> Result<()> {
-    let (vmm, _) = open_vmm(args.vmm_socket.as_ref(), args.vmm_home.as_ref())?;
-    let store = open_store(args.state_dir.as_ref(), false)?;
-    let owner_override = parse_owner_pair(args.expected_hosts_owner.as_deref())?;
-    let env = HostEnv::from_sys_root(args.sys_root.as_deref(), owner_override);
-
-    let report = reserve_local_vm_dhcp(
-        &store,
-        &vmm,
-        &args.vm,
-        args.ip,
-        args.bridge.as_deref(),
-        &env,
-    )?;
-
-    if args.json {
-        println!("{}", serde_json::to_string_pretty(&report)?);
-        return Ok(());
-    }
-
-    println!(
-        "DHCP reservation recommendation for VM `{}` ({}) [read-only; zero writes]:",
-        report.vm, report.vm_id
-    );
-    println!("  hosts file:  {}", report.hosts_file.display());
-    println!("  DHCP unit:   {}", report.dhcp_unit);
-    println!(
-        "  status:      {}",
-        if report.already_present {
-            "already present in hosts file"
-        } else {
-            "not yet written"
-        }
-    );
-    println!(
-        "\nManaged block to add to {}:\n{}",
-        report.hosts_file.display(),
-        report.block_content
-    );
-    println!("Reload command:\n  {}", report.reload_command);
-    println!("\nNo files were modified or services reloaded (read-only).");
-    Ok(())
-}
-
-pub fn release(args: ReleaseArgs) -> Result<()> {
-    let store = open_store(args.state_dir.as_ref(), false)?;
-    let owner_override = parse_owner_pair(args.expected_hosts_owner.as_deref())?;
-    let env = HostEnv::from_sys_root(args.sys_root.as_deref(), owner_override);
-    let bridge = match args.bridge {
-        Some(b) => Some(b),
-        None => {
-            if store.state_path(&args.vm).is_ok_and(|p| p.is_file()) {
-                None
-            } else if let Ok((vmm, _)) = open_vmm(args.vmm_socket.as_ref(), args.vmm_home.as_ref())
-            {
-                vmm.get_meta_typed()
-                    .ok()
-                    .map(|m| m.networking.default_bridge)
-                    .filter(|b| !b.is_empty())
-            } else {
-                None
-            }
-        }
-    };
-
-    let report = release_local_vm_dhcp(&store, &args.vm, bridge.as_deref(), &env)?;
-
-    if args.json {
-        println!("{}", serde_json::to_string_pretty(&report)?);
-        return Ok(());
-    }
-
-    println!(
-        "DHCP release recommendation for VM `{}` [read-only; zero writes]:",
-        report.vm
-    );
-    println!("  hosts file:  {}", report.hosts_file.display());
-    println!("  DHCP unit:   {}", report.dhcp_unit);
-    if let Some(block) = &report.existing_block {
-        println!(
-            "\nManaged block to remove from {}:\n{block}",
-            report.hosts_file.display()
-        );
-        println!("Reload command:\n  {}", report.reload_command);
-    } else {
-        println!(
-            "  status:      no `{}` block present in {}",
-            report.block_marker,
-            report.hosts_file.display()
-        );
-    }
-    println!("\nNo files were modified or services reloaded (read-only).");
     Ok(())
 }
 

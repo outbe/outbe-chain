@@ -1,5 +1,5 @@
 //! Strictly read-only local host inspection, verification, and configuration recommendation
-//! helpers (`outbe-up host status|setup|nat|reserve|release|publish|check`).
+//! helpers (`outbe-up host status|setup|nat|publish|check`).
 //!
 //! Strictly local and strictly read-only: zero SSH, zero remote orchestration dependencies, and
 //! zero writes or reloads to host networking, DHCP, sysctl, systemd, or nftables state.
@@ -19,10 +19,8 @@ use serde_json::Value;
 
 use crate::{
     dnsmasq::{
-        check_dnsmasq_ip_conflicts, check_dnsmasq_lease_conflicts, check_dnsmasq_mac_conflicts,
-        check_dnsmasq_reservation_status, count_dnsmasq_leases, lookup_lease_ip_by_mac,
-        merge_dnsmasq_hosts_checked, render_vm_dnsmasq_block, strip_dnsmasq_block_checked,
-        validate_dnsmasq_hosts_format,
+        check_dnsmasq_lease_conflicts, check_dnsmasq_reservation_status, count_dnsmasq_leases,
+        lookup_lease_ip_by_mac, validate_dnsmasq_hosts_format,
     },
     local::{validate_vm_name, LocalVmPhase, LocalVmStore},
     nat::{
@@ -293,37 +291,6 @@ pub struct HostNatLocalReport {
     pub recommended_commands: Vec<String>,
     pub warnings: Vec<String>,
     pub detail: String,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct HostReserveReport {
-    pub vm: String,
-    pub vm_id: String,
-    pub mac: String,
-    pub ip: Ipv4Addr,
-    pub bridge: String,
-    pub dhcp_unit: String,
-    pub hosts_file: PathBuf,
-    pub block_marker: String,
-    pub block_content: String,
-    pub reload_command: String,
-    pub already_present: bool,
-    pub service_active: bool,
-    pub writes_performed: usize,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct HostReleaseReport {
-    pub vm: String,
-    pub bridge: String,
-    pub dhcp_unit: String,
-    pub hosts_file: PathBuf,
-    pub block_marker: String,
-    pub existing_block: Option<String>,
-    pub reload_command: String,
-    pub block_present: bool,
-    pub service_active: bool,
-    pub writes_performed: usize,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -756,240 +723,6 @@ pub fn plan_local_host_nat(
         detail: format!(
             "Outbound NAT egress for bridge `{bridge}` is not yet configured. Apply the recommended nftables ruleset (`table {NAT_TABLE_FAMILY} {NAT_TABLE_NAME}`), systemd unit, and sysctl setting manually (read-only; zero writes)."
         ),
-    })
-}
-
-/// Validate conflicts and render a per-VM static DHCP reservation (`# outbe-up:vm:<name>:begin..end`)
-/// plus `sudo systemctl reload <unit>`. Strictly read-only (zero writes).
-pub fn reserve_local_vm_dhcp<T: VmmTransport>(
-    store: &LocalVmStore,
-    vmm: &VmmClient<T>,
-    vm_name: &str,
-    explicit_ip: Option<Ipv4Addr>,
-    bridge_override: Option<&str>,
-    env: &HostEnv,
-) -> Result<HostReserveReport> {
-    validate_vm_name(vm_name)?;
-
-    let path = store.state_path(vm_name)?;
-    let raw = fs::read_to_string(&path).wrap_err_with(|| {
-        format!(
-            "local VM `{vm_name}` is not recorded in {} (create it first with `outbe-up vm create`)",
-            path.display()
-        )
-    })?;
-    let state: crate::local::LocalVmState = serde_json::from_str(&raw)
-        .wrap_err_with(|| format!("parse local VM state {}", path.display()))?;
-
-    ensure!(
-        !state.vm_id.is_empty() && state.phase != LocalVmPhase::Removing,
-        "VM `{vm_name}` is in phase `{:?}` and cannot be reserved",
-        state.phase
-    );
-
-    let info_resp = vmm.get_info(&state.vm_id)?;
-    ensure!(
-        !info_resp.is_gone(),
-        "VM `{vm_name}` ({}) is missing from local VMM",
-        state.vm_id
-    );
-    let info = info_resp.info.unwrap();
-    ensure!(
-        info.name == state.name,
-        "VMM VM {} has unexpected name `{}` (expected `{}`)",
-        state.vm_id,
-        info.name,
-        state.name
-    );
-    let live_mac = extract_primary_mac(&info)?;
-    if !state.mac.is_empty() {
-        ensure!(
-            state.mac.eq_ignore_ascii_case(&live_mac),
-            "VM `{vm_name}` MAC mismatch: recorded state has `{}`, live VMM reports `{live_mac}`",
-            state.mac
-        );
-    }
-
-    let ip = match (explicit_ip, state.intended_ip) {
-        (Some(given), Some(recorded)) => {
-            ensure!(
-                given == recorded,
-                "VM `{vm_name}` already has recorded intended_ip {recorded}, which disagrees with --ip {given}"
-            );
-            given
-        }
-        (Some(given), None) => given,
-        (None, Some(recorded)) => recorded,
-        (None, None) => {
-            bail!(
-                "no IPv4 address for VM `{vm_name}`: pass `--ip <ipv4>` or record one during `outbe-up vm create --ip <ipv4>`"
-            );
-        }
-    };
-
-    let bridge_name = bridge_override.unwrap_or(&state.bridge).to_owned();
-    validate_iface_name(&bridge_name, "bridge")?;
-    let (bridge_status, bridge_subnet) = detect_bridge(&bridge_name);
-    let subnet = bridge_subnet.ok_or_else(|| {
-        eyre::eyre!("bridge `{bridge_name}` is missing or has no IPv4 CIDR configured")
-    })?;
-    ensure!(
-        subnet.contains(ip),
-        "requested IP {ip} is outside bridge `{bridge_name}` subnet {}",
-        subnet.cidr_string()
-    );
-    ensure!(
-        ip != subnet.network && ip != subnet.broadcast(),
-        "requested IP {ip} is the network or broadcast address of {}",
-        subnet.cidr_string()
-    );
-    if let Some(gw) = bridge_status.gateway_ip {
-        ensure!(
-            ip != gw,
-            "requested IP {ip} is the bridge `{bridge_name}` gateway address"
-        );
-    }
-
-    let dhcp = detect_dhcp(&bridge_name, env);
-    ensure!(
-        dhcp.detected && dhcp.unit_active,
-        "no active DHCP service detected on bridge `{bridge_name}`"
-    );
-    let dhcp_unit = dhcp.unit_name.clone().ok_or_else(|| {
-        eyre::eyre!(
-            "running dnsmasq on `{bridge_name}` is not managed by a detected systemd unit; refusing to guess reload mechanism"
-        )
-    })?;
-    ensure!(
-        dhcp.reload_mode == "systemctl-reload",
-        "DHCP service `{dhcp_unit}` does not advertise ExecReload; refusing unsafe reload"
-    );
-    let hosts_file = dhcp.hosts_file.clone().ok_or_else(|| {
-        eyre::eyre!("DHCP service `{dhcp_unit}` does not specify `--dhcp-hostsfile`")
-    })?;
-
-    // Verify hosts file is a regular file with expected owner and parseable dnsmasq format.
-    let existing_hosts = read_and_validate_hosts_file(&hosts_file, env.expected_hosts_owner)?;
-    let block_key = format!("vm:{vm_name}");
-    let requested = vec![(live_mac.clone(), ip)];
-    check_dnsmasq_ip_conflicts(&existing_hosts, &requested, &block_key)?;
-    check_dnsmasq_mac_conflicts(&existing_hosts, &requested, &block_key)?;
-
-    if let Some(leases_file) = &dhcp.leases_file {
-        if let Ok(leases_content) = fs::read_to_string(leases_file) {
-            check_dnsmasq_lease_conflicts(&leases_content, &requested)?;
-        }
-    }
-
-    // Check other locally tracked VMs in store for IP/MAC collisions.
-    for other_name in store.list_vm_names()? {
-        if other_name == vm_name {
-            continue;
-        }
-        if let Ok(raw) = fs::read_to_string(store.state_path(&other_name)?) {
-            if let Ok(other) = serde_json::from_str::<crate::local::LocalVmState>(&raw) {
-                ensure!(
-                    other.intended_ip != Some(ip),
-                    "requested IP {ip} is already recorded for local VM `{other_name}`"
-                );
-                ensure!(
-                    !other.mac.eq_ignore_ascii_case(&live_mac),
-                    "MAC {live_mac} is already recorded for local VM `{other_name}`"
-                );
-            }
-        }
-    }
-
-    let splice = merge_dnsmasq_hosts_checked(&existing_hosts, &requested, &block_key)?;
-    let block_content = render_vm_dnsmasq_block(vm_name, &live_mac, ip);
-    let already_present = splice.exact_match;
-    let reload_command = format!("sudo systemctl reload {dhcp_unit}");
-
-    Ok(HostReserveReport {
-        vm: vm_name.to_owned(),
-        vm_id: state.vm_id,
-        mac: live_mac,
-        ip,
-        bridge: bridge_name,
-        dhcp_unit,
-        hosts_file,
-        block_marker: format!("# outbe-up:vm:{vm_name}:begin..end"),
-        block_content,
-        reload_command,
-        already_present,
-        service_active: dhcp.unit_active,
-        writes_performed: 0,
-    })
-}
-
-/// Inspect and print the exact `# outbe-up:vm:<name>:begin..end` block to remove from the
-/// discovered DHCP hosts file, plus `sudo systemctl reload <unit>`. Works even if `<name>` has
-/// already been removed from `LocalVmStore`. Strictly read-only (zero writes).
-pub fn release_local_vm_dhcp(
-    store: &LocalVmStore,
-    vm_name: &str,
-    bridge_override: Option<&str>,
-    env: &HostEnv,
-) -> Result<HostReleaseReport> {
-    validate_vm_name(vm_name)?;
-
-    let recorded_state = store
-        .state_path(vm_name)
-        .ok()
-        .and_then(|p| fs::read_to_string(p).ok())
-        .and_then(|raw| serde_json::from_str::<crate::local::LocalVmState>(&raw).ok());
-
-    let bridge_name = match bridge_override {
-        Some(b) => {
-            validate_iface_name(b, "bridge")?;
-            b.to_owned()
-        }
-        None => recorded_state
-            .as_ref()
-            .map(|st| st.bridge.clone())
-            .unwrap_or_else(|| DEFAULT_BRIDGE_NAME.to_owned()),
-    };
-
-    let dhcp = detect_dhcp(&bridge_name, env);
-    ensure!(
-        dhcp.detected && dhcp.unit_active,
-        "no active DHCP service detected on bridge `{bridge_name}`"
-    );
-    let dhcp_unit = dhcp.unit_name.clone().ok_or_else(|| {
-        eyre::eyre!(
-            "running dnsmasq on `{bridge_name}` is not managed by a detected systemd unit; refusing to guess reload mechanism"
-        )
-    })?;
-    ensure!(
-        dhcp.reload_mode == "systemctl-reload",
-        "DHCP service `{dhcp_unit}` does not advertise ExecReload; refusing unsafe reload"
-    );
-    let hosts_file = dhcp.hosts_file.clone().ok_or_else(|| {
-        eyre::eyre!("DHCP service `{dhcp_unit}` does not specify `--dhcp-hostsfile`")
-    })?;
-
-    let existing_hosts = read_and_validate_hosts_file(&hosts_file, env.expected_hosts_owner)?;
-    let block_key = format!("vm:{vm_name}");
-    let expected_mac = recorded_state
-        .as_ref()
-        .map(|st| st.mac.as_str())
-        .filter(|m| !m.is_empty());
-    let splice = strip_dnsmasq_block_checked(&existing_hosts, &block_key, expected_mac)?;
-    let block_present = splice.exact_match;
-    let existing_block = splice.existing_block;
-    let reload_command = format!("sudo systemctl reload {dhcp_unit}");
-
-    Ok(HostReleaseReport {
-        vm: vm_name.to_owned(),
-        bridge: bridge_name,
-        dhcp_unit,
-        hosts_file,
-        block_marker: format!("# outbe-up:vm:{vm_name}:begin..end"),
-        existing_block,
-        reload_command,
-        block_present,
-        service_active: dhcp.unit_active,
-        writes_performed: 0,
     })
 }
 
@@ -1557,12 +1290,12 @@ pub fn plan_host_publish<T: VmmTransport>(
         let content = fs::read_to_string(leases_file).unwrap_or_default();
         lookup_lease_ip_by_mac(&content, &live_mac).ok_or_else(|| {
             eyre::eyre!(
-                "VM `{vm_name}` has no recorded intended_ip and no active DHCP lease for MAC `{live_mac}`; run `outbe-up host reserve --vm {vm_name} --ip <ipv4>` first"
+                "VM `{vm_name}` has no recorded intended_ip and no active DHCP lease for MAC `{live_mac}`; recreate the VM with `--ip <ipv4>`"
             )
         })?
     } else {
         bail!(
-            "VM `{vm_name}` has no recorded intended_ip and no DHCP lease file was detected; run `outbe-up host reserve --vm {vm_name} --ip <ipv4>` first"
+            "VM `{vm_name}` has no recorded intended_ip and no DHCP lease file was detected; recreate the VM with `--ip <ipv4>`"
         );
     };
 

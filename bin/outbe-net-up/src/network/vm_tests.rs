@@ -5322,3 +5322,66 @@ genesis:
         );
     }
 }
+
+#[tokio::test]
+async fn update_refuses_legacy_env_schema_disks_before_touching_hosts() {
+    let tmp = tempfile::tempdir().unwrap();
+    let fixture = build_test_vm_artifacts(tmp.path(), "legacyenv", "~/.dstack-vmm", b"outbe-up");
+    let fake_image = tmp.path().join("img.tar.zst");
+    fs::write(&fake_image, b"img").unwrap();
+    let fake = Arc::new(FakeHostExec::new());
+    let exec: Arc<dyn HostExec> = fake.clone();
+
+    deploy_with_exec(
+        &DeployOptions {
+            artifacts: &fixture.root,
+            image_source: ImageSource::Archive {
+                path: fake_image.clone(),
+                sha256: None,
+            },
+            ssh_key: None,
+            ssh_config: None,
+            no_tee: true,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .unwrap();
+
+    // Simulate a legacy `network-vm-state.json` written before `env_schema` existed (defaults to 1).
+    let state_path = NetworkVmState::path(&fixture.root);
+    let mut raw: Value = serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
+    raw.as_object_mut().unwrap().remove("env_schema");
+    fs::write(&state_path, serde_json::to_vec_pretty(&raw).unwrap()).unwrap();
+
+    fake.state.lock().unwrap().vm_update_calls.clear();
+    let err = update_with_exec(
+        &UpdateOptions {
+            artifacts: &fixture.root,
+            image_source: ImageSource::Archive {
+                path: fake_image,
+                sha256: None,
+            },
+            software_bundle: None,
+            ssh_key: None,
+            ssh_config: None,
+            timeout: Duration::from_secs(10),
+            stop_timeout: Duration::from_secs(10),
+            max_lag: 20,
+            min_finalized_blocks: 1,
+            dkg_guard_blocks: 30,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .expect_err("network update must refuse legacy env_schema v1 disks");
+    assert!(
+        err.to_string().contains("validator.env schema v1")
+            && err.to_string().contains("requires schema v2"),
+        "{err}"
+    );
+    assert!(
+        fake.state.lock().unwrap().vm_update_calls.is_empty(),
+        "must refuse before updating any VM"
+    );
+}

@@ -214,63 +214,6 @@ enum HostCommand {
         #[arg(long)]
         json: bool,
     },
-    /// Validate conflicts and print the recommended static DHCP reservation block + reload command for one local VM (read-only; zero writes).
-    Reserve {
-        /// Local VM name recorded in the local VM state store.
-        #[arg(long)]
-        vm: String,
-        /// Static IPv4 address within the bridge subnet (defaults to VM state `intended_ip`).
-        #[arg(long)]
-        ip: Option<Ipv4Addr>,
-        /// Bridge interface name [default: VM's recorded bridge].
-        #[arg(long)]
-        bridge: Option<String>,
-        /// Local dstack VMM Unix socket path [default: ~/.dstack-vmm/run/vmm.sock].
-        #[arg(long)]
-        vmm_socket: Option<PathBuf>,
-        /// Local dstack VMM home directory [default: derived from --vmm-socket or ~/.dstack-vmm].
-        #[arg(long)]
-        vmm_home: Option<PathBuf>,
-        /// Directory for local per-VM state files [default: ${XDG_STATE_HOME:-~/.local/state}/outbe-up].
-        #[arg(long)]
-        state_dir: Option<PathBuf>,
-        /// Override system root directory (for local integration tests only).
-        #[arg(long, hide = true)]
-        sys_root: Option<PathBuf>,
-        /// Override expected uid:gid owner of dhcp-hosts (only effective with --sys-root in tests).
-        #[arg(long, hide = true)]
-        expected_hosts_owner: Option<String>,
-        /// Emit machine-readable JSON output.
-        #[arg(long)]
-        json: bool,
-    },
-    /// Inspect and print the managed DHCP reservation block to remove + reload command for one local VM (read-only; zero writes).
-    Release {
-        /// Local VM name whose `# outbe-up:vm:<name>:begin..end` block to release.
-        #[arg(long)]
-        vm: String,
-        /// Bridge interface name [default: VM's recorded bridge or obr0].
-        #[arg(long)]
-        bridge: Option<String>,
-        /// Local dstack VMM Unix socket path [default: ~/.dstack-vmm/run/vmm.sock].
-        #[arg(long)]
-        vmm_socket: Option<PathBuf>,
-        /// Local dstack VMM home directory [default: derived from --vmm-socket or ~/.dstack-vmm].
-        #[arg(long)]
-        vmm_home: Option<PathBuf>,
-        /// Directory for local per-VM state files [default: ${XDG_STATE_HOME:-~/.local/state}/outbe-up].
-        #[arg(long)]
-        state_dir: Option<PathBuf>,
-        /// Override system root directory (for local integration tests only).
-        #[arg(long, hide = true)]
-        sys_root: Option<PathBuf>,
-        /// Override expected uid:gid owner of dhcp-hosts (only effective with --sys-root in tests).
-        #[arg(long, hide = true)]
-        expected_hosts_owner: Option<String>,
-        /// Emit machine-readable JSON output.
-        #[arg(long)]
-        json: bool,
-    },
     /// Verify (read-only) that host networking, static internal IP (outside DHCP pool and unused), and optional published ports are configured for a VM.
     Check {
         /// Local VM name recorded in the local VM state store.
@@ -922,46 +865,6 @@ impl Cli {
                     vmm_socket,
                     vmm_home,
                     sys_root,
-                    json,
-                }),
-                HostCommand::Reserve {
-                    vm,
-                    ip,
-                    bridge,
-                    vmm_socket,
-                    vmm_home,
-                    state_dir,
-                    sys_root,
-                    expected_hosts_owner,
-                    json,
-                } => host::reserve(host::ReserveArgs {
-                    vm,
-                    ip,
-                    bridge,
-                    vmm_socket,
-                    vmm_home,
-                    state_dir,
-                    sys_root,
-                    expected_hosts_owner,
-                    json,
-                }),
-                HostCommand::Release {
-                    vm,
-                    bridge,
-                    vmm_socket,
-                    vmm_home,
-                    state_dir,
-                    sys_root,
-                    expected_hosts_owner,
-                    json,
-                } => host::release(host::ReleaseArgs {
-                    vm,
-                    bridge,
-                    vmm_socket,
-                    vmm_home,
-                    state_dir,
-                    sys_root,
-                    expected_hosts_owner,
                     json,
                 }),
                 HostCommand::Check {
@@ -1825,6 +1728,7 @@ mod tests {
             "outbe-up", "host", "nat", "--bridge", "obr0", "--remove", "--json"
         ])
         .is_ok());
+        // `host reserve` and `host release` are removed (VMs use static IPv4 via OUTBE_VM_IP).
         assert!(Cli::try_parse_from([
             "outbe-up",
             "host",
@@ -1835,20 +1739,12 @@ mod tests {
             "10.77.0.88",
             "--json"
         ])
-        .is_ok());
+        .is_err());
         assert!(
             Cli::try_parse_from(["outbe-up", "host", "release", "--vm", "node-a", "--json"])
-                .is_ok()
+                .is_err()
         );
         // Host write flags (`--apply`, `--force`) are removed (all `outbe-up host ...` commands are strictly read-only).
-        assert!(
-            Cli::try_parse_from(["outbe-up", "host", "reserve", "--vm", "node-a", "--apply"])
-                .is_err()
-        );
-        assert!(
-            Cli::try_parse_from(["outbe-up", "host", "release", "--vm", "node-a", "--apply"])
-                .is_err()
-        );
         assert!(
             Cli::try_parse_from(["outbe-up", "host", "nat", "--bridge", "obr0", "--force"])
                 .is_err()

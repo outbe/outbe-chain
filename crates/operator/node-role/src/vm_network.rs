@@ -63,10 +63,26 @@ impl Default for VmPortsConfig {
 }
 
 impl VmPortsConfig {
-    /// Parse and strictly validate the five explicit port keys from `validator.env`.
+    /// Parse and strictly validate the five explicit port keys from `validator.env` (VM mode: all 5 required).
     pub fn from_env(values: &BTreeMap<String, String>) -> Result<Self> {
+        Self::from_env_inner(values, true)
+    }
+
+    /// Parse and validate port keys for bare-host `validator.env`, allowing legacy installations
+    /// created before `OUTBE_RPC_PORT` existed to default to `8545`.
+    pub fn from_env_bare_host(values: &BTreeMap<String, String>) -> Result<Self> {
+        Self::from_env_inner(values, false)
+    }
+
+    fn from_env_inner(values: &BTreeMap<String, String>, require_rpc_port: bool) -> Result<Self> {
+        let rpc_port =
+            if require_rpc_port || values.get("OUTBE_RPC_PORT").is_some_and(|v| !v.is_empty()) {
+                parse_port_env(values, "OUTBE_RPC_PORT")?
+            } else {
+                DEFAULT_RPC_PORT
+            };
         let cfg = Self {
-            rpc_port: parse_port_env(values, "OUTBE_RPC_PORT")?,
+            rpc_port,
             consensus_port: parse_port_env(values, "OUTBE_CONSENSUS_PORT")?,
             reth_port: parse_port_env(values, "OUTBE_RETH_P2P_PORT")?,
             discv5_port: parse_port_env(values, "OUTBE_RETH_DISCOVERY_PORT")?,

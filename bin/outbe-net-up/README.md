@@ -102,7 +102,7 @@ Configuration rules:
 
 - Three distinct per-member addresses:
   - `vm.vm_ip` (`OUTBE_VM_IP`): static private IPv4 configured on the guest VM's `eth0` bridge interface (VM mode only). `outbe-net-up` and `outbe-up` (`vm status service_ip`, `host check --ip`, readiness, join driver) reach the VM at `<vm_ip>:<rpc_port>`.
-  - `rpc_bind_ip` (`OUTBE_RPC_BIND_IP`, optional): HTTP JSON-RPC listen address (`--http.addr`). Defaults to `vm.vm_ip` in VM mode and `127.0.0.1` on bare hosts. If set to a value other than `vm.vm_ip` (such as `127.0.0.1`) in VM mode, `network build` warns that RPC-based readiness cannot work, and `network deploy`, `network start`, and `network update` refuse the config.
+  - `rpc_bind_ip` (`OUTBE_RPC_BIND_IP`, optional): HTTP JSON-RPC listen address (`--http.addr`). Defaults to `vm.vm_ip` in VM mode and `127.0.0.1` on bare hosts. In VM mode, `outbe-net-up` (`network build`, `deploy`, `start`, `update`, `add-validator`, `add-full-node`) refuses `rpc_bind_ip != vm.vm_ip` because host-side RPC readiness checks require reaching `OUTBE_VM_IP:OUTBE_RPC_PORT` (use standalone `outbe-up` if you need loopback-only RPC without `outbe-net-up` orchestration).
   - `advertise_ip` (`OUTBE_EXTERNAL_IP`): external/public IPv4 advertised for P2P, Radicle, and on-chain consensus registration.
 - Set `vm.memory_gib` to at least `8` on active validator VMs to avoid OOM kills.
 - Optionally set per-founder `rpc_port` (default `8545`, written to `OUTBE_RPC_PORT`) or pass `--rpc-port` to `add-validator` / `add-full-node`; RPC ports must be in `1..=65535` and distinct from all other configurable ports and fixed service ports (`8551`, `8876`, `9000`, `9002`, `9003`, `9101`).
@@ -231,6 +231,16 @@ outbe-net-up network remove \
 ```
 
 `network remove` touches only VMs carrying this network's `owner_tag`. It leaves foreign VMs, guest OS images, and host firewall or bridge configurations untouched. Avoid `--force` on live validators.
+
+## Bare-host founding networks
+
+For bare-host (non-VM) founding networks (`network.yaml` without a top-level `vm:` section), stage founder bundles without starting services using `network prepare`, then start and inspect with `network start` and `network status`:
+
+```bash
+outbe-net-up network prepare --artifacts ./out/network --ssh-key ~/.ssh/id_ed25519
+outbe-net-up network start --artifacts ./out/network --ssh-key ~/.ssh/id_ed25519
+outbe-net-up network status --artifacts ./out/network --ssh-key ~/.ssh/id_ed25519
+```
 
 ## Diagnostics without VM SSH
 

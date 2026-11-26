@@ -30,8 +30,16 @@ use super::{
 };
 
 pub const NETWORK_VM_STATE_VERSION: u32 = 2;
+/// `validator.env` schema version written on member disks:
+/// - `1`: legacy disks before `OUTBE_VM_IP` / `OUTBE_RPC_PORT` / `OUTBE_RETH_P2P_PORT`.
+/// - `2`: unified `OUTBE_VM_IP` + `OUTBE_RPC_PORT` + `OUTBE_RETH_P2P_PORT`/`OUTBE_RETH_DISCOVERY_PORT`.
+pub const CURRENT_ENV_SCHEMA: u32 = 2;
 pub const NETWORK_VM_STATE_FILENAME: &str = "network-vm-state.json";
 const NETWORK_VM_STATE_LOCK_FILENAME: &str = ".network-vm-state.lock";
+
+const fn legacy_env_schema() -> u32 {
+    1
+}
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -90,6 +98,8 @@ pub struct NetworkVmState {
     pub image_name: String,
     pub image_hash: String,
     pub outbe_up_sha256: String,
+    #[serde(default = "legacy_env_schema")]
+    pub env_schema: u32,
     #[serde(default)]
     pub members: Vec<NetworkMemberState>,
 }
@@ -161,6 +171,7 @@ impl NetworkVmState {
             image_name: String::new(),
             image_hash: String::new(),
             outbe_up_sha256,
+            env_schema: CURRENT_ENV_SCHEMA,
             members: Vec::new(),
         }
     }
@@ -344,6 +355,7 @@ mod tests {
             image_name: "outbe-vm-dev-0123456789abcdef".to_owned(),
             image_hash: "0123456789abcdef".repeat(4),
             outbe_up_sha256: "2".repeat(64),
+            env_schema: CURRENT_ENV_SCHEMA,
             members: vec![sample_member(0, "validator-0")],
         };
         let path = state.save_locked(&lock, tmp.path()).unwrap();
@@ -355,6 +367,16 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(loaded, state);
+        assert_eq!(loaded.env_schema, CURRENT_ENV_SCHEMA);
+
+        // Legacy v2 state file without `env_schema` defaults to schema 1.
+        let mut legacy_v2: serde_json::Value = serde_json::to_value(&state).unwrap();
+        legacy_v2.as_object_mut().unwrap().remove("env_schema");
+        fs::write(&path, serde_json::to_vec(&legacy_v2).unwrap()).unwrap();
+        let legacy_loaded = NetworkVmState::load_optional_locked(&lock, tmp.path())
+            .unwrap()
+            .unwrap();
+        assert_eq!(legacy_loaded.env_schema, 1);
 
         // Version 1 file is explicitly rejected.
         fs::write(&path, r#"{"version": 1, "founders": []}"#).unwrap();
@@ -392,6 +414,7 @@ mod tests {
                         image_name: "img".to_owned(),
                         image_hash: "0".repeat(64),
                         outbe_up_sha256: "1".repeat(64),
+                        env_schema: CURRENT_ENV_SCHEMA,
                         members: Vec::new(),
                     });
                 state.upsert_member(sample_member(worker, &format!("validator-{worker}")));

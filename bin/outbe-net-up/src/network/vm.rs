@@ -254,20 +254,10 @@ struct RemoteVmStopOutput {
 
 #[derive(Debug, Deserialize)]
 struct RemoteVmUpdateOutput {
-    #[allow(dead_code)]
-    name: String,
     vm_id: String,
-    #[allow(dead_code)]
-    previous_image_name: String,
-    #[allow(dead_code)]
-    previous_os_image_hash: String,
     image_name: String,
     os_image_hash: String,
-    #[allow(dead_code)]
-    image_reused: bool,
     already_updated: bool,
-    #[allow(dead_code)]
-    vmm_status: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]

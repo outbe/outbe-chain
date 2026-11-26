@@ -848,12 +848,15 @@ fn emit_vm_founder_trees(inputs: &VmTreeInputs<'_>) -> Result<Vec<FounderArtifac
         let validator_addr = validator_address(&dst_keys.join("evm-key.hex"))?;
         let ports = super::config::FounderPublishedPorts::from_offset(resolved_vm.port_offset)?;
         let rpc_bind_ip = inputs.config.founder_rpc_bind_ip(founder)?;
-        if rpc_bind_ip != resolved_vm.vm_ip {
-            eprintln!(
-                "warning: founder `{}` sets rpc_bind_ip={rpc_bind_ip} != vm.vm_ip={}; host-side RPC-based readiness checks cannot work and `outbe-net-up network deploy|start|update` will refuse this config",
-                founder.name, resolved_vm.vm_ip
-            );
-        }
+        ensure!(
+            rpc_bind_ip == resolved_vm.vm_ip,
+            "founder `{}` sets rpc_bind_ip={rpc_bind_ip} != vm.vm_ip={}; \
+             outbe-net-up requires rpc_bind_ip to match vm_ip for RPC-based readiness checks \
+             (omit rpc_bind_ip or set it to {})",
+            founder.name,
+            resolved_vm.vm_ip,
+            resolved_vm.vm_ip
+        );
         let operator = OperatorConfig {
             version: OPERATOR_CONFIG_VERSION,
             network: OperatorNetworkConfig {
@@ -2263,9 +2266,13 @@ genesis:
             per_founder_cli.pointer("/validator_runtime/1/rpc_port"),
             Some(&json!(18_546))
         );
-        // Loopback rpc_bind_ip != vm.vm_ip builds cleanly (with warning) and passes vm-boot verification.
+        // Loopback rpc_bind_ip != vm.vm_ip is refused at network config validation & build time.
         vm_cfg.founders[0].rpc_bind_ip = Some(Ipv4Addr::LOCALHOST);
-        vm_cfg.validate().unwrap();
+        let cfg_err = vm_cfg.validate().unwrap_err().to_string();
+        assert!(
+            cfg_err.contains("rpc_bind_ip=127.0.0.1 != vm.vm_ip=10.77.0.68"),
+            "{cfg_err}"
+        );
         let lb_staging = temp.path().join("lb-staging");
         fs::create_dir_all(&lb_staging).unwrap();
         fs::write(
@@ -2273,7 +2280,7 @@ genesis:
             r#"{"config":{"chainId":424242}}"#,
         )
         .unwrap();
-        emit_vm_founder_trees(&VmTreeInputs {
+        let build_err = emit_vm_founder_trees(&VmTreeInputs {
             staging_root: &lb_staging,
             software_root: &software,
             keys_dir: &keys_dir,
@@ -2282,18 +2289,12 @@ genesis:
             validators: &validators,
             bootnodes: &bootnodes,
         })
-        .unwrap();
-        let lb_env = fs::read_to_string(lb_staging.join("vm/validator-0/validator.env")).unwrap();
-        assert!(lb_env.contains("OUTBE_VM_IP=\"10.77.0.68\""), "{lb_env}");
+        .unwrap_err()
+        .to_string();
         assert!(
-            lb_env.contains("OUTBE_RPC_BIND_IP=\"127.0.0.1\""),
-            "{lb_env}"
+            build_err.contains("rpc_bind_ip=127.0.0.1 != vm.vm_ip=10.77.0.68"),
+            "{build_err}"
         );
-        outbe_operator_node_role::vm_boot::verify_tree_without_mount(
-            &lb_staging.join("vm/validator-0"),
-            &fake_bins,
-        )
-        .unwrap();
     }
 
     #[test]
