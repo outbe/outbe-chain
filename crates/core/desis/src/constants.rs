@@ -2,7 +2,7 @@
 pub const BID_QUANTITY_FLOOR_BPS: u32 = 400;
 
 /// Bid fan-in deadline: clearing proceeds without chains that have not reported
-/// BIDS_DONE within this window after the collection stage starts. A repair window
+/// BIDS_TOTALS within this window after the collection stage starts. A repair window
 /// for parked legs. It must stay under 24h so the deadline clear lands on the
 /// same UTC day as the dispatch.
 pub const BIDS_FANIN_TIMEOUT_SECS: u64 = 8 * 3600;
@@ -32,7 +32,7 @@ pub const INTEX_ISSUANCE_WINDOW_SECONDS: u64 = outbe_primitives::time::SECONDS_P
 /// sent at the last moment still reaches every chain before the day ends there.
 pub const RESULT_DELIVERY_MARGIN_SECONDS: u64 = 8 * 3600;
 
-/// Mirrors `EscrowTimes.UNFINALIZED_REFUND_DELAY`: the other chains read a day without a result
+/// Mirrors `EscrowTimes.UNFINALIZED_RETURN_DELAY`: the other chains read a day without a result
 /// as failed once this much has passed since its commit end.
 pub const TARGET_UNFINALIZED_RETURN_DELAY_SECONDS: u64 = 48 * 3600;
 

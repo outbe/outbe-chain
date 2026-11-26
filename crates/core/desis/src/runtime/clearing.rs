@@ -138,7 +138,7 @@ fn partition_chains(
 /// - Transition to `Completed`.
 /// - Hand issuance to IntexFactory.
 /// - Return the unused limit to PromisLimit.
-/// - Send the per-chain AUCTION_RESULT / REFUND_INSTRUCTIONS messages.
+/// - Send the per-chain INTEX_AUCTION_RESULT / INTEX_AUCTION_WINNERS messages.
 fn clear_inner(
     storage: StorageHandle<'_>,
     emission_day: EmissionDate,
@@ -157,7 +157,7 @@ fn clear_inner(
     let config = contract.read_auction_config(emission_day)?;
     let min_bid_qty = contract.config_min_bid_quantity.read(&emission_day)? as u16;
     // Zero bids are valid here. `compute_clearing` yields 0 issued, and the full limit returns
-    // to PromisLimit. A no-sale AuctionResult(0,0,0) is reported to every snapshot chain.
+    // to PromisLimit. A no-sale IntexAuctionResult(0,0,0) is reported to every snapshot chain.
     let bids = contract.read_chains_bids(emission_day, included)?;
 
     let total_demand: u64 = bids.iter().map(|(_, b)| u64::from(b.intex_quantity)).sum();
@@ -233,7 +233,7 @@ fn clear_inner(
         outbe_intexfactory::api::send_issuance(&storage, legs)?;
     }
 
-    // Send AUCTION_RESULT to every snapshot chain; skipped/zero-winner chains get
+    // Send INTEX_AUCTION_RESULT to every snapshot chain; skipped/zero-winner chains get
     // wonBidsCount 0 so their local auction still completes.
     for &chain_id in snapshot {
         let (won_bids_count, won_quantity) = chain_winnings(&result, chain_id);
@@ -298,7 +298,7 @@ fn clear_inner(
     Ok(result)
 }
 
-/// How many REFUND_INSTRUCTIONS messages one chain's winners take: at least one, which
+/// How many INTEX_AUCTION_WINNERS messages one chain's winners take: at least one, which
 /// closes the day on a chain whose bids all lost. Bounded by the codec's arrival set,
 /// which is one 256-bit word wide.
 pub(crate) fn intex_auction_winners_page_count(winners: usize) -> Result<usize> {
@@ -309,7 +309,7 @@ pub(crate) fn intex_auction_winners_page_count(winners: usize) -> Result<usize> 
     Ok(pages)
 }
 
-/// One REFUND_INSTRUCTIONS message: a run of a chain's winners and the partial fill among them.
+/// One INTEX_AUCTION_WINNERS message: a run of a chain's winners and the partial fill among them.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct IntexAuctionWinnersPage {
     pub(crate) winners: Vec<Address>,
@@ -318,7 +318,7 @@ pub(crate) struct IntexAuctionWinnersPage {
     pub(crate) partial_won: u16,
 }
 
-/// A chain's winners in ranking order, cut into REFUND_INSTRUCTIONS messages.
+/// A chain's winners in ranking order, cut into INTEX_AUCTION_WINNERS messages.
 pub(crate) fn intex_auction_winners_pages(
     result: &ClearingResult,
     chain_id: u32,
