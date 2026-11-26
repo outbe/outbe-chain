@@ -275,6 +275,49 @@ mod tests {
     }
 
     #[test]
+    fn outbe_up_operator_commands_remain_available() {
+        const ADDRESS: &str = "0x1111111111111111111111111111111111111111";
+        let commands: &[&[&str]] = &[
+            &["outbe-cli", "validator", "list"],
+            &["outbe-cli", "validator", "confirm-ready"],
+            &["outbe-cli", "validator", "delegate", "oracle", ADDRESS],
+            &["outbe-cli", "validator", "delegate", "hyperlane", ADDRESS],
+            &["outbe-cli", "validator", "set-hyperlane-signer", ADDRESS],
+            &[
+                "outbe-cli",
+                "validator",
+                "fund-operational-key",
+                ADDRESS,
+                "1",
+            ],
+            &["outbe-cli", "validator", "deactivate"],
+            &[
+                "outbe-cli",
+                "staking",
+                "stake",
+                "--validator",
+                ADDRESS,
+                "--amount",
+                "1",
+                "--keys-dir",
+                "/tmp/keys",
+                "--symmetric",
+                "127.0.0.1:30400",
+            ],
+            &["outbe-cli", "staking", "unjail"],
+            &["outbe-cli", "staking", "unstake", "--amount", "1"],
+            &["outbe-cli", "staking", "claim"],
+        ];
+
+        for command in commands {
+            assert!(
+                Cli::try_parse_from(command.iter().copied()).is_ok(),
+                "outbe-up dependency must remain available: {command:?}"
+            );
+        }
+    }
+
+    #[test]
     fn test_cli_rejects_removed_subcommands() {
         for command in [
             "oracle",
@@ -294,7 +337,6 @@ mod tests {
 
         for nested in [
             ["outbe-cli", "slash", "history"],
-            ["outbe-cli", "validator", "fund-operational-key"],
             ["outbe-cli", "chain", "info"],
             ["outbe-cli", "chain", "balance"],
             ["outbe-cli", "chain", "block"],
