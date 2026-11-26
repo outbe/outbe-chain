@@ -3125,7 +3125,10 @@ pub(crate) fn member_node_ready(
         // Keyless full nodes sync from upstream/bootnodes without validator signing keys or TEE.
         return true;
     }
-    if status.execution_peers.unwrap_or(0) < required_peers as u64 {
+    // Reth devp2p is not a full-mesh consensus layer (blocks arrive via Engine API); require at
+    // least one execution peer when the network has peers, while strictly enforcing `>= n - 1`
+    // on `consensus.connected_peers` below.
+    if required_peers > 0 && status.execution_peers.unwrap_or(0) == 0 {
         return false;
     }
     let Some(consensus) = status.consensus.as_ref() else {

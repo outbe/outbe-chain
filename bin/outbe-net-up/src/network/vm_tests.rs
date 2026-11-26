@@ -4755,3 +4755,56 @@ async fn s10_status_fails_when_validator_consensus_peers_below_n_minus_1_or_miss
         );
     }
 }
+
+#[test]
+fn s10_member_node_ready_requires_execution_peers_ge_1_and_consensus_peers_ge_n_minus_1() {
+    let mk_val = |exec_peers: Option<u64>, cons_peers: u64| VmMemberStatus {
+        name: "validator-0".to_owned(),
+        role: MemberRole::Founder,
+        vm_name: "s10ep-validator-0".to_owned(),
+        vm_id: "id-0".to_owned(),
+        host: "192.0.2.50".to_owned(),
+        classification: VmClassKind::Ours,
+        classification_detail: None,
+        service_ip: Ipv4Addr::new(10, 77, 0, 10),
+        dhcp_ip: None,
+        mac: "52:54:00:00:00:01".to_owned(),
+        vmm_status: "running".to_owned(),
+        vmm_running: true,
+        no_tee: false,
+        chain_id: Some(424_242),
+        finalized: Some(500),
+        finalized_hash: Some("0xabc".to_owned()),
+        execution_peers: exec_peers,
+        consensus_mode: Some("signer".to_owned()),
+        consensus_peers: Some(cons_peers),
+        has_threshold_shares: Some(true),
+        vrf_material_version: Some(1),
+        tee_ready: Some(true),
+        consensus: Some(ConsensusStatus {
+            connected_peers: cons_peers,
+            is_validator: true,
+            mode: "signer".to_owned(),
+            has_threshold_shares: true,
+            randomness_status: Some("healthy".to_owned()),
+            enclave: outbe_operator_node_role::rpc::EnclaveHealth {
+                state: "ready".to_owned(),
+                ready: true,
+                offer_key_ready: true,
+            },
+            ..Default::default()
+        }),
+        boot_warning: None,
+        error: None,
+    };
+
+    // 5-validator network (required_peers = n - 1 = 4):
+    // 0 or missing execution_peers -> NOT ready.
+    assert!(!member_node_ready(&mk_val(None, 4), 424_242, 4));
+    assert!(!member_node_ready(&mk_val(Some(0), 4), 424_242, 4));
+    // execution_peers >= 1 (e.g. 1 or 3) with consensus_peers == 4 -> ready!
+    assert!(member_node_ready(&mk_val(Some(1), 4), 424_242, 4));
+    assert!(member_node_ready(&mk_val(Some(3), 4), 424_242, 4));
+    // consensus_peers < 4 STILL fails closed even with plenty of execution peers!
+    assert!(!member_node_ready(&mk_val(Some(5), 3), 424_242, 4));
+}
