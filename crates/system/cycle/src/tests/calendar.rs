@@ -431,6 +431,12 @@ fn isolated_step_checkpoints_route_failed_allocation_and_failed_metadosis_to_pro
                 U256::ZERO,
             )
             .unwrap();
+        // The fixture starts no auction, so the auction of the failed day is scheduled here.
+        outbe_desis::api::schedule_auction(
+            handle.clone(),
+            outbe_system_common::time::EmissionDate::new(20_240_101),
+        )
+        .unwrap();
         let desis = outbe_desis::schema::DesisContract::new(handle.clone());
         let day2 = outbe_system_common::time::EmissionDate::new(20_240_102);
         desis.sched_active_slot.write(&day2, 1).unwrap();
@@ -473,4 +479,37 @@ fn isolated_step_checkpoints_route_failed_allocation_and_failed_metadosis_to_pro
     assert_eq!(metadosis_failed.len(), 1);
     assert_eq!(metadosis_failed[0].emissionDay, 20_240_102);
     assert_eq!(metadosis_failed[0].reason, 1);
+
+    // The day of the failed allocation closes at its Metadosis time and cancels its auction.
+    let failed_allocation = storage.enter(|handle| {
+        outbe_emission::api::get_emission_day_record(handle, 20_240_101)
+            .unwrap()
+            .unwrap()
+    });
+    assert_eq!(
+        failed_allocation.state,
+        outbe_emission::schema::emission_day_state::COMPLETED
+    );
+    assert_eq!(
+        failed_allocation.metadosis_state,
+        outbe_emission::schema::metadosis_state::CANCELLED
+    );
+    let metadosis_canceled: Vec<_> = storage
+        .get_ordered_events()
+        .iter()
+        .filter_map(|log| IMetadosis::MetadosisCanceled::decode_log(log).ok())
+        .map(|ev| (ev.data.emissionDay, ev.data.reason))
+        .collect();
+    assert_eq!(metadosis_canceled, vec![(20_240_101, 1)]);
+    let desis_canceled: Vec<_> = storage
+        .get_ordered_events()
+        .iter()
+        .filter_map(|log| IDesis::DesisCanceled::decode_log(log).ok())
+        .filter(|ev| ev.data.emissionDay == 20_240_101)
+        .map(|ev| ev.data.reason)
+        .collect();
+    assert_eq!(
+        desis_canceled,
+        vec![outbe_desis::constants::CANCELED_NO_LIMIT]
+    );
 }
