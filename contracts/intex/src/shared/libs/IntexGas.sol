@@ -47,7 +47,7 @@ library IntexGas {
     ///      rule leaves the outer frame far too little to send a message of its own.
     uint256 internal constant SEND_PAUSE_GAS = 400_000;
 
-    /// @dev WCOEN unwrap plus IntexFactory distribute registration.
+    /// @dev The WCOEN credit to IntexFactory plus its burn in `receive_crosschain_proceeds`.
     uint256 internal constant PROCEEDS_COMPOSE = 300_000;
 
     /// @dev 88k.
