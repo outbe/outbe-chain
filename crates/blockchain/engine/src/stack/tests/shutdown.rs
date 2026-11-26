@@ -231,6 +231,10 @@ fn application_drain_retains_transport_on_terminal_startup_and_panic_paths() {
                     context.stopped().now_or_never().is_none(),
                     "transport stopped before manager drain"
                 );
+                // Wait for the service command loop before refresh.
+                // This fixture has no gossip signing material, so the reply may fail.
+                // The strict refresh below checks that the service is alive.
+                let _ = resolver.take_repository_messages().await;
                 // The real endpoint is still servicing its interface while the
                 // manager has an accepted in-flight provider operation.
                 resolver
