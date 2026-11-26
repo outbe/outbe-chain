@@ -1393,7 +1393,8 @@ mod liveness {
         assert_eq!(miss_events(&p), [(v(3), NOT_SERVING)]);
 
         // Round 2: a quorum names v(4) in notDelivered. v(3) gave a report
-        // and did not name it. v(2) gave no report: no miss for silence.
+        // and did not name it: no miss, because honest agents can get
+        // different results in the delivery check.
         StorageHandle::enter(&mut p, |storage| {
             let mut c = HyperlaneControllerContract::new(storage);
             let delivered = Report {
@@ -1409,12 +1410,32 @@ mod liveness {
                 .unwrap();
             c.check_liveness().unwrap();
             assert_eq!(c.miss_count.read(&v(4)).unwrap(), 1);
-            assert_eq!(c.miss_count.read(&v(3)).unwrap(), 2);
-            assert_eq!(c.miss_count.read(&v(2)).unwrap(), 0);
+            assert_eq!(c.miss_count.read(&v(3)).unwrap(), 0);
+        });
+        assert_eq!(miss_events(&p)[1..], [(v(4), NOT_DELIVERED)]);
+
+        // Round 3: a quorum names v(4) in notServing. v(3) gave a report and
+        // did not name it: v(3) did not do the check.
+        StorageHandle::enter(&mut p, |storage| {
+            let mut c = HyperlaneControllerContract::new(storage);
+            let serving = Report {
+                latest_index: 0,
+                not_serving: &[v(4)],
+                not_delivered: &[],
+            };
+            for addr in [FIXTURE_VALIDATOR, v(2), v(4)] {
+                c.record_submission(addr, LOCAL, 500, ROOT_B, &serving)
+                    .unwrap();
+            }
+            c.record_submission(v(3), LOCAL, 500, ROOT_B, &Report::default())
+                .unwrap();
+            c.check_liveness().unwrap();
+            assert_eq!(c.miss_count.read(&v(4)).unwrap(), 2);
+            assert_eq!(c.miss_count.read(&v(3)).unwrap(), 1);
         });
         assert_eq!(
-            miss_events(&p)[1..],
-            [(v(3), NO_COMPLAINT), (v(4), NOT_DELIVERED)]
+            miss_events(&p)[2..],
+            [(v(3), NO_COMPLAINT), (v(4), NOT_SERVING)]
         );
     }
 

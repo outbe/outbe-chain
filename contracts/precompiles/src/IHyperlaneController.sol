@@ -59,7 +59,7 @@ interface IHyperlaneController {
     /// `reasons` is the sum of: 1 = no vote at the target index or a root
     /// that is not the quorum root, 2 = a quorum named the validator in
     /// `notServing`, 4 = a quorum named it in `notDelivered`, 8 = its report
-    /// did not name a validator that a quorum named.
+    /// did not name a validator that a quorum named in `notServing`.
     event LivenessMiss(address indexed validator, uint32 misses, uint8 reasons);
     event LivenessJailed(address indexed validator);
     event ApprovedActionApplied(uint256 indexed proposalId);

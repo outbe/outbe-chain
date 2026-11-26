@@ -360,7 +360,9 @@ The call has these parts:
 
 The two lists hold 23 addresses together. A validator that a quorum names in
 a list gets a liveness miss. A validator that gave a report and did not name
-that validator gets a miss too. When a check did not run, the daemon tries
+a validator that a quorum named in `notServing` gets a miss too. `notDelivered`
+has no such rule: the delivery check uses `reorg_period` of the local
+configuration, so two honest daemons can get different results. When a check did not run, the daemon tries
 again on the next poll. In the last eighth of the epoch it sends
 the call with no names, so the vote is not lost.
 

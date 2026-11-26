@@ -24,7 +24,7 @@ pub mod miss_reason {
     /// A quorum named the validator in `notDelivered`.
     pub const NOT_DELIVERED: u8 = 4;
     /// The report of the validator did not name a validator that a quorum
-    /// named.
+    /// named in `notServing`.
     pub const NO_COMPLAINT: u8 = 8;
 }
 
@@ -231,7 +231,10 @@ impl HyperlaneControllerContract<'_> {
     /// - At least `threshold` active validators named it in `notServing` or
     ///   in `notDelivered` of one domain.
     /// - It gave a report for a domain and did not name a validator that at
-    ///   least `threshold` validators named in that domain.
+    ///   least `threshold` validators named in `notServing` of that domain.
+    ///   `notDelivered` has no such rule: the delivery check uses values of
+    ///   the agent configuration, so two honest agents can get different
+    ///   results.
     ///
     /// A validator gets one miss in a round at most. [`MAX_MISSES`]
     /// consecutive misses jail it (no slash). A domain with no target or no
@@ -323,6 +326,9 @@ impl HyperlaneControllerContract<'_> {
                         continue;
                     }
                     reasons[i] |= reason;
+                    if fault != Fault::NotServing {
+                        continue;
+                    }
                     // A validator that gave a report for this domain and did
                     // not name the accused validator did not do the check.
                     for (j, reporter) in active.iter().enumerate() {
