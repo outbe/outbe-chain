@@ -299,6 +299,7 @@ mod proceeds;
 mod scans;
 mod settlement;
 mod targets_and_outbox;
+mod units_in_transit;
 
 // --- // --- Shared across the test modules ---
 const PAIR_ID: u32 = 1;

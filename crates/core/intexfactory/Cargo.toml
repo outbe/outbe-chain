@@ -24,6 +24,8 @@ tracing.workspace = true
 [dev-dependencies]
 outbe-intexfactory = { path = ".", features = ["test-utils"] }
 outbe-intex = { workspace = true, features = ["test-utils"] }
+# The GemFactory route of an Intex series, refused after the forfeit.
+outbe-gemfactory.workspace = true
 # Drive the confidential Promis mint path in tests via the in-process enclave.
 outbe-promis = { workspace = true, features = ["test-enclave"] }
 evm2 = { workspace = true, features = ["std"] }

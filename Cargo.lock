@@ -8359,6 +8359,7 @@ dependencies = [
  "alloy-sol-types",
  "evm2",
  "outbe-core-common",
+ "outbe-gemfactory",
  "outbe-intex",
  "outbe-intexfactory",
  "outbe-macros",
