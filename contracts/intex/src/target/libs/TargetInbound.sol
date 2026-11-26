@@ -19,7 +19,7 @@ import {
 /// @dev Self-call shims the router exposes for per-item isolation. The library calls them on
 ///      `address(this)` from the delegated library context, so `msg.sender == address(this)` holds
 ///      inside the shim.
-interface ITargetRouterShims {
+interface IIntexAuctionTargetRouterShims {
     function sendIntexAuctionBidsToOutbe(uint32 emissionDay) external;
     function sendIntexAuctionBidsPause(uint32 emissionDay) external;
     function applyIntexSeriesCallNotice(bytes14 seriesId, uint64 calledAt) external;
@@ -119,7 +119,7 @@ library TargetInbound {
             return;
         }
         uint16 pageBefore = state.nextPage;
-        try ITargetRouterShims(address(this)).sendIntexAuctionBidsToOutbe{gas: gasleft() - IntexGas.SEND_PAUSE_GAS}(
+        try IIntexAuctionTargetRouterShims(address(this)).sendIntexAuctionBidsToOutbe{gas: gasleft() - IntexGas.SEND_PAUSE_GAS}(
             emissionDay
         ) {}
         catch (bytes memory errorData) {
@@ -128,7 +128,7 @@ library TargetInbound {
             );
         }
         if (advanced(state, pageBefore)) {
-            try ITargetRouterShims(address(this)).sendIntexAuctionBidsPause(emissionDay) {}
+            try IIntexAuctionTargetRouterShims(address(this)).sendIntexAuctionBidsPause(emissionDay) {}
             catch (bytes memory errorData) {
                 emit IIntexAuctionTargetRouter.IntexAuctionBidsPauseSendFailed(
                     emissionDay, state.nextPage, state.totalPages, errorData
@@ -490,7 +490,7 @@ library TargetInbound {
             _slotIntexSeriesCallNotice($, srcChainId, seriesId, calledAt, "");
             return;
         }
-        try ITargetRouterShims(address(this)).applyIntexSeriesCallNotice{gas: IntexGas.CALL_NOTICE_APPLY_CAP}(
+        try IIntexAuctionTargetRouterShims(address(this)).applyIntexSeriesCallNotice{gas: IntexGas.CALL_NOTICE_APPLY_CAP}(
             seriesId, calledAt
         ) {}
         catch (bytes memory reason) {
@@ -523,7 +523,7 @@ library TargetInbound {
         uint64 calledAt = $.failedIntexSeriesCallNoticeApplies[seriesId];
         if (calledAt == 0) return;
         delete $.failedIntexSeriesCallNoticeApplies[seriesId];
-        try ITargetRouterShims(address(this)).applyIntexSeriesCallNotice{gas: IntexGas.CALL_NOTICE_APPLY_CAP}(
+        try IIntexAuctionTargetRouterShims(address(this)).applyIntexSeriesCallNotice{gas: IntexGas.CALL_NOTICE_APPLY_CAP}(
             seriesId, calledAt
         ) {}
         catch (bytes memory reason) {
@@ -540,7 +540,7 @@ library TargetInbound {
         uint16 pageIndex,
         uint128 amount
     ) private {
-        try ITargetRouterShims(address(this)).sendIntexAuctionProceedsExt(emissionDay, pageIndex, amount) {}
+        try IIntexAuctionTargetRouterShims(address(this)).sendIntexAuctionProceedsExt(emissionDay, pageIndex, amount) {}
         catch (bytes memory reason) {
             uint256 idx = $.nextFailedIntexAuctionProceedsSendIdx++;
             $.failedIntexAuctionProceedsSend[idx] = FailedIntexAuctionProceedsSend({
