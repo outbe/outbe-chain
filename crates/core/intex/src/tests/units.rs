@@ -85,7 +85,7 @@ fn the_view_carries_the_whole_split() {
 }
 
 fn dispatch_series_data(storage: &StorageHandle, series_id: SeriesId) -> IIntex::SeriesData {
-    let call = IIntex::getIntexSeriesCall {
+    let call = IIntex::getIntexCall {
         intexId: crate::schema::intex_id(series_id),
     };
     let out = dispatch(
@@ -95,7 +95,7 @@ fn dispatch_series_data(storage: &StorageHandle, series_id: SeriesId) -> IIntex:
         U256::ZERO,
     )
     .unwrap();
-    IIntex::getIntexSeriesCall::abi_decode_returns(&out).unwrap()
+    IIntex::getIntexCall::abi_decode_returns(&out).unwrap()
 }
 
 /// The registry with its clock at `now`; series still carry `ISSUED_AT`.

@@ -78,9 +78,9 @@ pub fn dispatch(
                     auth,
                 )
             }),
-            getStatistics(_) => metadata::<IGemFactory::getStatisticsCall>(|| {
+            statistics(_) => metadata::<IGemFactory::statisticsCall>(|| {
                 let factory = GemFactoryContract::new(storage.clone());
-                Ok(IGemFactory::getStatisticsReturn {
+                Ok(IGemFactory::statisticsReturn {
                     totalGemsIssued: factory.total_gems_issued.read()?,
                     totalCapacityMinor: factory.total_capacity_minor.read()?,
                 })

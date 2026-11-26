@@ -489,7 +489,7 @@ fn mine(
 }
 
 fn fidelity_call(account: Address, signature: &[u8; 65]) -> Bytes {
-    outbe_fidelity::precompile::IFidelity::getFidelityIndexCall {
+    outbe_fidelity::precompile::IFidelity::fidelityIndexCall {
         account,
         expiry: TEST_BLOCK_TIMESTAMP_BASE + 100_000,
         signature: Bytes::copy_from_slice(signature),

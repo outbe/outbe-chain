@@ -16,7 +16,7 @@ sol!("../../../contracts/precompiles/src/IFidelity.sol");
 
 /// Dispatches an ABI-encoded call to the Fidelity precompile.
 ///
-/// `getFidelityIndex`/`getFidelityIndexAt` are owner-authorized reads over the
+/// `fidelityIndex`/`fidelityIndexAt` are owner-authorized reads over the
 /// encrypted cohort ledger (the enclave verifies the signed authorization).
 /// `maxFidelityIndexAt`/`decimals`/`minLeague`/`maxLeague` are plaintext.
 pub fn dispatch(
@@ -30,13 +30,13 @@ pub fn dispatch(
         let contract = FidelityContract::new(storage);
         use IFidelity::IFidelityCalls::*;
         match call {
-            getFidelityIndex(c) => view(c, |c| {
+            fidelityIndex(c) => view(c, |c| {
                 contract
                     .query_index_now(c.account, c.expiry, c.signature.to_vec())
                     .map(|r| r.rcfi)
                     .map_err(surface_query_error)
             }),
-            getFidelityIndexAt(c) => view(c, |c| {
+            fidelityIndexAt(c) => view(c, |c| {
                 contract
                     .query_index_at(c.account, c.timestamp, c.expiry, c.signature.to_vec())
                     .map(|r| r.rcfi)

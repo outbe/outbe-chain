@@ -14,7 +14,7 @@
   },
   {
     "type": "function",
-    "name": "getFidelityIndex",
+    "name": "fidelityIndex",
     "inputs": [
       {
         "name": "account",
@@ -43,7 +43,7 @@
   },
   {
     "type": "function",
-    "name": "getFidelityIndexAt",
+    "name": "fidelityIndexAt",
     "inputs": [
       {
         "name": "account",

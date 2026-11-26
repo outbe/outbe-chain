@@ -72,7 +72,7 @@ interface IGemFactory {
     /// @notice Cumulative totals since genesis. `totalCapacityMinor` counts all Promis
     ///         capacity ever sent there. A position that drains or expires does not
     ///         reduce it.
-    function getStatistics() external view returns (uint256 totalGemsIssued, uint256 totalCapacityMinor);
+    function statistics() external view returns (uint256 totalGemsIssued, uint256 totalCapacityMinor);
 
     /// @notice What settling `gemId` with `asset` costs, and which of the gem's
     ///         two currencies that asset settles on. Reverts for an asset the

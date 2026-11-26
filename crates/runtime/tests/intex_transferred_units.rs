@@ -305,7 +305,7 @@ impl World {
         let settled = self
             .view(
                 INTEX_ADDRESS,
-                IIntex::getIntexSeriesCall {
+                IIntex::getIntexCall {
                     intexId: issued_id(),
                 },
             )
