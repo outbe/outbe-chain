@@ -229,6 +229,7 @@ where
         actor: marshal_actor,
         mailbox: marshal_mailbox,
         processed_height: last_consensus_finalized,
+        archive_ceiling,
         epocher,
     } = super::marshal_recovery::recover_marshal(
         &ctx,
@@ -239,7 +240,7 @@ where
     )
     .await?;
 
-    let super::threshold_recovery::RecoveredThreshold {
+    let Some(super::threshold_recovery::RecoveredThreshold {
         local_consensus_key,
         last_execution_height,
         last_execution_hash,
@@ -252,7 +253,7 @@ where
         mut genesis_dkg_boundary_artifact,
         participants,
         proposer_evm_address,
-    } = super::threshold_recovery::recover_threshold(
+    }) = super::threshold_recovery::recover_threshold(
         &ctx,
         super::threshold_recovery::ThresholdRecovery {
             args: &args,
@@ -267,7 +268,11 @@ where
             protocol: protocol.as_ref(),
         },
     )
-    .await?;
+    .await?
+    else {
+        info!("global stop received during initial DKG subchannel registration; exiting startup");
+        return Ok(());
+    };
     let shareless_verifier = signing_share.is_none();
     super::tee_bootstrap::prepare_tee(
         &ctx,
@@ -508,75 +513,103 @@ where
     // Serve `outbe_getFinalization` from the marshal so `--upstream` followers
     // can backfill + verify finalized blocks from this validator.
 
-    let (recovery_anchor_height, recovery_anchor_hash, recovered_finalized_round) =
-        match recover_application_finalized_round(
-            ctx.child("recover_application_finalized_round"),
-            marshal_mailbox.clone(),
+    let history_source = NodeCanonicalHistory {
+        protocol: protocol.as_ref(),
+        node: &node,
+        genesis_hash,
+    };
+    let committee_cfg = RecoveryCommitteeConfig {
+        epoch_length_blocks: u64::from(epoch_length_blocks),
+        prepare_window_blocks: dkg_rotation_params.prepare_window_blocks,
+        activation_grace_blocks: dkg_rotation_params.activation_grace_blocks,
+    };
+
+    let (
+        recovery_anchor_height,
+        recovery_anchor_hash,
+        recovered_finalized_round,
+        recovered_parent_proof_record,
+    ) = match recover_authenticated_application_finalization(
+        ctx.child("recover_application_finalized_round"),
+        marshal_mailbox.clone(),
+        last_execution_height,
+        last_execution_hash,
+        archive_ceiling,
+        &history_source,
+        committee_cfg,
+    )
+    .await
+    {
+        Ok(recovered) => reconcile_authenticated_execution_head(
             last_execution_height,
-        )
-        .await
-        {
-            Ok(recovered) => reconcile_recovered_execution_head(
+            last_execution_hash,
+            recovered,
+        )?,
+        Err(error) if args.trust_el_head => {
+            warn!(
+                %error,
                 last_execution_height,
-                last_execution_hash,
-                recovered,
-            )?,
-            Err(error) if args.trust_el_head => {
-                warn!(
-                    %error,
-                    last_execution_height,
-                    "marshal archive lacks finalized-round history; trusting the execution boundary"
-                );
-                (recovery_anchor_height, recovery_anchor_hash, None)
+                "marshal archive lacks finalized-round history; trusting the execution boundary"
+            );
+            (recovery_anchor_height, recovery_anchor_hash, None, None)
+        }
+        Err(head_error) => {
+            // reth's canonical head can lead consensus finalization by the
+            // in-flight block. That is a block this node proposed and applied
+            // as its head but had not finalized when it stopped. In steady
+            // state, head_height = finalized_height + 1. On a plain restart in that
+            // window, the head's finalization legitimately does not exist yet.
+            // This is a normal unfinalized head, NOT archive corruption.
+            // 1. Confirm the marshal still holds its own finalized tip's record
+            //    (a gap *there* is genuine corruption).
+            // 2. Confirm the head leads by a bounded amount.
+            // 3. Continue from marshal's durable finalized boundary.
+            // The speculative Reth head remains available locally, but neither
+            // ExecutorActor nor FinalizationView may call it finalized. The
+            // network re-finalizes forward. If a different block wins the first
+            // unfinalized height, Reth reorgs via forkchoice.
+            let finalized_tip = last_consensus_finalized.get();
+            if !unfinalized_head_lead_is_recoverable(last_execution_height, finalized_tip) {
+                return Err(head_error);
             }
-            Err(head_error) => {
-                // reth's canonical head can lead consensus finalization by the
-                // in-flight block. That is a block this node proposed and applied
-                // as its head but had not finalized when it stopped. In steady
-                // state, head_height = finalized_height + 1. On a plain restart in that
-                // window, the head's finalization legitimately does not exist yet.
-                // This is a normal unfinalized head, NOT archive corruption.
-                // 1. Confirm the marshal still holds its own finalized tip's record
-                //    (a gap *there* is genuine corruption).
-                // 2. Confirm the head leads by a bounded amount.
-                // 3. Continue from marshal's durable finalized boundary.
-                // The speculative Reth head remains available locally, but neither
-                // ExecutorActor nor FinalizationView may call it finalized. The
-                // network re-finalizes forward. If a different block wins the first
-                // unfinalized height, Reth reorgs via forkchoice.
-                let finalized_tip = last_consensus_finalized.get();
-                if !unfinalized_head_lead_is_recoverable(last_execution_height, finalized_tip) {
-                    return Err(head_error);
-                }
-                let Ok(recovered_finalization) = recover_application_finalized_round(
-                    ctx.child("recover_application_finalized_tip"),
-                    marshal_mailbox.clone(),
+            let Ok(recovered_finalization) = recover_authenticated_application_finalization(
+                ctx.child("recover_application_finalized_tip"),
+                marshal_mailbox.clone(),
+                finalized_tip,
+                recovery_anchor_hash,
+                archive_ceiling,
+                &history_source,
+                committee_cfg,
+            )
+            .await
+            else {
+                return Err(head_error);
+            };
+            let (certified_height, certified_hash, recovered_round, parent_proof_record) =
+                reconcile_authenticated_execution_head(
                     finalized_tip,
+                    recovery_anchor_hash,
+                    recovered_finalization,
                 )
-                .await
-                else {
-                    return Err(head_error);
-                };
-                let (certified_height, certified_hash, recovered_round) =
-                    reconcile_recovered_execution_head(
-                        finalized_tip,
-                        recovery_anchor_hash,
-                        recovered_finalization,
-                    )
-                    .wrap_err(
-                        "marshal finalized-tip record disagrees with canonical execution history",
-                    )?;
-                warn!(
-                    last_execution_height,
-                    finalized_tip,
-                    head_lead = last_execution_height.saturating_sub(finalized_tip),
-                    recovery_anchor_hash = %recovery_anchor_hash,
-                    "execution head leads the marshal finalized tip on restart; anchoring \
-                     recovery at certified finality (unfinalized head re-finalized forward)"
-                );
-                (certified_height, certified_hash, recovered_round)
-            }
-        };
+                .wrap_err(
+                    "marshal finalized-tip record disagrees with canonical execution history",
+                )?;
+            warn!(
+                last_execution_height,
+                finalized_tip,
+                head_lead = last_execution_height.saturating_sub(finalized_tip),
+                recovery_anchor_hash = %recovery_anchor_hash,
+                "execution head leads the marshal finalized tip on restart; anchoring \
+                 recovery at certified finality (unfinalized head re-finalized forward)"
+            );
+            (
+                certified_height,
+                certified_hash,
+                recovered_round,
+                parent_proof_record,
+            )
+        }
+    };
 
     finalized_execution_barrier
         .verify_checkpoint(ProjectionCheckpoint {
@@ -640,6 +673,17 @@ where
             recovered_finalized_height = recovery_anchor_height,
             "dropped ahead-of-recovered-view finalization parent records at startup"
         );
+    }
+    if let Some(record) = recovered_parent_proof_record {
+        use crate::finalization::parent_cert_store::{CertifiedParentProofStore as _, ProofKind};
+        match record.kind {
+            ProofKind::Finalization { .. } => finalized_parent_cert_store
+                .put_finalization(record)
+                .wrap_err("failed to persist recovered direct finalization parent proof")?,
+            ProofKind::CertifiedNotarization => finalized_parent_cert_store
+                .put_certified_notarization(record)
+                .wrap_err("failed to persist recovered certified notarization parent proof")?,
+        }
     }
 
     // Publish the confirmed recovery anchor height before starting the

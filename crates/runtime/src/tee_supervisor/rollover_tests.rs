@@ -459,16 +459,39 @@ async fn serve(chain: Arc<ServedChain>) -> (String, jsonrpsee::server::ServerHan
     let state = chain.clone();
     let seen = calls.clone();
     module
-        .register_method("outbe_teeRenewalScheduleV1", move |_, _, _| {
+        .register_method("outbe_teeRenewalScheduleV1", move |params, _, _| {
+            let args: Vec<Value> = match params.as_str() {
+                None => Vec::new(),
+                Some(_) => params.parse()?,
+            };
             seen.lock()
                 .unwrap()
-                .push(("outbe_teeRenewalScheduleV1".into(), Vec::new()));
+                .push(("outbe_teeRenewalScheduleV1".into(), args.clone()));
             let head = if state.phase.load(Ordering::SeqCst) == 0 {
                 state.h1
             } else {
                 state.h2
             };
-            Ok::<_, ErrorObjectOwned>(serde_json::to_value(schedule_for(head)).unwrap())
+            let target = match args.first() {
+                None | Some(Value::Null) => head,
+                Some(value) => {
+                    let hash: B256 = serde_json::from_value(value.clone()).map_err(|error| {
+                        ErrorObjectOwned::owned(-32602, format!("{error}"), None::<()>)
+                    })?;
+                    if hash == state.h1.hash {
+                        state.h1
+                    } else if hash == state.h2.hash && state.phase.load(Ordering::SeqCst) > 0 {
+                        state.h2
+                    } else {
+                        return Err(ErrorObjectOwned::owned(
+                            -32602,
+                            format!("unknown schedule checkpoint {hash}"),
+                            None::<()>,
+                        ));
+                    }
+                }
+            };
+            Ok::<_, ErrorObjectOwned>(serde_json::to_value(schedule_for(target)).unwrap())
         })
         .unwrap();
     let seen = calls.clone();
