@@ -1,4 +1,4 @@
-//! Atomic reservation, pledge and collateral transitions.
+//! Atomic issue, settlement and forfeit of a Credis.
 use crate::{
     errors::CredisFactoryError,
     precompile::ICredisFactory,
@@ -10,24 +10,24 @@ use outbe_credis::runtime::effective_state;
 use outbe_credis::{CredisContract, CredisState};
 
 use crate::rules::{self, Forfeit, IssueCredisParams};
-use outbe_gratisfactory::api as pledges;
+use outbe_credis::precompile::ICredis;
+use outbe_gratis::api as gratis;
 use outbe_primitives::{error::Result, storage::StorageHandle};
-use outbe_system_common::addresses::CREDIS_FACTORY_ADDRESS;
-use outbe_system_common::units::checked_protocol_to_native;
-use outbe_vaultrouter::LiquidityReservation;
+use outbe_system_common::addresses::{CREDIS_ADDRESS, CREDIS_FACTORY_ADDRESS};
+use outbe_vaultrouter::CredisReservation;
 
 /// The caller's live reservation. Returns it with the block time.
 fn live_reservation(
     storage: &StorageHandle<'_>,
     caller: Address,
     reservation_id: U256,
-) -> Result<(LiquidityReservation, u64)> {
-    let r = outbe_vaultrouter::api::reservation_of(storage, reservation_id)?;
+) -> Result<(CredisReservation, u64)> {
+    let r = outbe_vaultrouter::api::credis_reservation_of(storage, reservation_id)?;
     let now = storage.now_secs()?;
     let error = if r.asset.is_zero() {
         CredisFactoryError::ReservationNotFound
-    } else if r.cca != caller {
-        CredisFactoryError::ReservationCcaMismatch
+    } else if r.credis_owner != caller {
+        CredisFactoryError::ReservationOwnerMismatch
     } else if now > r.expires_at {
         CredisFactoryError::ReservationExpired
     } else {
@@ -37,7 +37,7 @@ fn live_reservation(
 }
 
 /// Reject an asset whose decimals or currency changed after the reservation quoted it.
-fn ensure_asset_metadata(storage: &StorageHandle<'_>, r: &LiquidityReservation) -> Result<()> {
+fn ensure_asset_metadata(storage: &StorageHandle<'_>, r: &CredisReservation) -> Result<()> {
     let decimals = storage.staticcall(r.asset, IERC20::decimalsCall {}.abi_encode().into())?;
     let decimals = IERC20::decimalsCall::abi_decode_returns_validate(&decimals)
         .map_err(|_| CredisFactoryError::AssetDecimalsUndecodable)?;
@@ -53,31 +53,30 @@ fn ensure_asset_metadata(storage: &StorageHandle<'_>, r: &LiquidityReservation) 
     Ok(())
 }
 
-/// Issues a Credis on the reservation's pledge. Every term, the call terms included,
-/// comes from the reservation.
+/// The cash account issues the Credis of its reservation. The Gratis is pledged from the
+/// main account that the sealed `pledge` names. Every term, the call terms included, comes
+/// from the reservation.
 pub fn issue_credis(
     storage: StorageHandle<'_>,
     caller: Address,
     reservation_id: U256,
-    stake: U256,
+    pledge: &[u8],
 ) -> Result<(U256, U256)> {
     storage.with_checkpoint(|| {
-        outbe_ccaregistry::api::require_active_cca(&storage, caller)?;
         let (r, now) = live_reservation(&storage, caller, reservation_id)?;
+        outbe_ccaregistry::api::require_active_cca(&storage, r.cca)?;
         ensure_asset_metadata(&storage, &r)?;
-        let required = checked_protocol_to_native(r.gratis_minor)
-            .ok_or(CredisFactoryError::CoenStakeOverflow)?;
-        if stake != required {
-            return Err(CredisFactoryError::CcaStakeMismatch.into());
-        }
+        let pledge_account =
+            gratis::pledge_sealed(&storage, pledge, reservation_id, r.gratis_minor)?;
         let mut credis = CredisContract::new(storage.clone());
         let (id, newly_opened) = rules::issue_in_series(
             &mut credis,
             IssueCredisParams {
                 owner: r.credis_owner,
-                cca: caller,
-                source: r.source,
+                cca: r.cca,
+                pledge_account,
                 asset: r.asset,
+                asset_decimals: r.asset_decimals,
                 issuance_currency: r.issuance_currency,
                 reference_currency: r.reference_currency,
                 policy_rate: r.policy_rate,
@@ -94,15 +93,8 @@ pub fn issue_credis(
                 call_notice_period_seconds: r.call_notice_period_seconds,
             },
         )?;
-        pledges::send_to_credis(&storage, reservation_id, id, r.source, r.gratis_minor)?;
         let opened = credis.get_credis(id)?;
-        storage.transfer_balance(CREDIS_FACTORY_ADDRESS, r.credis_owner, stake)?;
-        let paid = outbe_vaultrouter::api::release_reservation(
-            &storage,
-            reservation_id,
-            r.credis_owner,
-            r.amount_minor,
-        )?;
+        let paid = outbe_vaultrouter::api::redeem_credis_reservation(&storage, reservation_id, id)?;
         if paid != r.amount_minor || credis.get_credis(id)? != opened {
             return Err(CredisFactoryError::CredisChangedDuringIssuance.into());
         }
@@ -116,21 +108,21 @@ pub fn issue_credis(
                     referenceCurrency: opened.reference_currency,
                     entryPriceMinor: opened.entry_price_minor,
                     callPriceMinor: opened.call_price_minor,
-                    callWindow: u64::from(opened.call_window_seconds),
-                    callThreshold: u64::from(opened.call_threshold_seconds),
-                    callNoticePeriod: u64::from(opened.call_notice_period_seconds),
+                    callWindow: u64::from(opened.terms.call_window_seconds),
+                    callThreshold: u64::from(opened.terms.call_threshold_seconds),
+                    callNoticePeriod: u64::from(opened.terms.call_notice_period_seconds),
                 }),
             )?;
         }
         storage.emit_event(
-            CREDIS_FACTORY_ADDRESS,
-            alloy_sol_types::SolEvent::encode_log_data(&ICredisFactory::CredisIssued {
+            CREDIS_ADDRESS,
+            alloy_sol_types::SolEvent::encode_log_data(&ICredis::CredisIssued {
                 credisId: id,
                 owner: r.credis_owner,
                 seriesId: opened.series_id.into(),
                 issuanceCurrency: opened.issuance_currency,
                 referenceCurrency: opened.reference_currency,
-                cca: caller,
+                cca: r.cca,
                 asset: r.asset,
                 amountMinor: r.amount_minor,
                 gratisMinor: r.gratis_minor,
@@ -142,7 +134,7 @@ pub fn issue_credis(
 }
 
 /// What paying `credis_id` off now takes: outstanding amount plus accrued fee.
-/// Zero once it is Settled or Forfeited.
+/// Zero once it is Forfeited by its deadline. A deleted Credis has no record to quote.
 pub fn quote_settlement(storage: &StorageHandle<'_>, credis_id: U256) -> Result<U256> {
     let record = CredisContract::new(storage.clone()).get_credis(credis_id)?;
     let now = storage.now_secs()?;
@@ -155,12 +147,13 @@ pub fn quote_settlement(storage: &StorageHandle<'_>, credis_id: U256) -> Result<
     }
 }
 
-/// Collect payment first, then return the released collateral to the source's
-/// liquid balance. No Fidelity mutation.
+/// Collect payment first, then free the settled share of the Gratis in the main account.
+/// A zero `asset` pays in the asset of the Credis. No Fidelity mutation.
 pub fn settle_credis(
     storage: StorageHandle<'_>,
     caller: Address,
     credis_id: U256,
+    asset: Address,
     amount: U256,
 ) -> Result<(U256, U256)> {
     storage.with_checkpoint(|| {
@@ -169,30 +162,94 @@ pub fn settle_credis(
         }
         let mut credis = CredisContract::new(storage.clone());
         let before = credis.get_credis(credis_id)?;
+        let paid_asset = if asset.is_zero() { before.asset } else { asset };
         let now = storage.now_secs()?;
-        let repayment = rules::settle(&mut credis, credis_id, amount, now)?;
-        let after = credis.get_credis(credis_id)?;
-        let released = before
-            .outstanding_gratis_minor
-            .checked_sub(after.outstanding_gratis_minor)
-            .ok_or(CredisFactoryError::CollateralIncreased)?;
-        if released != repayment.unpledged_gratis_minor {
-            return Err(CredisFactoryError::CollateralReleaseMismatch.into());
+        let repayment = rules::settle(&mut credis, credis_id, amount, now, paid_asset)?;
+        if repayment.closed && rules::in_issue_block(&credis, &before)? {
+            return Err(CredisFactoryError::CannotFullySettleInIssueBlock.into());
         }
-        outbe_vaultrouter::settlement::collect(
-            &storage,
-            caller,
-            repayment.asset,
-            repayment.amount_minor,
-        )?;
-        if credis.get_credis(credis_id)? != after {
+        let after = live_record(&credis, credis_id)?;
+        let released = released_gratis(&before, after.as_ref(), &repayment)?;
+        let payment = payment_in(&storage, &before, paid_asset, repayment.amount_minor)?;
+        outbe_vaultrouter::settlement::collect(&storage, caller, paid_asset, payment)?;
+        if live_record(&credis, credis_id)? != after {
             return Err(CredisFactoryError::CredisChangedDuringPayment.into());
         }
         if !released.is_zero() {
-            pledges::release_from_credis(&storage, credis_id, released)?;
+            gratis::release_pledged(&storage, before.pledge_account, released)?;
         }
         Ok((repayment.settled_amount_minor, repayment.settled_fee_minor))
     })
+}
+
+/// The record of `credis_id`, or `None` once the full settlement deleted it.
+fn live_record(
+    credis: &CredisContract<'_>,
+    credis_id: U256,
+) -> Result<Option<outbe_credis::CredisView>> {
+    if credis.credis_exists(credis_id)? {
+        return Ok(Some(credis.get_credis(credis_id)?));
+    }
+    Ok(None)
+}
+
+/// The Gratis the settlement freed, checked against the repayment.
+fn released_gratis(
+    before: &outbe_credis::CredisView,
+    after: Option<&outbe_credis::CredisView>,
+    repayment: &rules::Repayment,
+) -> Result<U256> {
+    let outstanding = after.map_or(U256::ZERO, |record| record.outstanding_gratis_minor);
+    let released = before
+        .outstanding_gratis_minor
+        .checked_sub(outstanding)
+        .ok_or(CredisFactoryError::CollateralIncreased)?;
+    if released != repayment.unpledged_gratis_minor {
+        return Err(CredisFactoryError::CollateralReleaseMismatch.into());
+    }
+    Ok(released)
+}
+
+/// The payment of `amount_minor` (Credis asset units) in `paid_asset`. Another asset is
+/// allowed only while the Credis asset has no vault, and it pays at par in its own units.
+fn payment_in(
+    storage: &StorageHandle<'_>,
+    record: &outbe_credis::Credis,
+    paid_asset: Address,
+    amount_minor: U256,
+) -> Result<U256> {
+    if paid_asset == record.asset {
+        return Ok(amount_minor);
+    }
+    let router = outbe_vaultrouter::VaultRouterContract::new(storage.clone());
+    let allowed = router.first_vault(record.asset)?.is_none()
+        && router.first_vault(paid_asset)?.is_some()
+        && iso_code(storage, paid_asset)? == record.issuance_currency;
+    if !allowed {
+        return Err(CredisFactoryError::SettlementAssetNotAllowed.into());
+    }
+    outbe_core_common::settlement::floor_to_asset_units(
+        amount_minor,
+        U256::ONE,
+        record.asset_decimals,
+        decimals(storage, paid_asset)?,
+    )
+    .map_err(|_| CredisFactoryError::SettlementAssetNotAllowed.into())
+}
+
+fn decimals(storage: &StorageHandle<'_>, asset: Address) -> Result<u8> {
+    let out = storage.staticcall(asset, IERC20::decimalsCall {}.abi_encode().into())?;
+    IERC20::decimalsCall::abi_decode_returns_validate(&out)
+        .map_err(|_| CredisFactoryError::AssetDecimalsUndecodable.into())
+}
+
+fn iso_code(storage: &StorageHandle<'_>, asset: Address) -> Result<u16> {
+    let out = storage.staticcall(
+        asset,
+        IReferenceCurrency::isoCodeCall {}.abi_encode().into(),
+    )?;
+    IReferenceCurrency::isoCodeCall::abi_decode_returns_validate(&out)
+        .map_err(|_| CredisFactoryError::AssetCurrencyUndecodable.into())
 }
 
 /// Deletes a Credis of a forfeited group.
@@ -212,12 +269,12 @@ pub fn forfeit_by_owner(
     })
 }
 
-/// Burns only this Credis's remaining collateral from the source's pledged balance and
-/// returns it to the Promis Reserve, together. Fidelity cohorts stay untouched.
+/// Burns only this Credis's remaining collateral from the pledged balance of its main account
+/// and returns it to the Promis Reserve, together. Fidelity cohorts stay untouched.
 fn burn_forfeited_collateral(
     storage: StorageHandle<'_>,
     credis_id: U256,
-    validate: impl FnOnce(&CredisContract<'_>, &outbe_credis::Credis) -> Result<()>,
+    validate: impl FnOnce(&CredisContract<'_>, &outbe_credis::CredisView) -> Result<()>,
 ) -> Result<Forfeit> {
     storage.with_checkpoint(|| {
         let mut credis = CredisContract::new(storage.clone());
@@ -228,11 +285,11 @@ fn burn_forfeited_collateral(
         }
         let pledged = before.outstanding_gratis_minor;
         if !pledged.is_zero() {
-            pledges::burn_from_credis(&storage, credis_id, pledged)?;
+            gratis::burn_pledged(&storage, before.pledge_account, pledged)?;
             outbe_promislimit::PromisLimitContract::new(storage.clone())
                 .add(outbe_promislimit::LimitSource::Credis, pledged)?;
         }
-        let forfeit = rules::delete_forfeited(&mut credis, before)?;
+        let forfeit = rules::delete_forfeited(&mut credis, before.record)?;
         if forfeit.forfeited_gratis_minor != pledged || credis.credis_exists(credis_id)? {
             return Err(CredisFactoryError::ForfeitureCollateralMismatch.into());
         }

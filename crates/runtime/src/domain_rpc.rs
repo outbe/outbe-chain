@@ -268,7 +268,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn derive_keys_and_gratis_alias_reject_invalid_and_mismatched_signatures() {
+    async fn derive_keys_rejects_invalid_and_mismatched_signatures() {
         let authority = outbe_tee::authority::TeeAuthorityChannel::new(
             outbe_tee::authority::TeeAuthorityState::Armed {
                 enclave_id: B256::repeat_byte(7),
@@ -441,27 +441,17 @@ mod tests {
             "outbe_consensusStatus",
             "outbe_deriveKeys",
             "outbe_getConsensusBlock",
-            "outbe_getEmissionInfo",
-            "outbe_getEpochInfo",
             "outbe_getFinalityProof",
             "outbe_getFinalization",
-            "outbe_getParticipation",
-            "outbe_getSlashConfig",
-            "outbe_getSlashInfo",
-            "outbe_getStake",
-            "outbe_getValidator",
-            "outbe_getValidators",
-            "outbe_getVrfSeed",
             "outbe_radiclePeers",
             "outbe_radicleRepositories",
             "outbe_radicleStatus",
-            "outbe_syncStatus",
             "outbe_teeRenewalScheduleV1",
             "outbe_upgradeKeyV1",
         ]
         .into_iter()
         .collect();
-        assert_eq!(expected.len(), 20);
+        assert_eq!(expected.len(), 10);
         assert_eq!(names, expected);
     }
 

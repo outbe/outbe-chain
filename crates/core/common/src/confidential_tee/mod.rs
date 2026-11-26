@@ -37,8 +37,8 @@ pub use errors::{
     NOD_MINT_REJECTED, PROMIS_OP_ATTESTATION,
 };
 pub use offer_encrypt::{
-    canary_offer_json, encrypt_offer, encrypt_offer_with, EncryptedOfferParts, OFFER_HKDF_INFO,
-    OFFER_HKDF_SALT,
+    canary_offer_json, encrypt_offer, encrypt_offer_with, EncryptedOfferParts,
+    CREDIS_PLEDGE_HKDF_INFO, OFFER_HKDF_INFO, OFFER_HKDF_SALT,
 };
 pub use response_auth::{
     attestation, hash, sign_attestation_tag, verify_app_attestation,

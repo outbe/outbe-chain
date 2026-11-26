@@ -16,7 +16,6 @@ interface IGratis {
     // Gratis runtime events.
     event GratisMinedFromNod(uint256 indexed nodId, address indexed account, bytes encryptedAmountMinor);
     event GratisBurned(address indexed account, bytes encryptedAmountMinor);
-    event GratisBurnedFromPledge(address indexed account, bytes encryptedAmountMinor);
 
     // ERC-20 metadata
     function name() external view returns (string memory);

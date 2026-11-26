@@ -12,7 +12,6 @@ outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-ccaregistry.workspace = true
 outbe-credis.workspace = true
 outbe-gratis.workspace = true
-outbe-gratisfactory.workspace = true
 outbe-fidelity.workspace = true
 outbe-promislimit.workspace = true
 outbe-vaultrouter.workspace = true
@@ -34,7 +33,6 @@ outbe-vaultrouter = { workspace = true, features = ["test-utils"] }
 outbe-oracle = { workspace = true, features = ["test-utils"] }
 outbe-ccaregistry.workspace = true
 outbe-credis = { workspace = true, features = ["test-utils"] }
-outbe-gratisfactory.workspace = true
 eyre.workspace = true
 alloy-primitives.workspace = true
 

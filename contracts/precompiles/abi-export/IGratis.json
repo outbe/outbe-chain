@@ -274,25 +274,6 @@
   },
   {
     "type": "event",
-    "name": "GratisBurnedFromPledge",
-    "inputs": [
-      {
-        "name": "account",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "encryptedAmountMinor",
-        "type": "bytes",
-        "indexed": false,
-        "internalType": "bytes"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "GratisMinedFromNod",
     "inputs": [
       {

@@ -23,10 +23,6 @@ sol!("../../contracts/precompiles/src/ISlashIndicator.sol");
 sol!("../../contracts/precompiles/src/IStaking.sol");
 sol!("../../contracts/precompiles/src/IHyperlaneController.sol");
 sol!("../../contracts/precompiles/src/ICycle.sol");
-sol!("../../contracts/precompiles/src/IOracle.sol");
 sol!("../../contracts/precompiles/src/IUpdate.sol");
 sol!("../../contracts/precompiles/src/IVote.sol");
-sol!("../../contracts/precompiles/src/IStablecoinPolicyRegistry.sol");
 sol!("../../contracts/precompiles/src/ICodeRegistry.sol");
-
-pub const ORACLE_ADDR: Address = address!("0x000000000000000000000000000000000000EE05");
