@@ -15,7 +15,7 @@ use outbe_core_common::pow;
 
 use crate::errors::GemFactoryError;
 use crate::precompile::IGemFactory::{
-    GemFactoryPositionCreated, GemFactoryPositionGemIssued, GemSeriesOpened,
+    GemFactoryPositionCreated, GemFactoryPositionRedeemed, GemSeriesOpened,
 };
 use crate::schema::{GemFactoryContract, GemFactoryPosition, GemIssueParams};
 use crate::sol_ext::IIntexNFT1155;
@@ -339,8 +339,10 @@ pub fn issue_merchant_gem(
     emit_gem_issued(storage, gem_id)?;
     emit_event(
         storage,
-        GemFactoryPositionGemIssued {
+        GemFactoryPositionRedeemed {
             gemFactoryPositionId: gem_factory_position_id,
+            owner: record.owner,
+            promisLoadMinor: promis_load,
             gemId: gem_id,
         },
     )?;

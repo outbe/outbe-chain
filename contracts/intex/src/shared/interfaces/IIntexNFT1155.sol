@@ -57,7 +57,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
         uint16 issuanceCurrency;
         /// @notice Reference currency (ISO numeric). Single USD (840) until multi-currency.
         uint16 referenceCurrency;
-        /// @notice Auction-cleared units the series was issued with. Set once at `createSeries`,
+        /// @notice Auction-cleared units the series was issued with. Set once at `openSeries`,
         ///         never mutated.
         uint32 issuedUnits;
         /// @notice PROMIS-units per Intex unit (1e6).
@@ -156,11 +156,11 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     error ZeroAddress(string field, address value);
     /// @notice Invalid lifecycle state transition.
     error InvalidState(uint8 expected, uint8 actual);
-    /// @notice Token id does not exist.
-    error NonexistentToken(uint256 tokenId);
+    /// @notice No Intex has this id.
+    error IntexNotFound(uint256 intexId);
     /// @notice Series already exists for this token id.
-    error TokenAlreadyExists(uint256 tokenId);
-    /// @notice `createSeries` was called with a zero issued-intex count.
+    error IntexAlreadyExists(uint256 intexId);
+    /// @notice `openSeries` was called with a zero issued-intex count.
     error ZeroIssuedUnits();
     /// @notice `issuedAt` is zero (the existence sentinel) or dated after this chain's clock.
     error InvalidIssuedAt(uint64 issuedAt);
@@ -169,14 +169,14 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @notice A mint or crosschainMint exceeds the units its packed storage field can hold.
     error UnitsTooLarge(uint256 units);
     /// @notice Owner-to-owner transfer attempted on a `Called` series after its settlement deadline.
-    error TransferAfterDeadline(uint256 tokenId, uint64 deadline);
+    error TransferAfterDeadline(uint256 intexId, uint64 deadline);
     /// @notice Bridge attempted on a `Called` series after it closed: crosschainBurn after the
     ///         settlement deadline, crosschainMint after the transit margin past it.
-    error BridgeAfterDeadline(uint256 tokenId, uint64 closedAt);
+    error BridgeAfterDeadline(uint256 intexId, uint64 closedAt);
     /// @notice Issue attempted on a `Called` series after the transit margin past its settlement
     ///         deadline ended.
-    error IssueAfterDeadline(uint256 tokenId, uint64 closedAt);
-    /// @notice `markCalled` was given a call time of zero or one the destination clock has not
+    error IssueAfterDeadline(uint256 intexId, uint64 closedAt);
+    /// @notice `callSeries` was given a call time of zero or one the destination clock has not
     ///         reached.
     error CalledAtInvalid(uint64 calledAt, uint64 nowTs);
     /// @notice An `issueIntex` or `crosschainMint` would push `totalSupply` past
@@ -187,10 +187,10 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
 
     // --- Writes ---
 
-    /// @notice Identity inputs for a new series, set once at `createSeries`.
+    /// @notice Identity inputs for a new series, set once at `openSeries`.
     /// @dev `emissionDay` is the day the series was derived from. It is the provenance key
     ///      (`seriesOfDay`), stored verbatim rather than inferred from `seriesId`.
-    struct CreateSeriesParams {
+    struct OpenSeriesParams {
         bytes14 seriesId;
         uint32 emissionDay;
         /// @notice When the origin created the series. The call window is dated from it.
@@ -207,7 +207,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @notice Create a new Intex series (one per auction) with its identity fields.
     /// @param params Series identity (id, currencies, issued units, promis load, prices, call
     ///        trigger).
-    function createSeries(CreateSeriesParams calldata params) external;
+    function openSeries(OpenSeriesParams calldata params) external;
 
     /// @notice Mint Intex to a specific address.
     /// @dev A `Called` series takes no issuance past the transit margin after its settlement deadline.
@@ -220,7 +220,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @notice Mark a series as Called (Issued -> Called).
     /// @param seriesId Series identifier.
     /// @param calledAt Unix time the origin marked the series Called. The deadline derives from it.
-    function markCalled(bytes14 seriesId, uint64 calledAt) external;
+    function callSeries(bytes14 seriesId, uint64 calledAt) external;
 
     /// @notice Burn `units` of `owner`'s Issued Intex on Outbe when they are settled.
     /// @dev Entry point of the IntexFactory precompile under BURNER_ROLE. It owns the series
@@ -247,13 +247,13 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
 
     /// @notice Whether the series has been created here.
     /// @param seriesId Series identifier.
-    /// @return True once `createSeries` has run for it.
+    /// @return True once `openSeries` has run for it.
     function seriesExists(bytes14 seriesId) external view returns (bool);
 
     /// @notice Issued token id for a series (= `uint256(keccak256(seriesId))`, its `intexId`). Pure helper.
     /// @param seriesId Series identifier.
     /// @return The Issued token id.
-    function issuedTokenId(bytes14 seriesId) external pure returns (uint256);
+    function issuedIntexId(bytes14 seriesId) external pure returns (uint256);
 
     /// @notice Emission day whose auction issued the series (0 if the series does not exist).
     /// @param seriesId Series identifier.
@@ -278,12 +278,12 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @notice Read series data by series id. `state` derives Forfeited, as the card renders it.
     /// @param seriesId Series identifier.
     /// @return The full series data for the Issued token id.
-    function readData(bytes14 seriesId) external view returns (SeriesData memory);
+    function getIntexSeries(bytes14 seriesId) external view returns (SeriesData memory);
 
-    /// @notice Read series data by its token id, `keccak256(seriesId)`, as `readData` does.
-    /// @param tokenId Issued token id.
+    /// @notice Read series data by its token id, `keccak256(seriesId)`, as `getIntexSeries` does.
+    /// @param intexId Issued token id.
     /// @return The full series data for the token id.
-    function readTokenData(uint256 tokenId) external view returns (SeriesData memory);
+    function getIntex(uint256 intexId) external view returns (SeriesData memory);
 
     /// @notice Total supply for a specific token id.
     /// @param tokenId Token id to read.

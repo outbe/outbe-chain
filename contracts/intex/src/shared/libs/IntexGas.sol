@@ -3,7 +3,7 @@ pragma solidity 0.8.30;
 
 /// @title IntexGas
 /// @author Outbe
-/// @notice Destination gas budgets for intex cross-chain messages, passed into `ERC7786MessengerBase._send`
+/// @notice Destination gas budgets for intex cross-chain messages, passed into `ERC7786Sender._sendTo`
 ///         as the ERC-7786 executionGasLimit attribute whichever gateway is active.
 /// @dev Each budget is 1.5x the measured cost of its message's heaviest path. The transport bills
 ///      the limit rather than the spend. `GasBudget.t.sol` pins them and must run with `--isolate`.
@@ -32,7 +32,7 @@ library IntexGas {
     uint256 internal constant INTEX_SERIES_CALL_NOTICE_PER_SERIES = 45_000;
 
     /// @notice Per-series ceiling: uncapped, a runaway series takes 63/64 of the message's gas and starves
-    ///         the slot write. Kept under the `markCalled` marginal so a runaway still fits its own budget.
+    ///         the slot write. Kept under the `callSeries` marginal so a runaway still fits its own budget.
     uint256 internal constant CALL_NOTICE_APPLY_CAP = 60_000;
 
     /// @dev What a round must have left to send one more BIDS_BATCH: a full 64-bid chunk measures ~714k
@@ -47,7 +47,7 @@ library IntexGas {
     ///      rule leaves the outer frame far too little to send a message of its own.
     uint256 internal constant SEND_PAUSE_GAS = 400_000;
 
-    /// @dev WCOEN unwrap plus IntexFactory distribute registration.
+    /// @dev The WCOEN credit to IntexFactory plus its burn in `receive_crosschain_proceeds`.
     uint256 internal constant PROCEEDS_COMPOSE = 300_000;
 
     /// @dev 88k.

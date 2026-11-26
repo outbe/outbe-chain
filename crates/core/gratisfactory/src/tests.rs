@@ -492,8 +492,6 @@ fn token_deltas(logs: &[alloy_primitives::LogData], account: Address) -> Vec<(bo
     for log in logs {
         let opened = if let Ok(event) = IGratis::GratisMinedFromNod::decode_log_data(log) {
             Some((true, event.encryptedAmountMinor))
-        } else if let Ok(event) = IGratis::GratisMinedFromPromis::decode_log_data(log) {
-            Some((true, event.encryptedAmountMinor))
         } else if let Ok(event) = IGratis::GratisBurned::decode_log_data(log) {
             Some((false, event.encryptedAmountMinor))
         } else {
@@ -572,11 +570,11 @@ fn mine_gratis_burns_coen_into_the_promis_limit_and_mints_gratis() {
 
     assert_eq!(mined.len(), 1);
     assert_eq!(mined[0].account, alice());
-    assert_eq!(mined[0].gratisMinor, gratis_minor);
+    assert_eq!(mined[0].amountMinor, gratis_minor);
     assert_eq!(added.len(), 1);
     assert_eq!(added[0].source, 47);
     assert_eq!(added[0].amountMinor, gratis_minor);
-    assert_eq!(deltas, vec![(true, gratis_minor)]);
+    assert!(deltas.is_empty());
 }
 
 #[test]

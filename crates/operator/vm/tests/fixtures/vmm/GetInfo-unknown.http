@@ -1,0 +1,13 @@
+HTTP/1.1 200 OK
+content-type: application/json
+server: dstack VMM
+x-frame-options: SAMEORIGIN
+permissions-policy: interest-cohort=()
+x-content-type-options: nosniff
+x-app-version: v0.6.3 (git:c88f60e781a62d542e08)
+x-accel-buffering: no
+content-length: 27
+connection: close
+date: Wed, 25 Nov 2026 09:56:02 GMT
+
+{"found":false,"info":null}

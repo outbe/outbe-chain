@@ -94,7 +94,7 @@ interface IIntexFactory {
     function powDifficulty() external view returns (uint8);
 
     /// @notice The ERC20Router of WCOEN delivers the proceeds of one page of winners from
-    ///         TargetRouter of a chain of the day, with `abi.encode(emissionDay, pageIndex)` in
+    ///         IntexAuctionTargetRouter of a chain of the day, with `abi.encode(emissionDay, pageIndex)` in
     ///         `extraData`. The factory burns the WCOEN into the Promis Limit with code 43.
     function onCrosschainTokensReceived(
         uint32 srcChainId,
@@ -103,7 +103,7 @@ interface IIntexFactory {
         bytes calldata extraData
     ) external returns (bytes4);
 
-    /// @notice TargetRouter on Outbe hands over the proceeds of one page of winners: the factory
+    /// @notice IntexAuctionTargetRouter on Outbe hands over the proceeds of one page of winners: the factory
     ///         takes `amount` WCOEN that the router approved and burns it with code 43.
     function receiveLocalProceeds(uint32 emissionDay, uint32 pageIndex, uint256 amount) external;
 

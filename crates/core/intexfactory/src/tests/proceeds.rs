@@ -2,7 +2,9 @@ use super::*;
 
 use alloy_primitives::Bytes;
 use alloy_sol_types::{sol, SolCall, SolEvent, SolValue};
-use outbe_core_common::addresses::{TARGET_ROUTER_ADDRESS, WCOEN_ADDRESS, WCOEN_BRIDGE_ADDRESS};
+use outbe_core_common::addresses::{
+    INTEX_AUCTION_TARGET_ROUTER_ADDRESS, WCOEN_ADDRESS, WCOEN_BRIDGE_ADDRESS,
+};
 use outbe_promislimit::{BurnSource, PromisLimitContract};
 use outbe_system_common::units::UNITS_PER_PROTOCOL_MINOR;
 
@@ -118,7 +120,7 @@ fn crosschain_proceeds_burn_the_wcoen_under_the_proceeds_code() {
             WCOEN_BRIDGE_ADDRESS,
             amount,
             SOURCE,
-            TARGET_ROUTER_ADDRESS,
+            INTEX_AUCTION_TARGET_ROUTER_ADDRESS,
         )
         .unwrap();
         assert_eq!(pool(&s), before + U256::from(3u64));
@@ -159,7 +161,7 @@ fn coen_below_one_minor_stays_on_address_zero() {
             WCOEN_BRIDGE_ADDRESS,
             amount,
             SOURCE,
-            TARGET_ROUTER_ADDRESS,
+            INTEX_AUCTION_TARGET_ROUTER_ADDRESS,
         )
         .unwrap();
         assert_eq!(pool(&s), before + U256::ONE);
@@ -176,7 +178,14 @@ fn coen_below_one_minor_stays_on_address_zero() {
 #[test]
 fn crosschain_proceeds_come_only_from_the_wcoen_bridge() {
     with_factory(|s| {
-        let err = receive(&s, owner(), U256::ONE, SOURCE, TARGET_ROUTER_ADDRESS).unwrap_err();
+        let err = receive(
+            &s,
+            owner(),
+            U256::ONE,
+            SOURCE,
+            INTEX_AUCTION_TARGET_ROUTER_ADDRESS,
+        )
+        .unwrap_err();
         assert_eq!(
             err.to_string(),
             revert_of(IntexFactoryError::UnauthorizedProceedsCaller(owner()))
@@ -193,7 +202,7 @@ fn crosschain_proceeds_come_only_from_a_chain_of_the_day() {
             WCOEN_BRIDGE_ADDRESS,
             U256::ONE,
             20,
-            TARGET_ROUTER_ADDRESS,
+            INTEX_AUCTION_TARGET_ROUTER_ADDRESS,
         )
         .unwrap_err();
         assert_eq!(
@@ -213,7 +222,7 @@ fn crosschain_proceeds_with_undecodable_data_are_refused() {
             WCOEN_BRIDGE_ADDRESS,
             runtime::CrosschainProceeds {
                 src_chain_id: SOURCE,
-                from: &interop(SOURCE, TARGET_ROUTER_ADDRESS),
+                from: &interop(SOURCE, INTEX_AUCTION_TARGET_ROUTER_ADDRESS),
                 amount: U256::ONE,
                 extra_data: &[0xde, 0xad],
             },
@@ -228,7 +237,7 @@ fn crosschain_proceeds_with_undecodable_data_are_refused() {
 }
 
 #[test]
-fn crosschain_proceeds_come_only_from_target_router() {
+fn crosschain_proceeds_come_only_from_intex_auction_target_router() {
     let mut storage = proceeds_provider(&[SOURCE]);
     StorageHandle::enter(&mut storage, |s| {
         let err = receive(&s, WCOEN_BRIDGE_ADDRESS, U256::ONE, SOURCE, owner()).unwrap_err();
@@ -249,14 +258,15 @@ fn local_proceeds_take_the_approved_wcoen_and_burn_it() {
     StorageHandle::enter(&mut storage, |s| {
         unwrap_at_zero(&s, amount);
         let before = pool(&s);
-        runtime::receive_local_proceeds(&s, TARGET_ROUTER_ADDRESS, DAY, 1, amount).unwrap();
+        runtime::receive_local_proceeds(&s, INTEX_AUCTION_TARGET_ROUTER_ADDRESS, DAY, 1, amount)
+            .unwrap();
         assert_eq!(pool(&s), before + U256::from(2u64));
     });
     assert_eq!(
         wcoen_calls(&storage)[0],
         Bytes::from(
             transferFromCall {
-                src: TARGET_ROUTER_ADDRESS,
+                src: INTEX_AUCTION_TARGET_ROUTER_ADDRESS,
                 dst: INTEX_FACTORY_ADDRESS,
                 wad: amount
             }
@@ -267,7 +277,7 @@ fn local_proceeds_take_the_approved_wcoen_and_burn_it() {
 }
 
 #[test]
-fn local_proceeds_come_only_from_target_router() {
+fn local_proceeds_come_only_from_intex_auction_target_router() {
     let mut storage = proceeds_provider(&[CHAIN_ID as u32]);
     StorageHandle::enter(&mut storage, |s| {
         let err = runtime::receive_local_proceeds(&s, owner(), DAY, 0, U256::ONE).unwrap_err();
@@ -287,7 +297,7 @@ fn zero_proceeds_are_refused() {
             WCOEN_BRIDGE_ADDRESS,
             U256::ZERO,
             SOURCE,
-            TARGET_ROUTER_ADDRESS,
+            INTEX_AUCTION_TARGET_ROUTER_ADDRESS,
         )
         .unwrap_err();
         assert_eq!(err.to_string(), revert_of(IntexFactoryError::ZeroAmount));
@@ -299,7 +309,7 @@ fn the_token_hook_answers_its_selector() {
     use crate::precompile::dispatch;
 
     let amount = UNITS_PER_PROTOCOL_MINOR;
-    let (from, extra_data, _, _) = crosschain(amount, SOURCE, TARGET_ROUTER_ADDRESS);
+    let (from, extra_data, _, _) = crosschain(amount, SOURCE, INTEX_AUCTION_TARGET_ROUTER_ADDRESS);
     let data = IIntexFactory::onCrosschainTokensReceivedCall {
         srcChainId: SOURCE,
         from: from.into(),

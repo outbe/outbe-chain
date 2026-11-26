@@ -456,7 +456,7 @@ contract IntexAuction is
 
         uint16 units = $.escrow.redeemWinNote(emissionDay, bidder);
         // A forfeited series took the units with it.
-        if (intex.readData(seriesId).state == IIntexNFT1155.IntexState.Forfeited) {
+        if (intex.getIntexSeries(seriesId).state == IIntexNFT1155.IntexState.Forfeited) {
             emit IntexAuctionWinNoteExpired(emissionDay, bidder, seriesId);
             return;
         }

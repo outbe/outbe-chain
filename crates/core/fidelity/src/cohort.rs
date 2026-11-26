@@ -5,7 +5,7 @@
 //! only the combined-count padding bucket.
 
 use alloy_primitives::U256;
-use outbe_fidelity_math::{league_from_rcfi, t_dec, RcfiAccumulator};
+use outbe_fidelitymath::{league_from_rcfi, t_dec, RcfiAccumulator};
 
 use crate::errors::CohortError;
 

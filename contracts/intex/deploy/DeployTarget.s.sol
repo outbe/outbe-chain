@@ -8,13 +8,13 @@ import {Create3Factory} from "@shared/Create3Factory.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
-import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
-import {TargetRouter} from "@contracts/target/TargetRouter.sol";
+import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
+import {IntexAuctionTargetRouter} from "@contracts/target/IntexAuctionTargetRouter.sol";
 
 /// @title DeployTarget
 /// @author Outbe
 /// @notice Deploy the auction target stack on one chain: the NFT collection + bridge,
-///         EscrowAdapter, IntexAuction and TargetRouter. The deploy is uniform for every target,
+///         EscrowAdapter, IntexAuction and IntexAuctionTargetRouter. The deploy is uniform for every target,
 ///         including the origin chain as a loopback target (origin==target). There, the shared
 ///         NFT/bridge result from the idempotent CREATE3 deploy. The bridge meshes only with OTHER
 ///         targets, so it never self-peers.
@@ -35,14 +35,14 @@ contract DeployTarget is BaseScript {
         uint32 local = uint32(block.chainid);
 
         Create3Factory factory = create3Factory();
-        // HandOver.s.sol moves the TargetRouter last, so a handed-over router means the whole stack is.
-        if (handedOver(predictProxy(factory, deployer, "TargetRouter"), deployer)) {
+        // HandOver.s.sol moves the IntexAuctionTargetRouter last, so a handed-over router means the whole stack is.
+        if (handedOver(predictProxy(factory, deployer, "IntexAuctionTargetRouter"), deployer)) {
             console.log("Create3Factory:", address(factory));
             console.log("IntexNFT1155:", predictProxy(factory, deployer, "IntexNFT1155"));
             console.log("EscrowAdapter:", predictProxy(factory, deployer, "EscrowAdapter"));
             console.log("IntexAuction:", predictProxy(factory, deployer, "IntexAuction"));
-            console.log("IntexNFT1155Bridge:", predictProxy(factory, deployer, "IntexNFT1155Bridge"));
-            console.log("TargetRouter:", predictProxy(factory, deployer, "TargetRouter"));
+            console.log("IntexNFT1155Router:", predictProxy(factory, deployer, "IntexNFT1155Router"));
+            console.log("IntexAuctionTargetRouter:", predictProxy(factory, deployer, "IntexAuctionTargetRouter"));
             console.log("Handed over to governance - skipping.");
             return;
         }
@@ -73,24 +73,24 @@ contract DeployTarget is BaseScript {
             address(new IntexAuction()),
             abi.encodeCall(IntexAuction.initialize, (admin))
         );
-        address nftBridge = deployProxy(
+        address nftRouter = deployProxy(
             factory,
             deployer,
-            "IntexNFT1155Bridge",
-            address(new IntexNFT1155Bridge(nft, bridge)),
-            abi.encodeCall(IntexNFT1155Bridge.initialize, (delegate))
+            "IntexNFT1155Router",
+            address(new IntexNFT1155Router(nft, bridge)),
+            abi.encodeCall(IntexNFT1155Router.initialize, (delegate))
         );
         address router = deployProxy(
             factory,
             deployer,
-            "TargetRouter",
-            address(new TargetRouter(bridge, originChainId, wcoenBridge)),
-            abi.encodeCall(TargetRouter.initialize, (delegate))
+            "IntexAuctionTargetRouter",
+            address(new IntexAuctionTargetRouter(bridge, originChainId, wcoenBridge)),
+            abi.encodeCall(IntexAuctionTargetRouter.initialize, (delegate))
         );
         requireDeployerAdmin(nft, deployer);
         requireDeployerAdmin(escrow, deployer);
         requireDeployerAdmin(auction, deployer);
-        requireDeployerAdmin(nftBridge, deployer);
+        requireDeployerAdmin(nftRouter, deployer);
         requireDeployerAdmin(router, deployer);
 
         // Winners issue their own units through the auction.
@@ -100,12 +100,12 @@ contract DeployTarget is BaseScript {
 
         // Mesh the NFT bridge with every OTHER target's bridge (all at the same CREATE3 address).
         // Skipping `local` means the origin loopback target never self-peers the bridge.
-        address bridgePeer = predictProxy(factory, deployer, "IntexNFT1155Bridge");
+        address bridgePeer = predictProxy(factory, deployer, "IntexNFT1155Router");
         for (uint256 i = 0; i < targetChainIds.length; i++) {
             uint32 cid = uint32(targetChainIds[i]);
             if (cid == local) continue;
-            IntexNFT1155Bridge(payable(nftBridge))
-                .registerRemoteMessenger(cid, InteroperableAddress.formatEvmV1(cid, bridgePeer));
+            IntexNFT1155Router(payable(nftRouter))
+                .setRemoteRouter(cid, InteroperableAddress.formatEvmV1(cid, bridgePeer));
         }
 
         // The escrow hands finalized proceeds to the router, which sends them to IntexFactory on Outbe.
@@ -117,7 +117,7 @@ contract DeployTarget is BaseScript {
         console.log("IntexNFT1155:", nft);
         console.log("EscrowAdapter:", escrow);
         console.log("IntexAuction:", auction);
-        console.log("IntexNFT1155Bridge:", nftBridge);
-        console.log("TargetRouter:", router);
+        console.log("IntexNFT1155Router:", nftRouter);
+        console.log("IntexAuctionTargetRouter:", router);
     }
 }
