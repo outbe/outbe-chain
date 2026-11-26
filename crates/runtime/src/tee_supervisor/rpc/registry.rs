@@ -32,11 +32,17 @@ impl FinalizedStateRpc for Pinned<'_> {
     }
 }
 impl RegistryRpc for Pinned<'_> {
-    async fn tee_renewal_schedule_v1(&self) -> Result<TeeRenewalScheduleV1, Self::Error> {
+    async fn tee_renewal_schedule_v1(
+        &self,
+        finalized_hash: B256,
+    ) -> Result<TeeRenewalScheduleV1, Self::Error> {
+        if finalized_hash != self.at.hash {
+            return Err(RpcLifecycleError::CheckpointMismatch);
+        }
         let schedule: TeeRenewalScheduleV1 = self
             .port
             .client
-            .request("outbe_teeRenewalScheduleV1", rpc_params![])
+            .request("outbe_teeRenewalScheduleV1", rpc_params![self.at.hash])
             .await?;
         if schedule.finalized_height != self.at.height
             || schedule.finalized_hash != self.at.hash
@@ -196,5 +202,45 @@ impl RpcLifecyclePort {
             unbonding_end: v.unbondingEnd,
             has_bls_share: v.hasBLSShare,
         }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jsonrpsee::RpcModule;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+
+    #[tokio::test]
+    async fn pinned_rejects_mismatched_schedule_hash_locally_before_rpc() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let seen = Arc::clone(&calls);
+        let mut module = RpcModule::new(());
+        module
+            .register_method("outbe_teeRenewalScheduleV1", move |_, _, _| {
+                seen.fetch_add(1, Ordering::SeqCst);
+                Ok::<_, jsonrpsee::types::ErrorObjectOwned>(serde_json::Value::Null)
+            })
+            .unwrap();
+        let at = LifecycleCheckpointV1 {
+            height: 2,
+            hash: B256::repeat_byte(0x22),
+            state_root: B256::repeat_byte(0x99),
+            timestamp: 20,
+            base_fee_per_gas: U256::from(3),
+            chain_id: 7,
+            genesis_hash: B256::repeat_byte(0x11),
+        };
+        let port = RpcLifecyclePort::in_process(module.into(), at.chain_id, at.genesis_hash);
+        let pinned = Pinned { port: &port, at };
+        let err = pinned
+            .tee_renewal_schedule_v1(B256::repeat_byte(0x33))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, RpcLifecycleError::CheckpointMismatch));
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
     }
 }

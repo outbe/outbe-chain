@@ -179,6 +179,9 @@ impl From<RadicleTaskError> for ManagerError {
 /// Typed endpoint lifecycle failures wrapped by [`ManagerError::Endpoint`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
 pub enum EndpointLifecycleError {
+    /// The endpoint network service has not started.
+    #[error("endpoint network service has not started")]
+    NotStarted,
     /// The shutdown command mailbox is closed.
     #[error("shutdown mailbox closed")]
     ShutdownMailboxClosed,

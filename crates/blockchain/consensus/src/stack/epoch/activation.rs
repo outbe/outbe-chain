@@ -36,7 +36,7 @@ where
         {
             return Ok(action);
         }
-        if let Some(action) = self.prepare_observed_boundary(current_height).await? {
+        if let Some(action) = self.prepare_observed_boundary(ctx, current_height).await? {
             return Ok(action);
         }
         self.activate_dealer_handoff(ctx, current_height, engine)
@@ -264,6 +264,7 @@ where
     }
     async fn prepare_observed_boundary(
         &mut self,
+        ctx: &E,
         current_height: u64,
     ) -> Result<Option<EventAction>> {
         if self
@@ -320,20 +321,31 @@ where
                 if self.channels.next_epoch_subchannels.is_none() {
                     let next_epoch =
                         next_consensus_epoch_after_dkg_activation(self.state.current_epoch);
-                    self.channels.next_epoch_subchannels = Some(
-                                    crate::epoch_subchannels::register_epoch_subchannels(
-                                        next_epoch,
-                                        &mut self.channels.vote_mux,
-                                        &mut self.channels.cert_mux,
-                                        &mut self.channels.res_mux,
-                                    )
-                                    .await
-                                    .wrap_err_with(|| {
-                                        format!(
-                                            "pre-register next-epoch subchannels for dealer-only handoff epoch {next_epoch}"
-                                        )
-                                    })?,
-                                );
+                    let Some(next_subchannels) =
+                        super::supervisor::poll_mux_registration_until_stopped(
+                            ctx,
+                            crate::epoch_subchannels::register_epoch_subchannels(
+                                next_epoch,
+                                &mut self.channels.vote_mux,
+                                &mut self.channels.cert_mux,
+                                &mut self.channels.res_mux,
+                            ),
+                        )
+                        .await
+                        .wrap_err_with(|| {
+                            format!(
+                                "pre-register next-epoch subchannels for dealer-only handoff epoch {next_epoch}"
+                            )
+                        })?
+                    else {
+                        info!(
+                            epoch = %self.state.current_epoch,
+                            next_epoch = %next_epoch,
+                            "global stop received during dealer-only next-epoch subchannel registration; draining simplex engine"
+                        );
+                        return Ok(Some(EventAction::Outcome(EpochLoopOutcome::GlobalStop)));
+                    };
+                    self.channels.next_epoch_subchannels = Some(next_subchannels);
                 }
                 let pending = self
                     .rotation

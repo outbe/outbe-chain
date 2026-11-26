@@ -149,6 +149,7 @@ where
     pub(super) fn renewal_schedule(
         &self,
         config: Option<TeeRenewalScheduleConfigV1>,
+        checkpoint_hash: Option<B256>,
     ) -> RpcResult<TeeRenewalScheduleV1> {
         let config = config.ok_or_else(|| {
             internal_err(crate::errors::RpcInternalError::TeeRenewalScheduleNotConfigured)
@@ -158,9 +159,9 @@ where
                 crate::errors::RpcInternalError::TeeRenewalScheduleZeroMinBlockTime,
             ));
         }
-        self.read_renewal_epoch()?.schedule(config)
+        self.read_renewal_epoch(checkpoint_hash)?.schedule(config)
     }
-    fn read_renewal_epoch(&self) -> RpcResult<RenewalEpoch> {
+    fn read_renewal_epoch(&self, checkpoint_hash: Option<B256>) -> RpcResult<RenewalEpoch> {
         let finalized = self
             .provider
             .finalized_block_num_hash()
@@ -170,7 +171,7 @@ where
             .ok_or_else(|| {
                 internal_err(crate::errors::RpcInternalError::FinalizedBlockIsUnavailable)
             })?;
-        let header = self
+        let finalized_header = self
             .provider
             .sealed_header(finalized.number)
             .map_err(|error| {
@@ -184,25 +185,115 @@ where
             .ok_or_else(|| {
                 internal_err(crate::errors::RpcInternalError::FinalizedHeaderIsUnavailable)
             })?;
-        if header.hash() != finalized.hash {
+        if finalized_header.hash() != finalized.hash {
             return Err(internal_err(
                 crate::errors::RpcInternalError::FinalizedBlockMarkerHeaderDisagree,
             ));
         }
+
+        let (target_height, target_hash, target_timestamp) = match checkpoint_hash {
+            None => (
+                finalized.number,
+                finalized.hash,
+                finalized_header.timestamp(),
+            ),
+            Some(requested_hash) if requested_hash == finalized.hash => (
+                finalized.number,
+                finalized.hash,
+                finalized_header.timestamp(),
+            ),
+            Some(requested_hash) => {
+                let height = self
+                    .provider
+                    .block_number(requested_hash)
+                    .map_err(|error| {
+                        internal_err(
+                            crate::errors::RpcInternalError::schedule_block_lookup_failed(
+                                requested_hash,
+                                error,
+                            ),
+                        )
+                    })?
+                    .ok_or_else(|| {
+                        invalid_params_err(
+                            crate::errors::RpcInvalidParamsError::UnknownScheduleBlockHash {
+                                hash: requested_hash,
+                            },
+                        )
+                    })?;
+                let canonical_hash = self.provider.block_hash(height).map_err(|error| {
+                    internal_err(
+                        crate::errors::RpcInternalError::schedule_block_lookup_failed(
+                            requested_hash,
+                            error,
+                        ),
+                    )
+                })?;
+                if canonical_hash != Some(requested_hash) {
+                    return Err(invalid_params_err(
+                        crate::errors::RpcInvalidParamsError::NonCanonicalScheduleBlockHash {
+                            hash: requested_hash,
+                        },
+                    ));
+                }
+                if height > finalized.number {
+                    return Err(invalid_params_err(
+                        crate::errors::RpcInvalidParamsError::HeightAboveFinalized {
+                            height,
+                            finalized: finalized.number,
+                        },
+                    ));
+                }
+                let header = self
+                    .provider
+                    .sealed_header(height)
+                    .map_err(|error| {
+                        internal_err(
+                            crate::errors::RpcInternalError::schedule_block_lookup_failed(
+                                requested_hash,
+                                error,
+                            ),
+                        )
+                    })?
+                    .ok_or_else(|| {
+                        internal_err(
+                            crate::errors::RpcInternalError::schedule_block_lookup_failed(
+                                requested_hash,
+                                "canonical header is unavailable",
+                            ),
+                        )
+                    })?;
+                if header.hash() != requested_hash {
+                    return Err(invalid_params_err(
+                        crate::errors::RpcInvalidParamsError::NonCanonicalScheduleBlockHash {
+                            hash: requested_hash,
+                        },
+                    ));
+                }
+                (height, requested_hash, header.timestamp())
+            }
+        };
+
         let state = self
             .provider
-            .state_by_block_hash(finalized.hash)
+            .state_by_block_hash(target_hash)
             .map_err(|error| {
-                internal_err(crate::errors::RpcInternalError::finalized_state_read_failed(error))
+                let err = match checkpoint_hash {
+                    Some(hash) => {
+                        crate::errors::RpcInternalError::schedule_state_read_failed(hash, error)
+                    }
+                    None => crate::errors::RpcInternalError::finalized_state_read_failed(error),
+                };
+                internal_err(err)
             })?;
         let reader = RethStateReader { state: &state };
         let mut provider = ReadOnlyStorageProvider::new(reader);
         let storage = StorageHandle::new(&mut provider);
         let epoch = self.reader.epoch_snapshot(storage).map_err(internal_err)?;
         Ok(RenewalEpoch {
-            finalized_height: finalized.number,
-            finalized_hash: finalized.hash,
-            finalized_timestamp: header.timestamp(),
+            finalized_height: target_height,
+            finalized_hash: target_hash,
+            finalized_timestamp: target_timestamp,
             epoch,
         })
     }

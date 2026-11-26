@@ -566,6 +566,13 @@ impl ColdChain {
             "eth_getBalance" => Ok(json!("0xffffffffffffffffffffffffffffffff")),
             "eth_getTransactionReceipt" => Ok(Value::Null),
             "outbe_teeRenewalScheduleV1" => {
+                if let Some(value) = args.first().filter(|v| !v.is_null()) {
+                    let hash: B256 = serde_json::from_value(value.clone())
+                        .map_err(|error| rpc_error(format!("{error}")))?;
+                    if hash != self.served.hash {
+                        return Err(rpc_error(format!("unknown schedule checkpoint {hash}")));
+                    }
+                }
                 Ok(serde_json::to_value(schedule_for(self.served)).unwrap())
             }
             "eth_getTransactionCount" => Ok(json!(format!(
