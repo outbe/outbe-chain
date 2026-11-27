@@ -14,7 +14,7 @@ use crate::errors::CycleError;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum CycleWorkerId {
-    DesisCleanup = 2,
+    DesisCleanup = 1,
 }
 
 impl CycleWorkerId {
@@ -433,7 +433,7 @@ mod protocol_parameter_tests {
         use crate::ICycle::{CycleTask, CycleTaskCompleted};
         use alloy_sol_types::SolEvent;
 
-        assert_eq!(CycleWorkerId::DesisCleanup.as_u8(), 2);
+        assert_eq!(CycleWorkerId::DesisCleanup.as_u8(), 1);
         for (id, task) in [
             (TaskId::ProcessEmissionDay, CycleTask::ProcessEmissionDay),
             (
