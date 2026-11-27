@@ -1,13 +1,7 @@
 use alloy_primitives::B256;
-use alloy_sol_types::SolError;
 use outbe_primitives::error::PrecompileError;
 use outbe_system_common::time::TimeError;
 use thiserror::Error;
-
-alloy_sol_types::sol! {
-    // Preserve Cycle's economic-allocation failure encoding after moving the calculation.
-    error NativeValidatorBudgetOverflow();
-}
 
 /// Rewards module errors.
 #[derive(Debug, Error)]
@@ -33,16 +27,6 @@ pub enum RewardsError {
     DayAlreadySealed,
     #[error("reward day must be completed, participation-complete and closed")]
     DayNotSealed,
-    #[error("reward voter index outside sealed day inputs")]
-    VoterIndexOutOfBounds,
-    #[error("sealed reward voter entry is missing or has zero participation")]
-    InvalidVoterEntry,
-    #[error("native validator budget overflow")]
-    NativeValidatorBudgetOverflow,
-    #[error("reward cleanup queue sequence overflow")]
-    DayCleanupQueueOverflow,
-    #[error("reward cleanup queue is corrupt")]
-    CorruptDayCleanupQueue,
     #[error("reward credit outside inclusion window")]
     CreditOutsideInclusionWindow,
     #[error("late reward credit has no canonical UTC day")]
@@ -114,12 +98,7 @@ impl From<TimeError> for RewardsError {
 
 impl From<RewardsError> for PrecompileError {
     fn from(err: RewardsError) -> Self {
-        match err {
-            RewardsError::NativeValidatorBudgetOverflow => {
-                PrecompileError::RevertBytes(NativeValidatorBudgetOverflow {}.abi_encode().into())
-            }
-            other => PrecompileError::Revert(other.to_string()),
-        }
+        PrecompileError::Revert(err.to_string())
     }
 }
 

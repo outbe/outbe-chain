@@ -10,23 +10,30 @@ pub mod emission_day_state {
     pub const COMPLETED: u8 = 2;
 }
 
-/// Lifecycle state of the Metadosis phase of an `EmissionDay` (OIP-00348).
+/// Lifecycle state of the Metadosis phase of an `EmissionDay`.
 pub mod metadosis_state {
+    pub const PENDING: u8 = 0;
+    pub const COMPLETED: u8 = 1;
+    pub const FAILED: u8 = 2;
+}
+
+/// Lifecycle state of the Desis phase of an `EmissionDay`.
+pub mod desis_state {
     pub const PENDING: u8 = 0;
     pub const COMPLETED: u8 = 1;
     pub const CANCELED: u8 = 2;
     pub const FAILED: u8 = 3;
 }
 
-/// Canonical 5-slot packed `EmissionDay` record stored at `EMISSION_ADDRESS` (`0x...100D`).
+/// The record of one emission day: the limit of each part, set at 00:00 E−1, and what each
+/// part gave out. Amounts are six-decimal protocol COEN minor units.
 ///
-/// Greedy packing layout across 5 EVM storage slots:
-/// - **Slot 0:** `wwd` (`0..4`), `metadosis_start` (`4..12`), `state` (`12..13`),
-///   `metadosis_state` (`13..14`), `emission_limit` (`14..30`).
-/// - **Slot 1:** `metadosis_limit` (`0..16`), `desis_limit` (`16..32`).
-/// - **Slot 2:** `validators` (`0..16`), `waa` (`16..32`).
-/// - **Slot 3:** `sra` (`0..16`), `cca` (`16..32`).
-/// - **Slot 4:** `nods` (`0..16`), `promis_limit` (`16..32`).
+/// Greedy packing layout across 9 EVM storage slots:
+/// - **Slot 0:** `wwd`, `metadosis_start`, `state`, `metadosis_state`, `desis_state`, `emission_limit`.
+/// - **Slot 1:** `validators_limit`, `cca_limit`. **Slot 2:** `waa_limit`, `sra_limit`.
+/// - **Slot 3:** `metadosis_limit`, `lysis_limit`. **Slot 4:** `desis_limit`, `nominal_amount`.
+/// - **Slot 5:** `validators`, `waa`. **Slot 6:** `sra`, `cca`. **Slot 7:** `nods`, `intexes`.
+/// - **Slot 8:** `promis_limit`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[storage_record(packed, exists_field = metadosis_start)]
 pub struct EmissionDay {
@@ -46,80 +53,97 @@ pub struct EmissionDay {
     #[attribute(order = 3, default = metadosis_state::PENDING)]
     pub metadosis_state: u8,
 
-    /// Six-decimal protocol COEN minor units (1_000_000 minor units = 1 COEN).
-    #[attribute(order = 4, default = 0)]
-    pub emission_limit: u128,
+    #[attribute(order = 4, default = desis_state::PENDING)]
+    pub desis_state: u8,
 
     #[attribute(order = 5, default = 0)]
-    pub metadosis_limit: u128,
+    pub emission_limit: u128,
 
     #[attribute(order = 6, default = 0)]
-    pub desis_limit: u128,
+    pub validators_limit: u128,
 
     #[attribute(order = 7, default = 0)]
-    pub validators: u128,
+    pub cca_limit: u128,
 
     #[attribute(order = 8, default = 0)]
-    pub waa: u128,
+    pub waa_limit: u128,
 
     #[attribute(order = 9, default = 0)]
-    pub sra: u128,
+    pub sra_limit: u128,
 
     #[attribute(order = 10, default = 0)]
-    pub cca: u128,
+    pub metadosis_limit: u128,
 
+    /// The smaller of 32% of `nominal_amount` and `metadosis_limit`: the loads the Nods of the
+    /// day can take at most.
     #[attribute(order = 11, default = 0)]
-    pub nods: u128,
+    pub lysis_limit: u128,
 
     #[attribute(order = 12, default = 0)]
-    pub promis_limit: u128,
+    pub desis_limit: u128,
+
+    /// The sum of the nominal amount of the Nods of the day.
+    #[attribute(order = 13, default = 0)]
+    pub nominal_amount: u128,
+
+    #[attribute(order = 14, default = 0)]
+    pub validators: u128,
+
+    #[attribute(order = 15, default = 0)]
+    pub waa: u128,
+
+    #[attribute(order = 16, default = 0)]
+    pub sra: u128,
+
+    #[attribute(order = 17, default = 0)]
+    pub cca: u128,
+
+    #[attribute(order = 18, default = 0)]
+    pub nods: u128,
+
+    /// What the Intex auction of the day gave to its winners.
+    #[attribute(order = 19, default = 0)]
+    pub intexes: u128,
+
+    /// The net amount the day sent to the Promis Limit. Negative when the auction of the day
+    /// took more from the Promis Limit than the day sent to it.
+    #[attribute(order = 20, default = 0)]
+    #[field(bytes = 16)]
+    pub promis_limit: i128,
 }
 
 impl EmissionDay {
-    /// Creates a new `Pending` `EmissionDay` shell with all monetary fields set to 0.
-    #[inline]
-    pub const fn new_pending(day: u32, wwd: WorldwideDayKey, metadosis_start: u64) -> Self {
+    /// A `Pending` record with the limits of its parts and no results.
+    pub fn new(
+        day: u32,
+        wwd: WorldwideDayKey,
+        metadosis_start: u64,
+        emission_limit: u128,
+        shares: [u128; 5],
+    ) -> Self {
+        let [validators_limit, cca_limit, waa_limit, sra_limit, metadosis_limit] = shares;
         Self {
             day,
             wwd,
             metadosis_start,
             state: emission_day_state::PENDING,
             metadosis_state: metadosis_state::PENDING,
-            emission_limit: 0,
-            metadosis_limit: 0,
+            desis_state: desis_state::PENDING,
+            emission_limit,
+            validators_limit,
+            cca_limit,
+            waa_limit,
+            sra_limit,
+            metadosis_limit,
+            lysis_limit: 0,
             desis_limit: 0,
+            nominal_amount: 0,
             validators: 0,
             waa: 0,
             sra: 0,
             cca: 0,
             nods: 0,
-            promis_limit: 0,
-        }
-    }
-
-    /// Creates an `EmissionDay` initialized with a single `limit` in `emission_limit` and `metadosis_limit`.
-    #[inline]
-    pub const fn new_with_limit(
-        day: u32,
-        wwd: WorldwideDayKey,
-        metadosis_start: u64,
-        limit: u128,
-        metadosis_state: u8,
-    ) -> Self {
-        Self {
-            day,
-            wwd,
-            metadosis_start,
-            state: emission_day_state::PENDING,
-            metadosis_state,
-            emission_limit: limit,
-            metadosis_limit: limit,
-            desis_limit: 0,
-            validators: 0,
-            waa: 0,
-            sra: 0,
-            cca: 0,
-            nods: 0,
+            intexes: 0,
             promis_limit: 0,
         }
     }
@@ -130,14 +154,21 @@ impl EmissionDay {
         U256::from(self.metadosis_limit)
     }
 
-    /// Computes the sum of the 6 landing buckets (`validators + waa + sra + cca + nods + promis_limit`).
-    pub fn landed_sum(&self) -> Option<u128> {
-        self.validators
-            .checked_add(self.waa)?
-            .checked_add(self.sra)?
-            .checked_add(self.cca)?
-            .checked_add(self.nods)?
-            .checked_add(self.promis_limit)
+    /// `validators + waa + sra + cca + nods + intexes + promis_limit`, which the rule of the
+    /// record keeps equal to `emission_limit`.
+    pub fn landed_sum(&self) -> Option<i128> {
+        [
+            self.validators,
+            self.waa,
+            self.sra,
+            self.cca,
+            self.nods,
+            self.intexes,
+        ]
+        .into_iter()
+        .try_fold(self.promis_limit, |sum, amount| {
+            sum.checked_add(i128::try_from(amount).ok()?)
+        })
     }
 }
 
@@ -160,87 +191,87 @@ mod tests {
         dsl::StorageRecord, hashmap::HashMapStorageProvider, types::unpack_from_word, StorageHandle,
     };
 
-    #[test]
-    fn emission_days_map_base_is_slot_zero_and_occupies_five_slots() {
-        let mut provider = HashMapStorageProvider::new(1);
-        let contract = EmissionContract::new(StorageHandle::new(&mut provider));
-        assert_eq!(contract.emission_days.base_slot(), U256::from(0));
-        assert_eq!(EmissionDay::SLOTS, 5);
+    fn populated() -> EmissionDay {
+        EmissionDay {
+            day: 20261022,
+            wwd: WorldwideDayKey::new(20261021),
+            metadosis_start: 1_792_713_600,
+            state: emission_day_state::COMPLETED,
+            metadosis_state: metadosis_state::COMPLETED,
+            desis_state: desis_state::COMPLETED,
+            emission_limit: 1000,
+            validators_limit: 40,
+            cca_limit: 40,
+            waa_limit: 40,
+            sra_limit: 40,
+            metadosis_limit: 840,
+            lysis_limit: 320,
+            desis_limit: 900,
+            nominal_amount: 1000,
+            validators: 40,
+            waa: 39,
+            sra: 40,
+            cca: 40,
+            nods: 320,
+            intexes: 700,
+            promis_limit: -179,
+        }
     }
 
     #[test]
-    fn emission_day_five_slot_packed_layout_round_trips_and_supports_empty_days() {
+    fn emission_days_map_base_is_slot_zero_and_occupies_nine_slots() {
+        let mut provider = HashMapStorageProvider::new(1);
+        let contract = EmissionContract::new(StorageHandle::new(&mut provider));
+        assert_eq!(contract.emission_days.base_slot(), U256::from(0));
+        assert_eq!(EmissionDay::SLOTS, 9);
+    }
+
+    #[test]
+    fn the_record_round_trips_with_a_negative_promis_limit() {
         let mut provider = HashMapStorageProvider::new(1);
         let storage = StorageHandle::new(&mut provider);
         let contract = EmissionContract::new(storage.clone());
+        let record = populated();
+        assert_eq!(
+            record.landed_sum(),
+            Some(i128::try_from(record.emission_limit).unwrap())
+        );
+        contract.emission_days.create(&record).unwrap();
 
-        let empty_day = EmissionDay::new_pending(20261001, WorldwideDayKey::new(0), 1_790_899_201);
-        contract.emission_days.create(&empty_day).unwrap();
-        let loaded_empty = contract
-            .emission_days
-            .get(20261001)
-            .unwrap()
-            .expect("empty day with wwd=0 and metadosis_start>0 must exist");
-        assert_eq!(loaded_empty.wwd, WorldwideDayKey::new(0));
-        assert_eq!(loaded_empty.metadosis_start, 1_790_899_201);
-        assert_eq!(loaded_empty.state, emission_day_state::PENDING);
-        assert_eq!(loaded_empty.metadosis_state, metadosis_state::PENDING);
-        assert_eq!(loaded_empty.emission_limit, 0);
-
-        let populated = EmissionDay {
-            day: 20261022,
-            wwd: WorldwideDayKey::new(20261001),
-            metadosis_start: 1_792_713_601,
-            state: emission_day_state::COMPLETED,
-            metadosis_state: metadosis_state::COMPLETED,
-            emission_limit: 1000,
-            metadosis_limit: 840,
-            desis_limit: 540,
-            validators: 40,
-            waa: 40,
-            sra: 40,
-            cca: 40,
-            nods: 290,
-            promis_limit: 550,
-        };
-        assert_eq!(populated.landed_sum(), Some(populated.emission_limit));
-        contract.emission_days.create(&populated).unwrap();
-
-        // Verify Slot 0 exact byte offsets:
-        // 0..4: wwd, 4..12: metadosis_start, 12: state, 13: metadosis_state, 14..30: emission_limit
         let word0 = outbe_primitives::storage::types::Mapping::<u32, U256>::new(
             U256::from(0),
             EMISSION_ADDRESS,
-            storage.clone(),
+            storage,
         )
-        .read(&20261022)
+        .read(&record.day)
         .unwrap();
-        assert_eq!(unpack_from_word::<u32>(word0, 0), 20261001);
-        assert_eq!(unpack_from_word::<u64>(word0, 4), 1_792_713_601);
-        assert_eq!(
-            unpack_from_word::<u8>(word0, 12),
-            emission_day_state::COMPLETED
-        );
-        assert_eq!(
-            unpack_from_word::<u8>(word0, 13),
-            metadosis_state::COMPLETED
-        );
-        assert_eq!(unpack_from_word::<u128>(word0, 14), 1000);
+        assert_eq!(unpack_from_word::<u32>(word0, 0), 20261021);
+        assert_eq!(unpack_from_word::<u64>(word0, 4), 1_792_713_600);
+        assert_eq!(unpack_from_word::<u8>(word0, 14), desis_state::COMPLETED);
+        assert_eq!(unpack_from_word::<u128>(word0, 15), 1000);
 
-        let loaded = contract.emission_days.get(20261022).unwrap().unwrap();
-        assert_eq!(loaded.day, populated.day);
-        assert_eq!(loaded.wwd, populated.wwd);
-        assert_eq!(loaded.metadosis_start, populated.metadosis_start);
-        assert_eq!(loaded.state, populated.state);
-        assert_eq!(loaded.metadosis_state, populated.metadosis_state);
-        assert_eq!(loaded.emission_limit, populated.emission_limit);
-        assert_eq!(loaded.metadosis_limit, populated.metadosis_limit);
-        assert_eq!(loaded.desis_limit, populated.desis_limit);
-        assert_eq!(loaded.validators, populated.validators);
-        assert_eq!(loaded.waa, populated.waa);
-        assert_eq!(loaded.sra, populated.sra);
-        assert_eq!(loaded.cca, populated.cca);
-        assert_eq!(loaded.nods, populated.nods);
-        assert_eq!(loaded.promis_limit, populated.promis_limit);
+        assert_eq!(
+            contract.emission_days.get(record.day).unwrap(),
+            Some(record)
+        );
+    }
+
+    #[test]
+    fn a_new_record_exists_with_its_limits_and_no_results() {
+        let mut provider = HashMapStorageProvider::new(1);
+        let contract = EmissionContract::new(StorageHandle::new(&mut provider));
+        let record = EmissionDay::new(
+            20261001,
+            WorldwideDayKey::new(0),
+            1_790_899_200,
+            100,
+            [4, 4, 4, 4, 84],
+        );
+        contract.emission_days.create(&record).unwrap();
+        let loaded = contract.emission_days.get(20261001).unwrap().unwrap();
+        assert_eq!(loaded.state, emission_day_state::PENDING);
+        assert_eq!(loaded.desis_state, desis_state::PENDING);
+        assert_eq!(loaded.metadosis_limit, 84);
+        assert_eq!(loaded.promis_limit, 0);
     }
 }

@@ -2,7 +2,7 @@
 use crate::{
     errors::CcaError,
     precompile::ICcaRegistry,
-    schema::{address_day_key, day_index_key, CcaContract, CcaRecord},
+    schema::{address_day_key, CcaContract, CcaRecord},
 };
 use alloy_primitives::{Address, U256};
 use outbe_primitives::error::Result;
@@ -61,12 +61,14 @@ impl CcaContract<'_> {
             .checked_sub(old)
             .and_then(|value| value.checked_add(new))
             .ok_or(CcaError::Arithmetic)?;
-        if (!new.is_zero() || !deficit.is_zero()) && !self.reward_day_members.read(&key)? {
+        if old.is_zero() != new.is_zero() {
             let count = self.reward_day_count.read(&day)?;
-            let next = count.checked_add(1).ok_or(CcaError::Arithmetic)?;
-            self.reward_day_addresses
-                .write(&day_index_key(day, count), cca)?;
-            self.reward_day_members.write(&key, true)?;
+            let next = if new.is_zero() {
+                count.checked_sub(1)
+            } else {
+                count.checked_add(1)
+            }
+            .ok_or(CcaError::Arithmetic)?;
             self.reward_day_count.write(&day, next)?;
         }
         self.gratis_minor_per_utc_day.write(&key, new)?;

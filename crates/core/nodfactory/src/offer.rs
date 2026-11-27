@@ -13,7 +13,7 @@ use outbe_nod::offer::protocol::{
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
 use outbe_system_common::stablecoin::validate_currency_code;
-use outbe_system_common::time::{timestamp_to_date_key, WorldwideDay};
+use outbe_system_common::time::{next_date_key, WorldwideDay};
 use outbe_zk::wire::{decode_public_words, read_u64_be_padded};
 use outbe_zk_backend::barretenberg::{Barretenberg, RawVerifier};
 use thiserror::Error;
@@ -312,7 +312,7 @@ pub(crate) fn record_offer(
     outbe_nod::offers::mark_offer(storage, (worldwide_day, nod.terms.owner), &claims.su_hashes)?;
     let nod_id = crate::runtime::issue_offer_nod(storage, nod, now, sub_series_id)?;
     record_worldwide_day_nod(storage, worldwide_day, nod)?;
-    record_agent_reward_activity(storage, now, &claims.wallets, &claims.sras)?;
+    record_agent_reward_activity(storage, worldwide_day, &claims.wallets, &claims.sras)?;
     Ok(nod_id)
 }
 
@@ -355,23 +355,24 @@ fn record_worldwide_day_nod(
     )
 }
 
-/// Records one offer in the UTC reward-day bucket that the Cycle reads on the next day.
+/// Counts one offer in the WAA and SRA pools of the emission day of its Nod.
 fn record_agent_reward_activity(
     storage: &StorageHandle<'_>,
-    now: u64,
+    worldwide_day: WorldwideDay,
     wallets: &[Address],
     sras: &[Address],
 ) -> Result<()> {
     if wallets.is_empty() {
         return Ok(());
     }
-    let reward_utc_day = WorldwideDay::new(timestamp_to_date_key(now));
+    let emission_day =
+        next_date_key(worldwide_day.value()).map_err(crate::errors::date_step_error)?;
     let mut agent_reward = AgentRewardContract::new(storage.clone());
     for address in wallets {
-        agent_reward.increment_waa_offer(reward_utc_day, *address)?;
+        agent_reward.increment_waa_offer(emission_day, *address)?;
     }
     for address in sras {
-        agent_reward.increment_sra_offer(reward_utc_day, *address)?;
+        agent_reward.increment_sra_offer(emission_day, *address)?;
     }
     Ok(())
 }

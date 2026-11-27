@@ -169,7 +169,6 @@ pub(crate) fn record_reward_participation(
     let rewards = ctx.storage.contract::<Rewards>();
     let participation_guard = rewards.participation_counted_for_block.get_nested(&fb_hash);
     let day_votes = rewards.day_votes.get_nested(&fb_day);
-    let day_voter_at = rewards.day_voter_at.get_nested(&fb_day);
 
     if !participation_guard.read(&voter)? {
         if fb_day != 0 && fb_day <= rewards.last_sealed_day.read()? {
@@ -185,14 +184,12 @@ pub(crate) fn record_reward_participation(
             .checked_add(U256::from(1))
             .ok_or(RewardsError::DayTotalVotesOverflow)?;
         if prev_count == 0 {
-            // First time we see this voter for this day -> append to
-            // the deterministic ordered voter list.
-            let idx = rewards.day_voter_count.read(&fb_day)?;
-            let next_idx = idx
+            let next_voter_count = rewards
+                .day_voter_count
+                .read(&fb_day)?
                 .checked_add(1)
                 .ok_or(RewardsError::DayVoterCountOverflow)?;
-            day_voter_at.write(&idx, voter)?;
-            rewards.day_voter_count.write(&fb_day, next_idx)?;
+            rewards.day_voter_count.write(&fb_day, next_voter_count)?;
         }
         day_votes.write(&voter, next_count)?;
         rewards.day_total_votes.write(&fb_day, next_total)?;

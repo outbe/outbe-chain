@@ -8,9 +8,6 @@ interface ICycle {
     /// Caller-facing domain revert.
     error InvalidBlockUtcDay(uint32 active, uint32 blockDay);
     error ActiveUtcDayAfterBlock(uint32 active, uint32 blockDay);
-    error NativeValidatorBudgetOverflow();
-    error MetadosisTerminalOverflow();
-    error ValidatorTopupExceedsAllocation();
     error BlockNumberRegression(uint64 current, uint64 attempted);
     error ZeroAccountingProgress();
     error AccountingProgressGap(uint64 current, uint64 attempted);
@@ -32,8 +29,4 @@ interface ICycle {
     /// Emitted once per slot when a task handler completes. A failed, over-budget or
     /// deferred task emits nothing: the task runs again later and the node log gives the cause.
     event CycleTaskCompleted(CycleTask indexed task);
-
-    /// Emitted when daily emission limit allocation reverts and the emission limit
-    /// goes to the Promis Limit once.
-    event DayEmissionLimitAllocationFailed(uint32 indexed emissionDay, uint256 emissionLimitMinor, uint8 reason);
 }

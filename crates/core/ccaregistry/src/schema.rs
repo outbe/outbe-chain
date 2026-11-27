@@ -38,34 +38,12 @@ pub struct CcaContract {
     /// Native COEN bonded across all records and not yet claimed back.
     #[attribute(order = 4)]
     pub total_bonded_minor: outbe_primitives::storage::dsl::Value<U256>,
-    /// Append-only indices include deficit-only addresses and never swap-remove.
+    /// The number of the CCAs with a nonzero weight in a UTC day.
     #[attribute(order = 5)]
     pub reward_day_count: outbe_primitives::storage::dsl::Map<u32, u32>,
+    /// The sum of the weights of a UTC day.
     #[attribute(order = 6)]
     pub reward_day_total: outbe_primitives::storage::dsl::Map<u32, U256>,
-    #[attribute(order = 7)]
-    pub reward_day_addresses: outbe_primitives::storage::dsl::Map<B256, Address>,
-    #[attribute(order = 8)]
-    pub reward_day_members: outbe_primitives::storage::dsl::Map<B256, bool>,
-    /// Retained after cleanup so duplicate scheduling cannot recreate work.
-    #[attribute(order = 9)]
-    pub day_cleanup_scheduled: outbe_primitives::storage::dsl::Map<u32, bool>,
-    #[attribute(order = 10)]
-    pub day_cleanup_queue: outbe_primitives::storage::dsl::Map<u64, u32>,
-    #[attribute(order = 11)]
-    pub day_cleanup_head: outbe_primitives::storage::dsl::Value<u64>,
-    #[attribute(order = 12)]
-    pub day_cleanup_tail: outbe_primitives::storage::dsl::Value<u64>,
-    #[attribute(order = 13)]
-    pub day_cleanup_cursor: outbe_primitives::storage::dsl::Map<u32, u32>,
-    #[attribute(order = 14)]
-    pub cleanup_processed_block: outbe_primitives::storage::dsl::Value<u64>,
-    #[attribute(order = 15)]
-    pub has_cleanup_processed_block: outbe_primitives::storage::dsl::Value<bool>,
-}
-
-pub(crate) fn day_index_key(day: u32, index: u32) -> B256 {
-    B256::from(U256::from((u64::from(day) << 32) | u64::from(index)))
 }
 
 pub(crate) fn address_day_key(cca: Address, day: u32) -> B256 {

@@ -31,12 +31,6 @@ pub enum CycleError {
     InvalidBlockUtcDay { active: u32, block: u32 },
     #[error("ProcessEmissionDay active UTC day {active} is after block UTC day {block}")]
     ActiveUtcDayAfterBlock { active: u32, block: u32 },
-    #[error("native validator budget overflow")]
-    NativeValidatorBudgetOverflow,
-    #[error("metadosis terminal overflow")]
-    MetadosisTerminalOverflow,
-    #[error("validator top-up exceeds allocation")]
-    ValidatorTopupExceedsAllocation,
     #[error("last_accounted_block_number regression: current={current}, attempted={attempted}")]
     BlockNumberRegression { current: u64, attempted: u64 },
     #[error("accounting progress input is zero")]
@@ -95,15 +89,6 @@ impl From<CycleError> for PrecompileError {
                     .abi_encode(),
                 ))
             }
-            CycleError::NativeValidatorBudgetOverflow => PrecompileError::RevertBytes(Bytes::from(
-                ICycle::NativeValidatorBudgetOverflow {}.abi_encode(),
-            )),
-            CycleError::MetadosisTerminalOverflow => PrecompileError::RevertBytes(Bytes::from(
-                ICycle::MetadosisTerminalOverflow {}.abi_encode(),
-            )),
-            CycleError::ValidatorTopupExceedsAllocation => PrecompileError::RevertBytes(
-                Bytes::from(ICycle::ValidatorTopupExceedsAllocation {}.abi_encode()),
-            ),
             CycleError::BlockNumberRegression { current, attempted } => {
                 PrecompileError::RevertBytes(Bytes::from(
                     ICycle::BlockNumberRegression { current, attempted }.abi_encode(),
@@ -193,18 +178,6 @@ mod tests {
                     block: 20_260_819,
                 },
                 ICycle::ActiveUtcDayAfterBlock::SELECTOR,
-            ),
-            (
-                CycleError::NativeValidatorBudgetOverflow,
-                ICycle::NativeValidatorBudgetOverflow::SELECTOR,
-            ),
-            (
-                CycleError::MetadosisTerminalOverflow,
-                ICycle::MetadosisTerminalOverflow::SELECTOR,
-            ),
-            (
-                CycleError::ValidatorTopupExceedsAllocation,
-                ICycle::ValidatorTopupExceedsAllocation::SELECTOR,
             ),
             (
                 CycleError::BlockNumberRegression {

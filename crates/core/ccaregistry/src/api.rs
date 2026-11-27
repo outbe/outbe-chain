@@ -2,13 +2,12 @@
 pub use crate::precompile::ICcaRegistry;
 pub use crate::runtime::{credis_forfeited, credis_issued};
 use crate::{
-    constants::{DAY_CLEANUP_ENTRIES_PER_BLOCK, DAY_CLEANUP_HEADERS_PER_BLOCK},
-    errors::{CcaError, CcaFatalError},
-    schema::{address_day_key, day_index_key, CcaContract},
+    errors::CcaError,
+    schema::{address_day_key, CcaContract},
     state::validate_state,
 };
 use alloy_primitives::{Address, U256};
-use outbe_primitives::{block::BlockRuntimeContext, error::Result, storage::StorageHandle};
+use outbe_primitives::{error::Result, storage::StorageHandle};
 
 pub fn cca_state(storage: &StorageHandle<'_>, cca: Address) -> Result<ICcaRegistry::State> {
     Ok(CcaContract::new(storage.clone()).load(cca)?.state)
@@ -66,7 +65,7 @@ fn require_sealed(contract: &CcaContract<'_>, day: u32) -> Result<()> {
     Ok(())
 }
 
-/// Frozen entry count (including zero weights) and net GRATIS denominator.
+/// The number of the CCAs with a weight in the sealed `day` and the sum of their weights.
 pub fn reward_day_inputs(storage: &StorageHandle<'_>, day: u32) -> Result<(u32, U256)> {
     let contract = CcaContract::new(storage.clone());
     require_sealed(&contract, day)?;
@@ -76,109 +75,21 @@ pub fn reward_day_inputs(storage: &StorageHandle<'_>, day: u32) -> Result<(u32, 
     ))
 }
 
-/// Read one historical entry without consulting current standing.
-pub fn reward_day_entry(
-    storage: &StorageHandle<'_>,
-    day: u32,
-    index: u32,
-) -> Result<(Address, U256)> {
+/// Reads and deletes the weight of `cca` in the sealed `day`, once its reward is claimed or expired.
+pub fn take_reward_weight(storage: &StorageHandle<'_>, cca: Address, day: u32) -> Result<U256> {
     let contract = CcaContract::new(storage.clone());
     require_sealed(&contract, day)?;
-    if index >= contract.reward_day_count.read(&day)? {
-        return Err(CcaFatalError::RewardDayIndexCorrupt.into());
-    }
-    let address = contract
-        .reward_day_addresses
-        .read(&day_index_key(day, index))?;
-    if address.is_zero()
-        || !contract
-            .reward_day_members
-            .read(&address_day_key(address, day))?
-    {
-        return Err(CcaFatalError::RewardDayIndexCorrupt.into());
-    }
-    Ok((address, reward_weight(storage, address, day)?))
+    let key = address_day_key(cca, day);
+    let weight = contract.gratis_minor_per_utc_day.read(&key)?;
+    contract.gratis_minor_per_utc_day.clear(&key)?;
+    contract.gratis_deficit_minor_per_utc_day.clear(&key)?;
+    Ok(weight)
 }
 
-/// Trusted caller schedules only after the monetary CCA job is terminal or abandoned.
-pub fn enqueue_day_cleanup(ctx: &BlockRuntimeContext<'_>, day: u32) -> Result<()> {
-    ctx.with_checkpoint(|| {
-        let contract = CcaContract::new(ctx.storage.clone());
-        require_sealed(&contract, day)?;
-        if contract.day_cleanup_scheduled.read(&day)? {
-            return Ok(());
-        }
-        let tail = contract.day_cleanup_tail.read()?;
-        let next = tail.checked_add(1).ok_or(CcaError::Arithmetic)?;
-        if contract.day_cleanup_head.read()? > tail {
-            return Err(CcaFatalError::RewardDayIndexCorrupt.into());
-        }
-        contract.day_cleanup_queue.write(&tail, day)?;
-        contract.day_cleanup_tail.write(next)?;
-        contract.day_cleanup_scheduled.write(&day, true)
-    })
-}
-
-/// Delete at most 256 entries and inspect at most four queue headers per block.
-/// The checkpoint includes the height marker, so failed slices remain retryable.
-pub fn cleanup(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
-    ctx.with_checkpoint(|| cleanup_inner(ctx))
-}
-
-fn cleanup_inner(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
-    let storage = &ctx.storage;
+/// Deletes the count and the weight sum of the sealed `day` with its last weight.
+pub fn clear_reward_day(storage: &StorageHandle<'_>, day: u32) -> Result<()> {
     let contract = CcaContract::new(storage.clone());
-    if contract.has_cleanup_processed_block.read()?
-        && contract.cleanup_processed_block.read()? == ctx.block.block_number
-    {
-        return Ok(());
-    }
-    let mut head = contract.day_cleanup_head.read()?;
-    let tail = contract.day_cleanup_tail.read()?;
-    if head > tail {
-        return Err(CcaFatalError::RewardDayIndexCorrupt.into());
-    }
-    let mut budget = DAY_CLEANUP_ENTRIES_PER_BLOCK;
-    for _ in 0..DAY_CLEANUP_HEADERS_PER_BLOCK {
-        if head == tail {
-            break;
-        }
-        let day = contract.day_cleanup_queue.read(&head)?;
-        if !contract.day_cleanup_scheduled.read(&day)? {
-            return Err(CcaFatalError::RewardDayIndexCorrupt.into());
-        }
-        require_sealed(&contract, day)?;
-        let count = contract.reward_day_count.read(&day)?;
-        let mut cursor = contract.day_cleanup_cursor.read(&day)?;
-        if cursor > count {
-            return Err(CcaFatalError::RewardDayIndexCorrupt.into());
-        }
-        while cursor < count && budget > 0 {
-            let (address, _) = reward_day_entry(storage, day, cursor)?;
-            let key = address_day_key(address, day);
-            contract.gratis_minor_per_utc_day.clear(&key)?;
-            contract.gratis_deficit_minor_per_utc_day.clear(&key)?;
-            contract.reward_day_members.clear(&key)?;
-            contract
-                .reward_day_addresses
-                .clear(&day_index_key(day, cursor))?;
-            // cursor < count <= u32::MAX, so this increment is bounded.
-            cursor = cursor.checked_add(1).ok_or(CcaError::Arithmetic)?;
-            budget -= 1;
-        }
-        if cursor < count {
-            contract.day_cleanup_cursor.write(&day, cursor)?;
-            break;
-        }
-        contract.reward_day_count.clear(&day)?;
-        contract.reward_day_total.clear(&day)?;
-        contract.day_cleanup_cursor.clear(&day)?;
-        contract.day_cleanup_queue.clear(&head)?;
-        head = head.checked_add(1).ok_or(CcaError::Arithmetic)?;
-    }
-    contract.day_cleanup_head.write(head)?;
-    contract
-        .cleanup_processed_block
-        .write(ctx.block.block_number)?;
-    contract.has_cleanup_processed_block.write(true)
+    require_sealed(&contract, day)?;
+    contract.reward_day_count.clear(&day)?;
+    contract.reward_day_total.clear(&day)
 }

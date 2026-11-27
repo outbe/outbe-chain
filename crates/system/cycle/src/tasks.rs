@@ -14,7 +14,6 @@ use crate::errors::CycleError;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum CycleWorkerId {
-    AgentRewards = 1,
     DesisCleanup = 2,
 }
 
@@ -163,9 +162,9 @@ impl TaskHandler {
             Self::Test(handler) => handler(ctx),
             Self::ProcessEmissionDay => return crate::handler::process_emission_day(ctx),
             Self::ScheduleIntexCallPass => outbe_intexfactory::call::schedule_call_pass(ctx),
-            Self::AdvanceAuctions => outbe_desis::advance_auctions(ctx),
+            Self::AdvanceAuctions => outbe_desis::advance_intex_auctions(ctx),
             Self::ScheduleGemCallPass => outbe_gemfactory::call::schedule_call_pass(ctx),
-            Self::CompleteAuctions => outbe_desis::complete_auctions(ctx),
+            Self::CompleteAuctions => outbe_desis::complete_intex_auctions(ctx),
             Self::ScheduleCredisCallPass => outbe_credisfactory::call::schedule_call_pass(ctx),
             Self::ScheduleNodCallPass => outbe_nodfactory::call::schedule_call_pass(ctx),
         };
@@ -199,9 +198,6 @@ pub const PROCESS_EMISSION_DAY_PERIOD_SECONDS: u64 = 3_600;
 /// slot at 12:00:01 of E+1. The auction tasks share the offset to land in the slot of the brief.
 pub const PROCESS_EMISSION_DAY_START_OFFSET_SECONDS: u64 = 1;
 
-/// Agent rewards: 16,505,700 measured storage gas for 256 accrual and 3x256 cleanup
-/// entries, multiplied by four and rounded up to 1,000 gas.
-pub const AGENT_REWARDS_WORKER_BUDGET_GAS: u64 = 66_023_000;
 /// Desis cleanup: 2,880,000 worst-case gas for four headers and 256 bid clears,
 /// multiplied by four and rounded up to 1,000 gas.
 pub const DESIS_CLEANUP_WORKER_BUDGET_GAS: u64 = 11_520_000;
@@ -438,7 +434,6 @@ mod protocol_parameter_tests {
         use crate::ICycle::{CycleTask, CycleTaskCompleted};
         use alloy_sol_types::SolEvent;
 
-        assert_eq!(CycleWorkerId::AgentRewards.as_u8(), 1);
         assert_eq!(CycleWorkerId::DesisCleanup.as_u8(), 2);
         for (id, task) in [
             (TaskId::ProcessEmissionDay, CycleTask::ProcessEmissionDay),
@@ -481,14 +476,11 @@ mod protocol_parameter_tests {
                 .unwrap()
                 .isolates_panic
         );
-        assert_eq!(AGENT_REWARDS_WORKER_BUDGET_GAS, 66_023_000);
         assert_eq!(DESIS_CLEANUP_WORKER_BUDGET_GAS, 11_520_000);
-        for (budget, measured) in [
-            (AGENT_REWARDS_WORKER_BUDGET_GAS, 16_505_700u64),
-            (DESIS_CLEANUP_WORKER_BUDGET_GAS, 2_880_000),
-        ] {
-            assert_eq!(budget, (measured * 4).div_ceil(1_000) * 1_000);
-        }
+        assert_eq!(
+            DESIS_CLEANUP_WORKER_BUDGET_GAS,
+            (2_880_000u64 * 4).div_ceil(1_000) * 1_000
+        );
     }
 
     #[test]

@@ -1,47 +1,61 @@
-use crate::constants::{AGENT_DISCOUNT_PCT, REWARD_BALANCE_IDLE_SECONDS};
+use crate::constants::{
+    AGENT_DISCOUNT_PCT, MAX_REWARD_DAYS_PER_CALL, RATE_SCALE, REWARD_BALANCE_IDLE_SECONDS,
+};
 use crate::errors::AgentRewardError;
 use crate::precompile::IAgentReward;
-use crate::schema::{AgentRewardContract, RewardPool};
-use alloy_primitives::{Address, B256, U256};
+use crate::schema::{AgentRewardContract, PoolDay, RewardPool};
+use alloy_primitives::{Address, U256, U512};
 use outbe_core_common::markup::marked_down;
-use outbe_primitives::error::Result;
-use outbe_primitives::storage::dsl::Map;
+use outbe_emission::schema::{emission_day_state, metadosis_state};
+use outbe_primitives::error::{PassFailure, Result};
 use outbe_primitives::storage::StorageHandle;
-use outbe_system_common::time::WorldwideDay;
+use outbe_promislimit::{LimitSource, PromisLimitContract};
+
+/// `floor(a * b / c)` with a 512-bit product. `c` is not zero.
+fn mul_div(a: U256, b: U256, c: U256) -> Result<U256> {
+    let value = (U512::from(a) * U512::from(b))
+        .checked_div(U512::from(c))
+        .ok_or(AgentRewardError::RateOverflow)?;
+    if value > U512::from(U256::MAX) {
+        return Err(AgentRewardError::RateOverflow.into());
+    }
+    Ok(value.wrapping_to::<U256>())
+}
+
+fn scale() -> U256 {
+    U256::from(RATE_SCALE)
+}
+
+/// The amount of `weight` at `rate`.
+fn amount_of(rate: U256, weight: U256) -> Result<U256> {
+    mul_div(rate, weight, scale())
+}
 
 impl AgentRewardContract<'_> {
-    /// Increments WAA (wallet) offer count for an address on `day`.
-    ///
-    /// On the first offer for this address+day pair, the function also
-    /// appends the address to the per-day WAA address list. Distribution
-    /// enumerates that list.
-    /// Overflow rejects activity before any write. Multi-recipient offer
-    /// atomicity requires the caller's checkpoint.
-    pub fn increment_waa_offer(&mut self, day: WorldwideDay, address: Address) -> Result<()> {
+    /// Counts one WAA offer of `address` for the Nods of emission day `day`.
+    /// Multi-recipient offer atomicity requires the caller's checkpoint.
+    pub fn increment_waa_offer(&mut self, day: u32, address: Address) -> Result<()> {
         self.increment_offer(RewardPool::Waa, day, address)
     }
 
-    /// Increments SRA offer count for an address on `day`.
-    ///
-    /// On the first offer for this address+day pair, the function also
-    /// appends the address to the per-day SRA address list. Distribution
-    /// enumerates that list.
-    /// Overflow rejects activity before any write. Multi-recipient offer
-    /// atomicity requires the caller's checkpoint.
-    pub fn increment_sra_offer(&mut self, day: WorldwideDay, address: Address) -> Result<()> {
+    /// Counts one SRA offer of `address` for the Nods of emission day `day`.
+    /// Multi-recipient offer atomicity requires the caller's checkpoint.
+    pub fn increment_sra_offer(&mut self, day: u32, address: Address) -> Result<()> {
         self.increment_offer(RewardPool::Sra, day, address)
     }
 
-    fn increment_offer(
-        &mut self,
-        pool: RewardPool,
-        day: WorldwideDay,
-        address: Address,
-    ) -> Result<()> {
-        if day.value() <= outbe_rewards::api::get_last_sealed_day(&self.storage)? {
-            return Err(AgentRewardError::DaySealed(day.value()).into());
+    fn increment_offer(&mut self, pool: RewardPool, day: u32, address: Address) -> Result<()> {
+        if self
+            .pool_days
+            .exists(AgentRewardContract::pool_day_key(pool, day))?
+        {
+            return Err(AgentRewardError::AgentRewardRateAlreadySet {
+                pool: pool as u8,
+                day,
+            }
+            .into());
         }
-        let index = self.day_index(pool)?;
+        let index = self.offer_index(pool)?;
         let key = AgentRewardContract::offer_count_key(day, address);
         let count = index.counts.read(&key)?;
         let next_count = count
@@ -53,259 +67,371 @@ impl AgentRewardContract<'_> {
             .checked_add(1)
             .ok_or(AgentRewardError::OfferCounterOverflow)?;
         if count == 0 {
-            // First offer for this address+day - add to address list
-            let addr_count = index.address_count.read(&day)?;
-            let next_addr_count = addr_count
+            let next_addresses = index
+                .address_count
+                .read(&day)?
                 .checked_add(1)
                 .ok_or(AgentRewardError::OfferCounterOverflow)?;
-            let idx_key = AgentRewardContract::address_index_key(day, addr_count);
-            index.addresses.write(&idx_key, address)?;
-            index.address_count.write(&day, next_addr_count)?;
-            index.member_index.write(&key, next_addr_count)?;
+            index.address_count.write(&day, next_addresses)?;
         }
         index.total.write(&day, next_total)?;
         index.counts.write(&key, next_count)
     }
 
-    /// Gets the total claimable reward balance for an address across all pools.
-    pub fn agent_reward_total(&self, address: Address) -> Result<U256> {
-        [
-            RewardPool::Waa,
-            RewardPool::Sra,
-            RewardPool::Cca,
-            RewardPool::Validator,
-        ]
-        .into_iter()
-        .try_fold(U256::ZERO, |total, pool| {
-            total
-                .checked_add(self.get_agent_reward(pool, address)?)
-                .ok_or_else(|| AgentRewardError::AgentRewardTotalOverflow.into())
+    /// The weight of `address` in `pool` of emission day `day`.
+    pub fn weight(&self, pool: RewardPool, day: u32, address: Address) -> Result<U256> {
+        match pool {
+            RewardPool::Validator => {
+                outbe_rewards::api::validator_weight(&self.storage, day, address)
+            }
+            RewardPool::Cca => outbe_ccaregistry::api::reward_weight(&self.storage, address, day),
+            RewardPool::Waa | RewardPool::Sra => {
+                let index = self.offer_index(pool)?;
+                Ok(U256::from(index.counts.read(
+                    &AgentRewardContract::offer_count_key(day, address),
+                )?))
+            }
+        }
+    }
+
+    /// Reads and deletes the weight of `address`; its owner module deletes it.
+    fn take_weight(&self, pool: RewardPool, day: u32, address: Address) -> Result<U256> {
+        match pool {
+            RewardPool::Validator => {
+                outbe_rewards::api::take_validator_weight(&self.storage, day, address)
+            }
+            RewardPool::Cca => {
+                outbe_ccaregistry::api::take_reward_weight(&self.storage, address, day)
+            }
+            RewardPool::Waa | RewardPool::Sra => {
+                let index = self.offer_index(pool)?;
+                let key = AgentRewardContract::offer_count_key(day, address);
+                let count = index.counts.read(&key)?;
+                if count != 0 {
+                    index.counts.write(&key, 0)?;
+                }
+                Ok(U256::from(count))
+            }
+        }
+    }
+
+    /// The number of the receivers of `pool` in `day` and the sum of their weights.
+    fn day_inputs(&self, pool: RewardPool, day: u32) -> Result<(u32, U256)> {
+        match pool {
+            RewardPool::Validator => outbe_rewards::api::validator_day_weights(&self.storage, day),
+            RewardPool::Cca => outbe_ccaregistry::api::reward_day_inputs(&self.storage, day),
+            RewardPool::Waa | RewardPool::Sra => {
+                let index = self.offer_index(pool)?;
+                Ok((
+                    index.address_count.read(&day)?,
+                    U256::from(index.total.read(&day)?),
+                ))
+            }
+        }
+    }
+
+    /// Deletes the count and the weight sum of `pool` in `day`, with its last weight.
+    fn clear_day(&self, pool: RewardPool, day: u32) -> Result<()> {
+        match pool {
+            RewardPool::Validator => outbe_rewards::api::clear_validator_day(&self.storage, day),
+            RewardPool::Cca => outbe_ccaregistry::api::clear_reward_day(&self.storage, day),
+            RewardPool::Waa | RewardPool::Sra => {
+                let index = self.offer_index(pool)?;
+                index.address_count.write(&day, 0)?;
+                index.total.write(&day, 0)
+            }
+        }
+    }
+
+    fn limit_returned(&mut self, pool: RewardPool, day: u32, amount: U256) -> Result<()> {
+        if amount.is_zero() {
+            return Ok(());
+        }
+        PromisLimitContract::new(self.storage.clone()).add(LimitSource::RewardLimit, amount)?;
+        self.emit(IAgentReward::AgentRewardLimitReturned {
+            emissionDay: day,
+            pool: pool as u8,
+            amountMinor: amount,
         })
     }
 
-    /// Gets the claimable reward balance an address holds in one pool.
-    pub fn get_agent_reward(&self, pool: RewardPool, address: Address) -> Result<U256> {
-        match pool {
-            RewardPool::Waa => self.waa_claimable_minor.read(&address),
-            RewardPool::Sra => self.sra_claimable_minor.read(&address),
-            RewardPool::Cca => self.cca_claimable_minor.read(&address),
-            RewardPool::Validator => self.validator_claimable_minor.read(&address),
+    /// Checks that the rate of `pool` and `day` is due and returns the pool limit. The Validator
+    /// and CCA rates are set before the record of the day starts, the WAA and SRA rates after it
+    /// started and before its Metadosis ends.
+    fn due_pool_limit(&self, pool: RewardPool, day: u32) -> Result<U256> {
+        let not_due = || AgentRewardError::RateNotDue {
+            pool: pool as u8,
+            day,
+        };
+        let record = outbe_emission::api::get_emission_day(self.storage.clone(), day)?
+            .ok_or_else(not_due)?;
+        let due = match pool {
+            RewardPool::Validator | RewardPool::Cca => record.state == emission_day_state::PENDING,
+            RewardPool::Waa | RewardPool::Sra => {
+                record.state == emission_day_state::PROCESSING
+                    && record.metadosis_state == metadosis_state::PENDING
+            }
+        };
+        if !due
+            || self
+                .pool_days
+                .exists(AgentRewardContract::pool_day_key(pool, day))?
+        {
+            return Err(not_due().into());
         }
+        Ok(U256::from(match pool {
+            RewardPool::Validator => record.validators_limit,
+            RewardPool::Cca => record.cca_limit,
+            RewardPool::Waa => record.waa_limit,
+            RewardPool::Sra => record.sra_limit,
+        }))
     }
 
-    /// The claimable reward of a pool summed over its addresses.
-    pub fn pool_agent_reward_total(&self, pool: RewardPool) -> Result<U256> {
-        self.claimable_total_minor.read(&(pool as u8))
-    }
-
-    /// The part of the pool's queued day pools not yet credited.
-    pub fn pool_pending_agent_reward_total(&self, pool: RewardPool) -> Result<U256> {
-        self.pending_total_minor.read(&(pool as u8))
-    }
-
-    /// Returns zero for an empty balance; a nonempty balance must have a deadline.
-    pub fn agent_reward_deadline(&self, pool: RewardPool, address: Address) -> Result<u64> {
-        if self.get_agent_reward(pool, address)?.is_zero() {
-            return Ok(0);
-        }
-        let deadline = self
-            .reward_balance_deadlines
-            .read(&Self::reward_balance_key(pool, address))?;
-        if deadline == 0 {
-            return Err(AgentRewardError::RewardDeadlineMissing.into());
-        }
-        Ok(deadline)
-    }
-
-    fn renewed_reward_deadline(&self) -> Result<u64> {
+    fn reward_deadline(&self) -> Result<u64> {
         self.storage
             .now_secs()?
             .checked_add(REWARD_BALANCE_IDLE_SECONDS)
             .ok_or_else(|| AgentRewardError::RewardDeadlineOverflow.into())
     }
 
-    /// Adds amount to an address's claimable reward in one pool.
-    pub fn add_agent_reward(
+    /// Stores the rate record of a pool and day that has receivers.
+    fn store_pool_day(
         &mut self,
         pool: RewardPool,
-        address: Address,
-        amount: U256,
-    ) -> Result<()> {
-        if amount.is_zero() {
-            return Ok(());
-        }
-        let storage = self.storage.clone();
-        storage.with_checkpoint(|| {
-            let current = self.get_agent_reward(pool, address)?;
-            let next = current
-                .checked_add(amount)
-                .ok_or(AgentRewardError::AgentRewardOverflow)?;
-            let deadline = if current.is_zero() {
-                self.renewed_reward_deadline()?
-            } else {
-                self.agent_reward_deadline(pool, address)?
-            };
-            self.write_agent_reward(pool, address, next)?;
-            self.reward_balance_deadlines
-                .write(&Self::reward_balance_key(pool, address), deadline)
-        })
-    }
-
-    /// Anyone can return an expired pool balance, but only the Promis Limit receives it.
-    pub fn expire_agent_reward(&mut self, pool: RewardPool, address: Address) -> Result<U256> {
-        let storage = self.storage.clone();
-        storage.with_checkpoint(|| {
-            let balance = self.get_agent_reward(pool, address)?;
-            if balance.is_zero() {
-                return Ok(U256::ZERO);
-            }
-            let deadline = self.agent_reward_deadline(pool, address)?;
-            if storage.now_secs()? < deadline {
-                return Err(AgentRewardError::AgentRewardNotExpired(deadline).into());
-            }
-            outbe_promislimit::PromisLimitContract::new(storage.clone())
-                .add(outbe_promislimit::LimitSource::AgentReward, balance)?;
-            self.write_agent_reward(pool, address, U256::ZERO)?;
-            self.reward_balance_deadlines
-                .write(&Self::reward_balance_key(pool, address), 0)?;
-            self.emit(IAgentReward::AgentRewardExpired {
-                account: address,
-                pool: pool as u8,
-                promisLoadMinor: balance,
+        day: u32,
+        (rate, allocated): (U256, U256),
+        receivers: u32,
+    ) -> Result<u64> {
+        let deadline = self.reward_deadline()?;
+        if receivers != 0 {
+            self.pool_days.create(&PoolDay {
+                key: AgentRewardContract::pool_day_key(pool, day),
+                rate,
+                unclaimed_minor: allocated,
+                deadline,
+                receivers,
             })?;
-            Ok(balance)
+        }
+        Ok(deadline)
+    }
+
+    fn set_rate(&mut self, pool: RewardPool, day: u32, limit: U256) -> Result<()> {
+        let (receivers, total_weight) = self.day_inputs(pool, day)?;
+        let (rate, allocated) = if total_weight.is_zero() {
+            (U256::ZERO, U256::ZERO)
+        } else {
+            let rate = mul_div(limit, scale(), total_weight)?;
+            (rate, amount_of(rate, total_weight)?.min(limit))
+        };
+        self.limit_returned(pool, day, limit - allocated)?;
+        outbe_emission::api::record_reward_pool(
+            self.storage.clone(),
+            day,
+            pool.emission_pool(),
+            allocated,
+        )?;
+        let receivers = if total_weight.is_zero() { 0 } else { receivers };
+        let deadline = self.store_pool_day(pool, day, (rate, allocated), receivers)?;
+        if pool == RewardPool::Validator {
+            outbe_rewards::api::clear_day_seal(&self.storage, day)?;
+        }
+        self.emit(IAgentReward::AgentRewardRateSet {
+            emissionDay: day,
+            pool: pool as u8,
+            rate,
+            allocatedMinor: allocated,
+            deadline,
         })
     }
 
-    fn write_agent_reward(
-        &mut self,
-        pool: RewardPool,
-        address: Address,
-        amount: U256,
-    ) -> Result<()> {
-        let previous = self.get_agent_reward(pool, address)?;
-        let total = self
-            .claimable_total_minor
-            .read(&(pool as u8))?
-            .checked_sub(previous)
-            .and_then(|rest| rest.checked_add(amount))
-            .ok_or(AgentRewardError::PoolTotalMismatch)?;
-        self.claimable_total_minor.write(&(pool as u8), total)?;
-        match pool {
-            RewardPool::Waa => self.waa_claimable_minor.write(&address, amount),
-            RewardPool::Sra => self.sra_claimable_minor.write(&address, amount),
-            RewardPool::Cca => self.cca_claimable_minor.write(&address, amount),
-            RewardPool::Validator => self.validator_claimable_minor.write(&address, amount),
+    /// The whole pool limit goes to the Promis Limit. The weights stay until they expire.
+    fn fail_rate(&mut self, pool: RewardPool, day: u32, limit: U256) -> Result<()> {
+        PromisLimitContract::new(self.storage.clone()).add(LimitSource::RewardLimit, limit)?;
+        outbe_emission::api::record_reward_pool(
+            self.storage.clone(),
+            day,
+            pool.emission_pool(),
+            U256::ZERO,
+        )?;
+        let (receivers, _) = self.day_inputs(pool, day)?;
+        self.store_pool_day(pool, day, (U256::ZERO, U256::ZERO), receivers)?;
+        if pool == RewardPool::Validator {
+            outbe_rewards::api::clear_day_seal(&self.storage, day)?;
+        }
+        self.emit(IAgentReward::AgentRewardRateFailed {
+            emissionDay: day,
+            pool: pool as u8,
+            amountMinor: limit,
+        })
+    }
+
+    /// Sets the rate of `pool` for emission day `day`, writes the allocated amount into the
+    /// record of the day and sends the rest of the pool limit to the Promis Limit. A step that
+    /// reverts sends the whole pool limit there instead.
+    pub fn set_agent_reward_rate(&mut self, pool: RewardPool, day: u32) -> Result<()> {
+        let limit = self.due_pool_limit(pool, day)?;
+        let storage = self.storage.clone();
+        match storage.with_checkpoint(|| self.set_rate(pool, day, limit)) {
+            Err(err) if err.record_pass_failure() == PassFailure::Skip => {
+                storage.with_checkpoint(|| self.fail_rate(pool, day, limit))
+            }
+            result => result,
         }
     }
 
-    /// Claims `amount` of the pool's balance as a Gem of that Promis load, or all
-    /// of it when `amount` is zero. Balances and loads are protocol units.
+    /// Takes the weight of `address` in one day and returns its amount. The last weight of the
+    /// day sends the rounding rest to the Promis Limit and deletes the values of the day.
+    fn settle_day(
+        &mut self,
+        pool: RewardPool,
+        day: u32,
+        address: Address,
+        expiring: bool,
+    ) -> Result<U256> {
+        let key = AgentRewardContract::pool_day_key(pool, day);
+        let mut pool_day =
+            self.pool_days
+                .get(key)?
+                .ok_or(AgentRewardError::AgentRewardRateMissing {
+                    pool: pool as u8,
+                    day,
+                })?;
+        let now = self.storage.now_secs()?;
+        if expiring && now < pool_day.deadline {
+            return Err(AgentRewardError::AgentRewardNotExpired(pool_day.deadline).into());
+        }
+        if !expiring && now >= pool_day.deadline {
+            return Err(AgentRewardError::AgentRewardDeadlinePassed(pool_day.deadline).into());
+        }
+        let weight = self.take_weight(pool, day, address)?;
+        if weight.is_zero() {
+            return Err(AgentRewardError::NoAgentRewardWeight(day).into());
+        }
+        let amount = amount_of(pool_day.rate, weight)?;
+        let underflow = AgentRewardError::UnclaimedUnderflow {
+            pool: pool as u8,
+            day,
+        };
+        pool_day.unclaimed_minor = pool_day
+            .unclaimed_minor
+            .checked_sub(amount)
+            .ok_or(underflow)?;
+        pool_day.receivers = pool_day.receivers.checked_sub(1).ok_or(underflow)?;
+        if pool_day.receivers == 0 {
+            self.limit_returned(pool, day, pool_day.unclaimed_minor)?;
+            self.pool_days.delete(key)?;
+            self.clear_day(pool, day)?;
+        } else {
+            self.pool_days.update(&pool_day)?;
+        }
+        Ok(amount)
+    }
+
+    /// Claims the reward of `address` in `pool` for each of `days` as one Gem.
     ///
-    /// The balance is the safe form of the reward. The Gem is not: an unsettled
-    /// Gem can be Called and forfeited. Sizing the claim is therefore the agent's
-    /// own risk control. Unclaimed value expires after 365 days without a claim
-    /// in this pool and can then be returned to the Promis Limit by anyone.
-    ///
-    /// The Gem carries the caller's `(issuance, reference)` currencies. Its entry
-    /// price is the 24-hour COEN VWAP of the claim hour in the reference currency less
-    /// [`AGENT_DISCOUNT_PCT`]; its call price marks up the full VWAP. The reference
-    /// currency must be an Oracle reference currency.
-    ///
-    /// Any failure reverts the call and leaves the balance intact.
+    /// The Gem carries the caller's `(issuance, reference)` currencies. Its entry price is the
+    /// 24-hour COEN VWAP of the claim hour in the reference currency less
+    /// [`AGENT_DISCOUNT_PCT`]; its call price marks up the full VWAP. Any failure reverts the call.
     pub fn redeem_agent_reward(
         &mut self,
-
         pool: RewardPool,
         address: Address,
-        amount: U256,
+        days: &[u32],
         currencies: (u16, u16),
     ) -> Result<U256> {
+        require_days(days)?;
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
             if pool == RewardPool::Cca {
                 // Registration history is sufficient: earned rewards survive deregistration.
                 outbe_ccaregistry::api::cca_state(&storage, address)?;
             }
-            let balance = self.get_agent_reward(pool, address)?;
-            if balance.is_zero() {
+            let mut total = U256::ZERO;
+            for &day in days {
+                let amount = self.settle_day(pool, day, address, false)?;
+                total = total
+                    .checked_add(amount)
+                    .ok_or(AgentRewardError::RateOverflow)?;
+            }
+            if total.is_zero() {
                 return Err(AgentRewardError::NoAgentReward.into());
             }
-            let deadline = self.agent_reward_deadline(pool, address)?;
-            if storage.now_secs()? >= deadline {
-                return Err(AgentRewardError::AgentRewardDeadlinePassed(deadline).into());
-            }
-            let requested = if amount.is_zero() { balance } else { amount };
-            if requested > balance {
-                return Err(AgentRewardError::InsufficientAgentReward.into());
-            }
-            let next_deadline = if requested == balance {
-                0
-            } else {
-                self.renewed_reward_deadline()?
-            };
-            let gem_id = issue_reward_gem(&self.storage, (address, requested), currencies)?;
-            self.write_agent_reward(pool, address, balance - requested)?;
-            self.reward_balance_deadlines
-                .write(&Self::reward_balance_key(pool, address), next_deadline)?;
+            let gem_id = issue_reward_gem(&self.storage, (address, total), currencies)?;
             self.emit(IAgentReward::AgentRewardRedeemed {
                 account: address,
                 pool: pool as u8,
-                promisLoadMinor: requested,
+                promisLoadMinor: total,
                 gemId: gem_id,
             })?;
             Ok(gem_id)
         })
     }
 
-    /// Gets all WAA offer counts for a day as (address, count) pairs.
-    pub fn get_all_waa_counts(&self, day: WorldwideDay) -> Result<Vec<(Address, u64)>> {
-        read_offer_counts(
-            day,
-            &self.waa_address_count,
-            &self.waa_addresses,
-            &self.waa_offer_counts,
-        )
+    /// Sends the reward of `address` in `pool` for each of `days`, past its deadline, to the
+    /// Promis Limit. Any account may call it.
+    pub fn expire_agent_reward(
+        &mut self,
+        pool: RewardPool,
+        address: Address,
+        days: &[u32],
+    ) -> Result<U256> {
+        require_days(days)?;
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
+            let mut total = U256::ZERO;
+            for &day in days {
+                let amount = self.settle_day(pool, day, address, true)?;
+                if !amount.is_zero() {
+                    PromisLimitContract::new(storage.clone())
+                        .add(LimitSource::AgentReward, amount)?;
+                }
+                self.emit(IAgentReward::AgentRewardExpired {
+                    account: address,
+                    pool: pool as u8,
+                    emissionDay: day,
+                    promisLoadMinor: amount,
+                })?;
+                total = total
+                    .checked_add(amount)
+                    .ok_or(AgentRewardError::RateOverflow)?;
+            }
+            Ok(total)
+        })
     }
 
-    /// Gets all SRA offer counts for a day as (address, count) pairs.
-    pub fn get_all_sra_counts(&self, day: WorldwideDay) -> Result<Vec<(Address, u64)>> {
-        read_offer_counts(
-            day,
-            &self.sra_address_count,
-            &self.sra_addresses,
-            &self.sra_offer_counts,
-        )
+    /// The rate, the deadline and the unclaimed amount of `pool` and `day`; zero when none.
+    pub fn agent_reward_rate(&self, pool: RewardPool, day: u32) -> Result<(U256, u64, U256)> {
+        Ok(self
+            .pool_days
+            .get(AgentRewardContract::pool_day_key(pool, day))?
+            .map_or((U256::ZERO, 0, U256::ZERO), |pool_day| {
+                (pool_day.rate, pool_day.deadline, pool_day.unclaimed_minor)
+            }))
+    }
+
+    /// The weight of `address` in `pool` and `day` and its amount at the rate of the day.
+    pub fn agent_reward(
+        &self,
+        pool: RewardPool,
+        day: u32,
+        address: Address,
+    ) -> Result<(U256, U256)> {
+        let weight = self.weight(pool, day, address)?;
+        let (rate, _, _) = self.agent_reward_rate(pool, day)?;
+        Ok((weight, amount_of(rate, weight)?))
     }
 }
 
-fn read_offer_counts(
-    day: WorldwideDay,
-    address_count: &Map<'_, WorldwideDay, u32>,
-    addresses: &Map<'_, B256, Address>,
-    offer_counts: &Map<'_, B256, u64>,
-) -> Result<Vec<(Address, u64)>> {
-    let addr_count = address_count.read(&day)?;
-    let mut result = Vec::with_capacity(addr_count as usize);
-    for i in 0..addr_count {
-        let idx_key = AgentRewardContract::address_index_key(day, i);
-        let addr = addresses.read(&idx_key)?;
-        if addr.is_zero() {
-            continue;
-        }
-        let count_key = AgentRewardContract::offer_count_key(day, addr);
-        let count = offer_counts.read(&count_key)?;
-        if count > 0 {
-            result.push((addr, count));
-        }
+fn require_days(days: &[u32]) -> Result<()> {
+    if days.is_empty() || days.len() > MAX_REWARD_DAYS_PER_CALL {
+        return Err(AgentRewardError::InvalidRewardDays(days.len()).into());
     }
-    Ok(result)
+    Ok(())
 }
 
 /// Shared issuance economics and claim-hour pricing for every reward pool.
 pub(crate) fn issue_reward_gem(
     storage: &StorageHandle<'_>,
-
     recipient: (Address, U256),
     (issuance_currency, reference_currency): (u16, u16),
 ) -> Result<U256> {

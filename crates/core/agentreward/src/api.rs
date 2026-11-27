@@ -1,23 +1,17 @@
-//! Daily allocation and bounded settlement. Amounts are protocol units, not native COEN.
-pub use crate::distribution::{
-    abandon_day_agent_rewards, allocate_day_agent_rewards, process_agent_rewards,
-    DayAgentAllocation, DayAgentPools,
-};
+//! Cross-module API of AgentReward. Amounts are protocol units, not native COEN.
+use outbe_primitives::block::BlockRuntimeContext;
+use outbe_primitives::error::Result;
 
-/// Delete at most 256 WAA/SRA entries and inspect at most four headers per block.
-/// Cleanup has its own checkpoint and height guard, independent of monetary accrual.
-pub fn cleanup(
-    ctx: &outbe_primitives::block::BlockRuntimeContext<'_>,
-) -> outbe_primitives::error::Result<()> {
-    ctx.with_checkpoint(|| {
-        let contract = ctx.contract::<crate::schema::AgentRewardContract>();
-        if contract.cleanup_initialized.read()?
-            && contract.cleanup_height.read()? == ctx.block.block_number
-        {
-            return Ok(());
-        }
-        crate::state::cleanup(&contract)?;
-        contract.cleanup_height.write(ctx.block.block_number)?;
-        contract.cleanup_initialized.write(true)
-    })
+use crate::schema::AgentRewardContract;
+pub use crate::schema::RewardPool;
+
+/// Sets the rate of `pool` for emission day `day`. The Validator and CCA rates come in the step
+/// at 00:00 after the day, the WAA and SRA rates when the offering of the day ends.
+pub fn set_agent_reward_rate(
+    ctx: &BlockRuntimeContext<'_>,
+    day: u32,
+    pool: RewardPool,
+) -> Result<()> {
+    ctx.contract::<AgentRewardContract>()
+        .set_agent_reward_rate(pool, day)
 }

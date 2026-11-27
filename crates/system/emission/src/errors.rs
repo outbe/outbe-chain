@@ -14,24 +14,6 @@ pub enum EmissionLimitError {
     /// Indicates that fixed-share multiplication overflowed.
     #[error("emission fixed-share multiplication overflow")]
     FixedShareMultiplicationOverflow,
-    /// Indicates that the fixed allocation total overflowed.
-    #[error("emission fixed allocation total overflow")]
-    FixedAllocationTotalOverflow,
-    /// Indicates that terminal allocation calculation underflowed.
-    #[error("emission terminal allocation underflow")]
-    TerminalAllocationUnderflow,
-    /// Indicates that fixed percentage summation overflowed.
-    #[error("emission fixed percentage overflow")]
-    FixedPercentageOverflow,
-    /// Indicates that the sink table defines more than one terminal sink.
-    #[error("emission sink table must have one terminal sink")]
-    MultipleTerminalSinks,
-    /// Indicates that the terminal sink is not the final entry in the table.
-    #[error("emission terminal sink must be the final sink")]
-    TerminalSinkNotFinal,
-    /// Indicates that fixed sink percentages exceed 100.
-    #[error("emission fixed percentages exceed 100")]
-    FixedPercentagesExceed100,
 }
 
 impl From<EmissionLimitError> for PrecompileError {
@@ -48,14 +30,8 @@ pub enum EmissionError {
     EmissionDayNotFound,
     #[error("invalid emission day key {day}")]
     InvalidEmissionDay { day: u32 },
-    #[error("conflicting WWD link on emission day {day}: existing {existing_wwd}, attempted {attempted_wwd}")]
-    ConflictingWwdLink {
-        day: u32,
-        existing_wwd: u32,
-        attempted_wwd: u32,
-    },
-    #[error("emission day {day} is already allocated (state={state})")]
-    DayAlreadyAllocated { day: u32, state: u8 },
+    #[error("emission day {day} already has a record")]
+    EmissionDayExists { day: u32 },
     #[error("invalid EmissionDay state transition on day {day}: {from_state} -> {to_state}")]
     InvalidStateTransition {
         day: u32,
@@ -70,13 +46,19 @@ pub enum EmissionError {
         from_state: u8,
         to_state: u8,
     },
+    #[error("invalid EmissionDay desis_state transition on day {day}: {from_state} -> {to_state}")]
+    InvalidDesisStateTransition {
+        day: u32,
+        from_state: u8,
+        to_state: u8,
+    },
     #[error("emission day amount overflow (exceeds u128)")]
     AmountOverflow,
     #[error("emission day {day} conservation invariant violated: expected {expected_limit}, landed {landed_sum}")]
     ConservationInvariantViolated {
         day: u32,
         expected_limit: u128,
-        landed_sum: u128,
+        landed_sum: i128,
     },
     #[error("metadosis_start waiting window overflow")]
     WaitingWindowOverflow,
@@ -106,18 +88,8 @@ impl From<EmissionError> for PrecompileError {
             EmissionError::InvalidEmissionDay { day } => {
                 IEmission::InvalidEmissionDay { day }.abi_encode()
             }
-            EmissionError::ConflictingWwdLink {
-                day,
-                existing_wwd,
-                attempted_wwd,
-            } => IEmission::ConflictingWwdLink {
-                day,
-                existingWwd: existing_wwd,
-                attemptedWwd: attempted_wwd,
-            }
-            .abi_encode(),
-            EmissionError::DayAlreadyAllocated { day, state } => {
-                IEmission::DayAlreadyAllocated { day, state }.abi_encode()
+            EmissionError::EmissionDayExists { day } => {
+                IEmission::EmissionDayExists { day }.abi_encode()
             }
             EmissionError::InvalidStateTransition {
                 day,
@@ -134,6 +106,16 @@ impl From<EmissionError> for PrecompileError {
                 from_state,
                 to_state,
             } => IEmission::InvalidMetadosisStateTransition {
+                day,
+                fromState: from_state,
+                toState: to_state,
+            }
+            .abi_encode(),
+            EmissionError::InvalidDesisStateTransition {
+                day,
+                from_state,
+                to_state,
+            } => IEmission::InvalidDesisStateTransition {
                 day,
                 fromState: from_state,
                 toState: to_state,

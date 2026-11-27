@@ -2,149 +2,68 @@ use alloy_primitives::{Address, B256, U256};
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::dsl::Map;
-use outbe_primitives::storage::types::StorageKey;
 use outbe_system_common::addresses::AGENT_REWARD_ADDRESS;
-use outbe_system_common::time::WorldwideDay;
 
 use crate::errors::AgentRewardError;
 
 /// EVM storage layout for the Agent Reward contract.
 ///
-/// Tracks offer counts per address/reward UTC day, claimable reward balances
-/// per address and pool, and per-day address lists for the WAA (wallet) and SRA
-/// (signer-of-record) participant pools. A reward day is the calendar day when
-/// an offer executes, not the target WorldwideDay of the offer.
-///
-/// Naming history: Phase 2 of the Cycle epic renamed `wallet_*` to `waa_*`
-/// and `sfa_*` to `sra_*`, so the on-chain identifiers match the README and
-/// external documentation.
+/// Keeps the WAA and SRA weights of each emission day: the offer count of each address for the
+/// Nods of that day, the number of addresses and the sum of the counts. Keeps one rate record for
+/// each pool and day whose rate is set and that still has a receiver with a weight.
 #[storage_schema]
 #[contract(addr = AGENT_REWARD_ADDRESS)]
 pub struct AgentRewardContract {
-    // slot 0: WAA offer count per day+address (key: B256 = keccak(day, addr))
+    /// WAA offer count per emission day and address (key: `offer_count_key`).
     #[attribute(order = 0)]
-    pub waa_offer_counts: outbe_primitives::storage::dsl::Map<B256, u64>,
+    pub waa_offer_counts: Map<B256, u64>,
 
-    // slot 1: SRA offer count per day+address (key: B256 = keccak(day, addr))
+    /// SRA offer count per emission day and address (key: `offer_count_key`).
     #[attribute(order = 1)]
-    pub sra_offer_counts: outbe_primitives::storage::dsl::Map<B256, u64>,
+    pub sra_offer_counts: Map<B256, u64>,
 
-    // slot 2: claimable WAA reward per address
+    /// The number of the WAA addresses with an offer, per emission day.
     #[attribute(order = 2)]
-    pub waa_claimable_minor: outbe_primitives::storage::dsl::Map<Address, U256>,
+    pub waa_address_count: Map<u32, u32>,
 
-    // slot 3: WAA address count per day
+    /// The number of the SRA addresses with an offer, per emission day.
     #[attribute(order = 3)]
-    pub waa_address_count: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
+    pub sra_address_count: Map<u32, u32>,
 
-    // slot 4: WAA address list - key = keccak(day, index), value = address
+    /// The sum of the WAA offer counts, per emission day.
     #[attribute(order = 4)]
-    pub waa_addresses: outbe_primitives::storage::dsl::Map<B256, Address>,
+    pub waa_total_count: Map<u32, u64>,
 
-    // slot 5: SRA address count per day
+    /// The sum of the SRA offer counts, per emission day.
     #[attribute(order = 5)]
-    pub sra_address_count: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
+    pub sra_total_count: Map<u32, u64>,
 
-    // slot 6: SRA address list - key = keccak(day, index), value = address
+    /// The rate record of each pool and day (key: `pool_day_key`).
     #[attribute(order = 6)]
-    pub sra_addresses: outbe_primitives::storage::dsl::Map<B256, Address>,
-
-    // slot 7: claimable SRA reward per address
-    #[attribute(order = 7)]
-    pub sra_claimable_minor: outbe_primitives::storage::dsl::Map<Address, U256>,
-
-    // slot 8: claimable CCA reward per address
-    #[attribute(order = 8)]
-    pub cca_claimable_minor: outbe_primitives::storage::dsl::Map<Address, U256>,
-
-    // slot 9: claimable validator reward per address
-    #[attribute(order = 9)]
-    pub validator_claimable_minor: outbe_primitives::storage::dsl::Map<Address, U256>,
-
-    // slot 10: WAA offer count per day, summed over its addresses
-    #[attribute(order = 10)]
-    pub waa_total_count: outbe_primitives::storage::dsl::Map<WorldwideDay, u64>,
-
-    // slot 11: SRA offer count per day, summed over its addresses
-    #[attribute(order = 11)]
-    pub sra_total_count: outbe_primitives::storage::dsl::Map<WorldwideDay, u64>,
-
-    // slot 12: four-pool FIFO jobs, by checked sequence number
-    #[attribute(order = 12)]
-    pub accrual_jobs: outbe_primitives::storage::dsl::Map<u64, AccrualJob>,
-
-    // slot 13: sequence number of the job credited next
-    #[attribute(order = 13)]
-    pub accrual_head: outbe_primitives::storage::dsl::Value<u64>,
-
-    // slot 14: sequence number the next queued job takes
-    #[attribute(order = 14)]
-    pub accrual_tail: outbe_primitives::storage::dsl::Value<u64>,
-
-    // slot 15: claimable reward per pool, summed over its addresses
-    #[attribute(order = 15)]
-    pub claimable_total_minor: outbe_primitives::storage::dsl::Map<u8, U256>,
-
-    // slot 16: queued day pools per pool, the part not yet credited
-    #[attribute(order = 16)]
-    pub pending_total_minor: outbe_primitives::storage::dsl::Map<u8, U256>,
-
-    // slot 17: deadline per pool+address, key = keccak(pool byte, address bytes)
-    #[attribute(order = 17)]
-    pub reward_balance_deadlines: outbe_primitives::storage::dsl::Map<B256, u64>,
-    #[attribute(order = 18)]
-    pub pending_jobs_by_day: outbe_primitives::storage::dsl::Map<u32, u8>,
-    #[attribute(order = 19)]
-    pub worker_initialized: outbe_primitives::storage::dsl::Value<bool>,
-    #[attribute(order = 20)]
-    pub worker_height: outbe_primitives::storage::dsl::Value<u64>,
-    #[attribute(order = 21)]
-    pub cleanup_jobs: outbe_primitives::storage::dsl::Map<u64, AccrualJob>,
-    #[attribute(order = 22)]
-    pub cleanup_head: outbe_primitives::storage::dsl::Value<u64>,
-    #[attribute(order = 23)]
-    pub cleanup_tail: outbe_primitives::storage::dsl::Value<u64>,
-    /// Retained after cleanup to prevent allocation and scheduling replay.
-    #[attribute(order = 24)]
-    pub cleanup_scheduled: outbe_primitives::storage::dsl::Map<B256, bool>,
-    /// Index plus one proves membership even when the indexed address is zero.
-    #[attribute(order = 25)]
-    pub waa_member_index: outbe_primitives::storage::dsl::Map<B256, u32>,
-    #[attribute(order = 26)]
-    pub sra_member_index: outbe_primitives::storage::dsl::Map<B256, u32>,
-    #[attribute(order = 27)]
-    pub cleanup_initialized: outbe_primitives::storage::dsl::Value<bool>,
-    #[attribute(order = 28)]
-    pub cleanup_height: outbe_primitives::storage::dsl::Value<u64>,
+    pub pool_days: Map<u64, PoolDay>,
 }
 
-/// One immutable day pool. Blocks credit its addresses in list order,
-/// a bounded slice at a time.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[storage_record(exists_field = day)]
-pub struct AccrualJob {
+/// The reward of one pool and emission day after its rate is set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[storage_record(exists_field = deadline)]
+pub struct PoolDay {
     #[key]
-    pub seq: u64,
-    /// UTC day key (YYYYMMDD) whose offer counts weight the pool.
+    pub key: u64,
+    /// The reward for one unit of weight, with 18 decimal places.
     #[attribute(order = 0)]
-    pub day: u32,
-    /// Existing ABI discriminant; FIFO order is Validator, WAA, SRA, CCA.
+    pub rate: U256,
+    /// The part of the allocated amount that no claim or expiry took yet.
     #[attribute(order = 1)]
-    pub pool: u8,
+    pub unclaimed_minor: U256,
+    /// One deadline for all receivers: the time the rate was set plus 365 days.
     #[attribute(order = 2)]
-    pub pool_minor: U256,
+    pub deadline: u64,
+    /// The receivers whose weight is not claimed or expired yet.
     #[attribute(order = 3)]
-    pub next_index: u32,
-    #[attribute(order = 4)]
-    pub credited_minor: U256,
-    /// Immutable source population; u32 matches each owner's checked index capacity.
-    #[attribute(order = 5)]
-    pub recipient_count: u32,
-    #[attribute(order = 6)]
-    pub total_weight: U256,
+    pub receivers: u32,
 }
 
-/// Pool a claimable balance belongs to. Each pool keeps its own balances.
+/// The reward pool of an agent type. The values are the ABI pool numbers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum RewardPool {
@@ -164,64 +83,53 @@ impl RewardPool {
             _ => Err(AgentRewardError::UnknownRewardPool(value).into()),
         }
     }
+
+    pub fn emission_pool(self) -> outbe_emission::api::RewardPool {
+        match self {
+            Self::Waa => outbe_emission::api::RewardPool::Waa,
+            Self::Sra => outbe_emission::api::RewardPool::Sra,
+            Self::Cca => outbe_emission::api::RewardPool::Cca,
+            Self::Validator => outbe_emission::api::RewardPool::Validator,
+        }
+    }
 }
 
-/// The per-day offer index of the WAA or the SRA pool.
-pub(crate) struct DayIndex<'a, 's> {
-    pub(crate) address_count: &'a Map<'s, WorldwideDay, u32>,
-    pub(crate) addresses: &'a Map<'s, B256, Address>,
+/// The offer index of the WAA or the SRA pool.
+pub(crate) struct OfferIndex<'a, 's> {
     pub(crate) counts: &'a Map<'s, B256, u64>,
-    pub(crate) total: &'a Map<'s, WorldwideDay, u64>,
-    pub(crate) member_index: &'a Map<'s, B256, u32>,
+    pub(crate) address_count: &'a Map<'s, u32, u32>,
+    pub(crate) total: &'a Map<'s, u32, u64>,
 }
 
 impl<'s> AgentRewardContract<'s> {
-    pub(crate) fn day_index(&self, pool: RewardPool) -> Result<DayIndex<'_, 's>> {
+    pub(crate) fn offer_index(&self, pool: RewardPool) -> Result<OfferIndex<'_, 's>> {
         match pool {
-            RewardPool::Waa => Ok(DayIndex {
-                address_count: &self.waa_address_count,
-                addresses: &self.waa_addresses,
+            RewardPool::Waa => Ok(OfferIndex {
                 counts: &self.waa_offer_counts,
+                address_count: &self.waa_address_count,
                 total: &self.waa_total_count,
-                member_index: &self.waa_member_index,
             }),
-            RewardPool::Sra => Ok(DayIndex {
-                address_count: &self.sra_address_count,
-                addresses: &self.sra_addresses,
+            RewardPool::Sra => Ok(OfferIndex {
                 counts: &self.sra_offer_counts,
+                address_count: &self.sra_address_count,
                 total: &self.sra_total_count,
-                member_index: &self.sra_member_index,
             }),
             RewardPool::Cca | RewardPool::Validator => {
                 Err(AgentRewardError::UnknownRewardPool(pool as u8).into())
             }
         }
     }
-}
 
-impl AgentRewardContract<'_> {
-    pub fn reward_balance_key(pool: RewardPool, address: Address) -> B256 {
-        let mut buf = [0u8; 21];
-        buf[0] = pool as u8;
-        buf[1..].copy_from_slice(address.as_slice());
+    /// The key of the offer count of `address` for the Nods of emission day `day`.
+    pub fn offer_count_key(day: u32, address: Address) -> B256 {
+        let mut buf = [0u8; 24];
+        buf[0..4].copy_from_slice(&day.to_be_bytes());
+        buf[4..24].copy_from_slice(address.as_slice());
         alloy_primitives::keccak256(buf)
     }
 
-    /// Computes the composite key for per-address per-day offer counts.
-    pub fn offer_count_key(day: WorldwideDay, address: Address) -> B256 {
-        use alloy_primitives::keccak256;
-        let mut buf = [0u8; 24]; // 4 + 20
-        buf[0..4].copy_from_slice(day.key_bytes().as_slice());
-        buf[4..24].copy_from_slice(address.as_slice());
-        keccak256(buf)
-    }
-
-    /// Computes the composite key for per-day address index lists.
-    pub fn address_index_key(day: WorldwideDay, index: u32) -> B256 {
-        use alloy_primitives::keccak256;
-        let mut buf = [0u8; 8];
-        buf[0..4].copy_from_slice(day.key_bytes().as_slice());
-        buf[4..8].copy_from_slice(&index.to_be_bytes());
-        keccak256(buf)
+    /// The key of the rate record of `pool` and emission day `day`.
+    pub fn pool_day_key(pool: RewardPool, day: u32) -> u64 {
+        (u64::from(day) << 8) | u64::from(pool as u8)
     }
 }

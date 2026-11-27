@@ -7,7 +7,7 @@ use outbe_primitives::{
 };
 use outbe_system_common::time::WorldwideDay;
 
-/// Creates one WWD through the canonical production transition without
+/// Creates one WWD and the record of its emission day through the production transitions without
 /// exposing the raw Metadosis storage facade to the benchmark crate.
 pub fn open_worldwide_day(
     storage: StorageHandle<'_>,
@@ -37,6 +37,19 @@ pub fn open_worldwide_day(
     );
     storage.with_scoped_mutation::<outbe_primitives::storage::CycleLifecyclePurpose, _>(
         binding,
-        || outbe_worldwideday::open_worldwide_day_for_date(&context, worldwide_day),
+        || {
+            outbe_worldwideday::open_worldwide_day_for_date(&context, worldwide_day)?;
+            let (schedule, _) = outbe_worldwideday::compute_wwd_schedule(worldwide_day)?;
+            if outbe_emission::api::get_emission_day(storage.clone(), schedule.emission_day)?
+                .is_none()
+            {
+                outbe_emission::api::create_emission_day(
+                    &context,
+                    schedule.emission_day,
+                    worldwide_day,
+                )?;
+            }
+            Ok(())
+        },
     )
 }

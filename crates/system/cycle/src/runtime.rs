@@ -87,8 +87,8 @@ pub fn handle_cycle_tick(
     handle_cycle_tick_with_tasks(ctx, metadosis_genesis_activation_height, &active_tasks()?)
 }
 
-/// Runs the CycleTick body for a supplied task slice, including bootstrap,
-/// reward slicing, and bounded auction cleanup.
+/// Runs the CycleTick body for a supplied task slice, including bootstrap and bounded auction
+/// cleanup.
 pub fn handle_cycle_tick_with_tasks(
     ctx: &BlockRuntimeContext<'_>,
     metadosis_genesis_activation_height: u64,
@@ -97,17 +97,11 @@ pub fn handle_cycle_tick_with_tasks(
     #[cfg(feature = "test-utils")]
     let observation_before = ctx.storage.gas_used()?;
     if ctx.block.block_number == metadosis_genesis_activation_height {
-        outbe_worldwideday::bootstrap_genesis_worldwide_days_command(ctx)?;
+        crate::handler::bootstrap_genesis_days(ctx)?;
     }
     let handler_gas = run_due_tasks_inner(ctx, tasks)?;
     #[cfg(not(feature = "test-utils"))]
     let _ = handler_gas;
-    run_isolated_cycle_worker(
-        ctx,
-        CycleWorkerId::AgentRewards,
-        crate::tasks::AGENT_REWARDS_WORKER_BUDGET_GAS,
-        crate::handler::process_agent_rewards,
-    )?;
     run_isolated_cycle_worker(
         ctx,
         CycleWorkerId::DesisCleanup,

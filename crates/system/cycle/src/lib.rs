@@ -9,9 +9,11 @@
 //! horizon. It never allocates the current UTC day.
 //!
 //! [`tasks::TaskId::ProcessEmissionDay`] fires one second into each UTC hour
-//! (`period = 3_600`, `offset = 1`). Its handler derives the active UTC day from
-//! [`outbe_emission::api::get_emission_day`], allocates it and runs its
-//! Metadosis. Until the votes of the day are sealed it answers not ready, and its dependents wait.
+//! (`period = 3_600`, `offset = 1`). Its handler seals the WWDs whose offering ended and, once a
+//! UTC day, opens the WWDs of the day with the records of their emission days. It starts the
+//! oldest emission day not started (`start_day_emission_limit`) and, when the offering of a
+//! started day ends at 12:00 UTC after it, sets the WAA and SRA rewards and runs its Metadosis.
+//! Until the votes of the day are sealed it answers not ready, and its dependents wait.
 //! A completed handler emits `CycleTaskCompleted`. A handler revert rolls its atomic
 //! work-budget scope back, records the slot, logs the cause, and the walk continues.
 //! A revert of ProcessEmissionDay fails the block.
@@ -26,21 +28,8 @@
 //! receive the same daily reward participation weight as base-certificate voters,
 //! once per block and for that block's UTC day. Fee decay remains independent.
 //!
-//! Each completed-day settlement preserves the existing 5-pool + Metadosis
-//! terminal split:
-//!
-//! 1. Compute `emission_limit_of_day(day_number_since_genesis(prev_day))`.
-//! 2. Allocate over the 5-sink table from `outbe-emission`.
-//! 3. Close participation and calculate the validator top-up through
-//!    `outbe_rewards::api::allocate_day_validator_rewards`. The fee-covered part
-//!    becomes terminal excess.
-//! 4. WAA / SRA / CCA / validator top-up: call
-//!    `outbe_agentreward::api::allocate_day_agent_rewards`. All four pools queue
-//!    claimable accrual in bounded per-block slices. No-weight excess goes to
-//!    Metadosis; rounding residue goes atomically to the Promis Limit.
-//! 5. Metadosis terminal credit = metadosis_amount + fee-covered validator
-//!    share + pool excess, recorded on `EmissionDay(prev_day)` (`state = Processing`)
-//!    and dispatched to `outbe-metadosis`.
+//! The Cycle computes no amount: the record of each emission day holds the Emission Limit and the
+//! limit of each part from 00:00 UTC of the day before, and each module writes its result into it.
 
 use alloy_sol_types::sol;
 

@@ -3,12 +3,7 @@ use outbe_primitives::error::Result;
 
 use crate::errors::EmissionLimitError;
 
-/// Emission sink allocation percentages (integer, denominator = 100).
-///
-/// (Phase 4) replaced the legacy `(Validator 4 %, AgentReward 8 %, Metadosis 88 %)` table
-/// with a four-pool split. The four pools sum to 16 %. The terminal Metadosis sink gets the
-/// remaining 84 %. CCA distributes weighted origination rewards through its registry.
-/// AgentReward owns WAA / SRA.
+/// The share of each agent pool in the Emission Limit, in percent. Metadosis takes the rest.
 pub const VALIDATOR_REWARD_PCT: u64 = 4;
 pub const WAA_REWARD_PCT: u64 = 4;
 pub const SRA_REWARD_PCT: u64 = 4;
@@ -16,388 +11,91 @@ pub const CCA_REWARD_PCT: u64 = 4;
 
 pub const PERCENT_DENOMINATOR: u64 = 100;
 
-/// Typed day-emission sinks. These are fixed, hard-fork governed
-/// extension points, not dynamically registered runtime plugins.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum EmissionSinkId {
-    Validator,
-    Waa,
-    Sra,
-    Cca,
-    Metadosis,
+/// The limits of the parts of one Emission Limit, in protocol minor units.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct EmissionShares {
+    pub validators: U256,
+    pub cca: U256,
+    pub waa: U256,
+    pub sra: U256,
+    pub metadosis: U256,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct EmissionSinkSpec {
-    pub id: EmissionSinkId,
-    /// Fixed percentage of the day cap. `None` marks the terminal
-    /// remainder sink.
-    pub pct: Option<u64>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct EmissionAllocation {
-    pub id: EmissionSinkId,
-    pub amount: U256,
-}
-
-pub const ACTIVE_EMISSION_SINKS: [EmissionSinkSpec; 5] = [
-    EmissionSinkSpec {
-        id: EmissionSinkId::Validator,
-        pct: Some(VALIDATOR_REWARD_PCT),
-    },
-    EmissionSinkSpec {
-        id: EmissionSinkId::Waa,
-        pct: Some(WAA_REWARD_PCT),
-    },
-    EmissionSinkSpec {
-        id: EmissionSinkId::Sra,
-        pct: Some(SRA_REWARD_PCT),
-    },
-    EmissionSinkSpec {
-        id: EmissionSinkId::Cca,
-        pct: Some(CCA_REWARD_PCT),
-    },
-    EmissionSinkSpec {
-        id: EmissionSinkId::Metadosis,
-        pct: None,
-    },
-];
-
-pub fn active_emission_sinks() -> &'static [EmissionSinkSpec] {
-    &ACTIVE_EMISSION_SINKS
-}
-
-/// Allocates emission across the active static sink table.
-pub fn allocate_day_emission_limit(total: U256) -> Result<Vec<EmissionAllocation>> {
-    allocate_emission_with_specs(total, active_emission_sinks())
-}
-
-/// Allocates emission across a static sink table.
-///
-/// Fixed percentage sinks are rounded down with integer arithmetic. The single
-/// terminal sink receives all remaining dust and unallocated percentage.
-pub fn allocate_emission_with_specs(
-    total: U256,
-    specs: &[EmissionSinkSpec],
-) -> Result<Vec<EmissionAllocation>> {
-    validate_sink_specs(specs)?;
-
-    let hundred = U256::from(PERCENT_DENOMINATOR);
-    let mut fixed_total = U256::ZERO;
-    let mut allocations = Vec::with_capacity(specs.len());
-
-    for spec in specs {
-        let amount = match spec.pct {
-            Some(pct) => {
-                let amount = total
-                    .checked_mul(U256::from(pct))
-                    .ok_or(EmissionLimitError::FixedShareMultiplicationOverflow)?
-                    / hundred;
-                fixed_total = fixed_total
-                    .checked_add(amount)
-                    .ok_or(EmissionLimitError::FixedAllocationTotalOverflow)?;
-                amount
-            }
-            None => total
-                .checked_sub(fixed_total)
-                .ok_or(EmissionLimitError::TerminalAllocationUnderflow)?,
-        };
-
-        allocations.push(EmissionAllocation {
-            id: spec.id,
-            amount,
-        });
+impl EmissionShares {
+    pub fn total(&self) -> Option<U256> {
+        self.validators
+            .checked_add(self.cca)?
+            .checked_add(self.waa)?
+            .checked_add(self.sra)?
+            .checked_add(self.metadosis)
     }
-
-    Ok(allocations)
 }
 
-fn validate_sink_specs(specs: &[EmissionSinkSpec]) -> Result<()> {
-    if specs.is_empty() {
-        return Ok(());
-    }
-
-    let mut fixed_pct_sum = 0u64;
-    let mut terminal_index = None;
-
-    for (idx, spec) in specs.iter().enumerate() {
-        if let Some(pct) = spec.pct {
-            fixed_pct_sum = fixed_pct_sum
-                .checked_add(pct)
-                .ok_or(EmissionLimitError::FixedPercentageOverflow)?;
-        } else if terminal_index.replace(idx).is_some() {
-            return Err(EmissionLimitError::MultipleTerminalSinks.into());
-        }
-    }
-
-    if terminal_index != Some(specs.len() - 1) {
-        return Err(EmissionLimitError::TerminalSinkNotFinal.into());
-    }
-
-    if fixed_pct_sum > PERCENT_DENOMINATOR {
-        return Err(EmissionLimitError::FixedPercentagesExceed100.into());
-    }
-
-    Ok(())
+/// Splits `limit`: each agent pool gets its percent rounded down, and Metadosis gets the rest.
+pub fn compute_emission_shares(limit: U256) -> Result<EmissionShares> {
+    let share = |pct: u64| -> Result<U256> {
+        Ok(limit
+            .checked_mul(U256::from(pct))
+            .ok_or(EmissionLimitError::FixedShareMultiplicationOverflow)?
+            / U256::from(PERCENT_DENOMINATOR))
+    };
+    let validators = share(VALIDATOR_REWARD_PCT)?;
+    let cca = share(CCA_REWARD_PCT)?;
+    let waa = share(WAA_REWARD_PCT)?;
+    let sra = share(SRA_REWARD_PCT)?;
+    // Four shares of 4% rounded down never exceed the limit.
+    let metadosis = limit - validators - cca - waa - sra;
+    Ok(EmissionShares {
+        validators,
+        cca,
+        waa,
+        sra,
+        metadosis,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use outbe_primitives::error::PrecompileError;
 
     #[test]
-    fn test_allocation_invariant() {
-        let total = U256::from(16384u64) * U256::from(10u64).pow(U256::from(18u64));
-        let allocations = allocate_day_emission_limit(total).unwrap();
-        let sum = allocation_sum(&allocations);
-        assert_eq!(sum, total, "allocation sum must equal total");
-    }
-
-    #[test]
-    fn test_allocation_percentages() {
-        let total = U256::from(10000u64);
-        let allocations = allocate_day_emission_limit(total).unwrap();
-        for sink in [
-            EmissionSinkId::Validator,
-            EmissionSinkId::Waa,
-            EmissionSinkId::Sra,
-            EmissionSinkId::Cca,
+    fn the_shares_give_the_limit_and_each_agent_share_is_four_percent_rounded_down() {
+        for limit in [
+            0u128,
+            1,
+            24,
+            25,
+            99,
+            100,
+            101,
+            999_999,
+            581_610_154_000_000,
+            u128::MAX,
         ] {
-            assert_eq!(
-                allocation_for(&allocations, sink),
-                U256::from(400u64),
-                "{sink:?} should be 4 % of total"
-            );
-        }
-        assert_eq!(
-            allocation_for(&allocations, EmissionSinkId::Metadosis),
-            U256::from(8400u64),
-            "Metadosis should receive the remaining 84 %"
-        );
-
-        let specs = [
-            EmissionSinkSpec {
-                id: EmissionSinkId::Validator,
-                pct: Some(10),
-            },
-            EmissionSinkSpec {
-                id: EmissionSinkId::Waa,
-                pct: Some(25),
-            },
-            EmissionSinkSpec {
-                id: EmissionSinkId::Metadosis,
-                pct: None,
-            },
-        ];
-        let witness = allocate_emission_with_specs(U256::from(101u64), &specs).unwrap();
-        assert_eq!(
-            allocation_for(&witness, EmissionSinkId::Validator),
-            U256::from(10u64)
-        );
-        assert_eq!(
-            allocation_for(&witness, EmissionSinkId::Waa),
-            U256::from(25u64)
-        );
-        assert_eq!(
-            allocation_for(&witness, EmissionSinkId::Metadosis),
-            U256::from(66u64)
-        );
-        assert_eq!(allocation_sum(&witness), U256::from(101u64));
-    }
-
-    #[test]
-    fn test_allocation_invariant_large_values() {
-        let boundary = U256::from(9007199254740992u64);
-        for offset in [0u64, 1, 7, 999, 123456789] {
-            let total = boundary + U256::from(offset);
-            let allocations = allocate_day_emission_limit(total).unwrap();
-            assert_eq!(
-                allocation_sum(&allocations),
-                total,
-                "allocation invariant broken for total = 2^53 + {offset}"
-            );
-        }
-
-        let huge = U256::from(10u64).pow(U256::from(30u64));
-        let allocations = allocate_day_emission_limit(huge).unwrap();
-        assert_eq!(
-            allocation_sum(&allocations),
-            huge,
-            "allocation invariant broken for 10^30"
-        );
-    }
-
-    #[test]
-    fn test_allocation_deterministic_exact() {
-        let total = U256::from(16384u64) * U256::from(10u64).pow(U256::from(18u64));
-        let first = allocate_day_emission_limit(total).unwrap();
-        let second = allocate_day_emission_limit(total).unwrap();
-        assert_eq!(first, second, "allocation must be deterministic");
-    }
-
-    #[test]
-    fn test_allocation_rejects_invalid_sink_tables() {
-        assert!(allocate_emission_with_specs(U256::from(100u64), &[])
-            .unwrap()
-            .is_empty());
-
-        let no_terminal = [EmissionSinkSpec {
-            id: EmissionSinkId::Validator,
-            pct: Some(100),
-        }];
-        assert!(allocate_emission_with_specs(U256::from(100u64), &no_terminal).is_err());
-
-        let two_terminals = [
-            EmissionSinkSpec {
-                id: EmissionSinkId::Validator,
-                pct: None,
-            },
-            EmissionSinkSpec {
-                id: EmissionSinkId::Metadosis,
-                pct: None,
-            },
-        ];
-        assert!(allocate_emission_with_specs(U256::from(100u64), &two_terminals).is_err());
-
-        let over_allocated = [
-            EmissionSinkSpec {
-                id: EmissionSinkId::Validator,
-                pct: Some(80),
-            },
-            EmissionSinkSpec {
-                id: EmissionSinkId::Waa,
-                pct: Some(30),
-            },
-            EmissionSinkSpec {
-                id: EmissionSinkId::Metadosis,
-                pct: None,
-            },
-        ];
-        assert!(allocate_emission_with_specs(U256::from(100u64), &over_allocated).is_err());
-    }
-
-    #[test]
-    fn allocation_validation_preserves_first_error() {
-        let fixed = |pct| EmissionSinkSpec {
-            id: EmissionSinkId::Validator,
-            pct: Some(pct),
-        };
-        let terminal = EmissionSinkSpec {
-            id: EmissionSinkId::Metadosis,
-            pct: None,
-        };
-        let cases = [
-            (
-                vec![fixed(u64::MAX), fixed(1)],
-                "emission fixed percentage overflow",
-            ),
-            (
-                vec![fixed(101), terminal, terminal],
-                "emission sink table must have one terminal sink",
-            ),
-            (
-                vec![fixed(101)],
-                "emission terminal sink must be the final sink",
-            ),
-        ];
-        for (specs, expected) in cases {
-            let error = allocate_emission_with_specs(U256::ZERO, &specs).unwrap_err();
-            assert!(matches!(error, PrecompileError::Revert(message) if message == expected));
+            let limit = U256::from(limit);
+            let shares = compute_emission_shares(limit).unwrap();
+            let four_percent = limit * U256::from(4u64) / U256::from(100u64);
+            assert_eq!(shares.validators, four_percent);
+            assert_eq!(shares.cca, four_percent);
+            assert_eq!(shares.waa, four_percent);
+            assert_eq!(shares.sra, four_percent);
+            assert_eq!(shares.total(), Some(limit));
         }
     }
 
     #[test]
-    fn allocation_rejects_fixed_share_multiplication_overflow() {
-        let specs = [
-            EmissionSinkSpec {
-                id: EmissionSinkId::Validator,
-                pct: Some(100),
-            },
-            EmissionSinkSpec {
-                id: EmissionSinkId::Metadosis,
-                pct: None,
-            },
-        ];
-
-        let error = allocate_emission_with_specs(U256::MAX, &specs).unwrap_err();
-        assert!(matches!(
-            error,
-            PrecompileError::Revert(message)
-                if message == "emission fixed-share multiplication overflow"
-        ));
+    fn metadosis_takes_the_rounding_of_the_four_shares() {
+        let shares = compute_emission_shares(U256::from(101u64)).unwrap();
+        assert_eq!(shares.validators, U256::from(4u64));
+        assert_eq!(shares.metadosis, U256::from(85u64));
     }
 
     #[test]
-    fn active_allocation_at_maximum_day_emission_is_pinned() {
-        let total = crate::day_emission::emission_limit_of_day(1_024);
-        assert_eq!(total, U256::from(581_610_154_000_000u64));
-
-        assert_eq!(
-            allocate_day_emission_limit(total).unwrap(),
-            vec![
-                EmissionAllocation {
-                    id: EmissionSinkId::Validator,
-                    amount: U256::from(23_264_406_160_000u64),
-                },
-                EmissionAllocation {
-                    id: EmissionSinkId::Waa,
-                    amount: U256::from(23_264_406_160_000u64),
-                },
-                EmissionAllocation {
-                    id: EmissionSinkId::Sra,
-                    amount: U256::from(23_264_406_160_000u64),
-                },
-                EmissionAllocation {
-                    id: EmissionSinkId::Cca,
-                    amount: U256::from(23_264_406_160_000u64),
-                },
-                EmissionAllocation {
-                    id: EmissionSinkId::Metadosis,
-                    amount: U256::from(488_552_529_360_000u64),
-                },
-            ]
-        );
-    }
-
-    #[test]
-    fn test_allocation_rounding_dust_goes_to_terminal_sink() {
-        let total = U256::from(101u64);
-        let allocations = allocate_day_emission_limit(total).unwrap();
-
-        for sink in [
-            EmissionSinkId::Validator,
-            EmissionSinkId::Waa,
-            EmissionSinkId::Sra,
-            EmissionSinkId::Cca,
-        ] {
-            assert_eq!(
-                allocation_for(&allocations, sink),
-                U256::from(4u64),
-                "{sink:?} should be 4 % of total"
-            );
-        }
-        assert_eq!(
-            allocation_for(&allocations, EmissionSinkId::Metadosis),
-            U256::from(85u64),
-            "Metadosis terminal absorbs the dust"
-        );
-        assert_eq!(allocation_sum(&allocations), total);
-    }
-
-    fn allocation_sum(allocations: &[EmissionAllocation]) -> U256 {
-        allocations
-            .iter()
-            .map(|allocation| allocation.amount)
-            .fold(U256::ZERO, |acc, amount| acc + amount)
-    }
-
-    fn allocation_for(allocations: &[EmissionAllocation], id: EmissionSinkId) -> U256 {
-        allocations
-            .iter()
-            .find(|allocation| allocation.id == id)
-            .map(|allocation| allocation.amount)
-            .unwrap_or(U256::ZERO)
+    fn the_shares_of_the_largest_day_are_pinned() {
+        let limit = crate::day_emission::emission_limit_of_day(1_024);
+        assert_eq!(limit, U256::from(581_610_154_000_000u64));
+        let shares = compute_emission_shares(limit).unwrap();
+        assert_eq!(shares.validators, U256::from(23_264_406_160_000u64));
+        assert_eq!(shares.metadosis, U256::from(488_552_529_360_000u64));
     }
 }

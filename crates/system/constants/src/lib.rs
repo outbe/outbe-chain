@@ -15,14 +15,9 @@ pub const DEFAULT_METADOSIS_FORMING_PERIOD_SECONDS: u64 = 50 * 60 * 60;
 pub const DEFAULT_METADOSIS_OFFERING_PERIOD_SECONDS: u64 = 50 * 60 * 60;
 /// The offering window of WorldwideDay D is WorldwideDay D+1, so E = D+1.
 pub const OFFERING_START_AFTER_FORMING_START_SECONDS: u64 = SECONDS_PER_DAY;
-/// A WorldwideDay is sealed at the first midnight after its offering end.
-const SEAL_DELAY_AFTER_OFFERING_SECONDS: u64 = 12 * 60 * 60;
-/// `ceil((24 + 50 + 12) hours / 24 hours) + 1`.
-pub const MAX_PIPELINE_WWDS: usize = ((OFFERING_START_AFTER_FORMING_START_SECONDS
-    + DEFAULT_METADOSIS_OFFERING_PERIOD_SECONDS
-    + SEAL_DELAY_AFTER_OFFERING_SECONDS)
-    .div_ceil(SECONDS_PER_DAY) as usize)
-    + 1;
+/// A WorldwideDay opens at 00:00 UTC of its date and is sealed at its offering end, 60 hours
+/// later, so at most three are open at one time.
+pub const MAX_PIPELINE_WWDS: usize = 3;
 pub const DEFAULT_GOVERNANCE_VOTING_WINDOW_BLOCKS: u64 = 86_400;
 /// The smallest execution delay that a governance proposal may set: the
 /// blocks between its approval and the first block where `applyApproved` may
@@ -54,7 +49,7 @@ const _: () = {
         DEFAULTS.metadosis_offering_period_seconds == DEFAULT_METADOSIS_OFFERING_PERIOD_SECONDS
     );
     assert!(OFFERING_START_AFTER_FORMING_START_SECONDS < DEFAULT_METADOSIS_FORMING_PERIOD_SECONDS);
-    assert!(MAX_PIPELINE_WWDS == 5);
+    assert!(MAX_PIPELINE_WWDS == 3);
 };
 
 impl Default for GenesisProtocolParametersV1 {

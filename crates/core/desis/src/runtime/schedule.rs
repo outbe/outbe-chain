@@ -1,19 +1,63 @@
 use super::clearing::{clearing_run_gas, fetch_targets};
 use super::*;
+use outbe_emission::schema::emission_day_state;
 use outbe_primitives::error::PrecompileError;
+use outbe_system_common::time::{
+    date_key_to_utc_timestamp, next_date_key, timestamp_to_date_key, SECONDS_PER_DAY,
+};
 use sweep::Sweep;
 
 mod sweep;
 
-/// Cycle `advance_auctions` trigger: advance every scheduled day that has a due step.
+/// Cycle `advance_intex_auctions` trigger: takes the emission days whose auction is due, then
+/// advances every scheduled day that has a due step.
 /// Each day runs in its own checkpoint. A day that reverts is retried on a later pass.
 /// The sweep stops before a day whose due steps the rest of the trigger budget cannot pay for.
-pub fn advance_auctions(ctx: &BlockRuntimeContext) -> Result<()> {
-    schedule_tick(&ctx.storage, ctx.block.timestamp)
+pub fn advance_intex_auctions(ctx: &BlockRuntimeContext) -> Result<()> {
+    let genesis_day = timestamp_to_date_key(ctx.block.genesis_timestamp);
+    ctx.storage
+        .with_checkpoint(|| take_due_days(&ctx.storage, genesis_day, ctx.block.timestamp))?;
+    advance_intex_auctions_at(&ctx.storage, ctx.block.timestamp)
 }
 
-pub(crate) fn schedule_tick(storage: &StorageHandle<'_>, now: u64) -> Result<()> {
+pub(crate) fn advance_intex_auctions_at(storage: &StorageHandle<'_>, now: u64) -> Result<()> {
     storage.with_checkpoint(|| poll_schedule(storage, now))
+}
+
+/// The days of the last `CATCH_UP_DAYS` that the Cycle catches up after a stop.
+const CATCH_UP_DAYS: u64 = 64;
+
+/// Takes each emission day, in order, whose auction start has come and whose step of 00:00
+/// after it ran. A day the Cycle no longer catches up has no auction.
+pub(crate) fn take_due_days(storage: &StorageHandle<'_>, genesis_day: u32, now: u64) -> Result<()> {
+    let mut contract = storage.contract::<DesisContract>();
+    let today = timestamp_to_date_key(now);
+    let floor = timestamp_to_date_key(
+        date_key_to_utc_timestamp(today)
+            .map_err(crate::errors::date_step_error)?
+            .saturating_sub(CATCH_UP_DAYS * SECONDS_PER_DAY),
+    )
+    .max(genesis_day);
+    let stored = contract.next_auction_day.read()?;
+    let mut day = stored.max(floor);
+    while day < today {
+        let started = outbe_emission::api::get_emission_day(storage.clone(), day)?
+            .is_some_and(|record| record.state != emission_day_state::PENDING);
+        if !started {
+            break;
+        }
+        let emission_day = EmissionDate::new(day);
+        if contract.sched_active_slot.read(&emission_day)? == 0
+            && contract.read_stage(emission_day)? == AuctionStage::None
+        {
+            contract.push_sched_active(emission_day)?;
+        }
+        day = next_date_key(day).map_err(crate::errors::date_step_error)?;
+    }
+    if day != stored {
+        contract.next_auction_day.write(day)?;
+    }
+    Ok(())
 }
 
 fn poll_schedule(storage: &StorageHandle<'_>, now: u64) -> Result<()> {
@@ -58,16 +102,16 @@ fn budget_pays_for(storage: &StorageHandle<'_>, gas: u64) -> Result<bool> {
         .is_none_or(|remaining| remaining >= gas))
 }
 
-/// The anchor and the windows that `advance_day` reads for a day.
-fn day_windows(contract: &DesisContract<'_>, emission_day: EmissionDate) -> Result<(u64, Windows)> {
-    let anchor = u64::from(contract.auction_at.read(&emission_day)?);
+/// The anchor and the windows of a day: its schedule starts at 00:00 UTC of the next day.
+fn day_windows(emission_day: EmissionDate) -> Result<(u64, Windows)> {
+    let anchor = u64::from(super::auction_anchor(emission_day)?);
     Ok((anchor, Windows::from_anchor(anchor)))
 }
 
 /// Upper bound of the work `advance_day` does for a day at `now`, over every step that is due.
 fn due_work_gas(contract: &DesisContract<'_>, emission_day: EmissionDate, now: u64) -> Result<u64> {
     let mut stage = contract.read_stage(emission_day)?;
-    let (anchor, windows) = day_windows(contract, emission_day)?;
+    let (anchor, windows) = day_windows(emission_day)?;
     if due_cancel(contract, emission_day, stage, windows, now)?.is_some() {
         return Ok(ADVANCE_DAY_BASE_GAS + ADVANCE_START_GAS);
     }
@@ -100,7 +144,7 @@ fn step_gas(stage: AuctionStage, anchor: u64, windows: Windows, now: u64) -> u64
 
 /// Walk one day's schedule: start at the anchor, move to `RevealingBids` at commit end, collect
 /// the bids at reveal end, and end a day that found no result by its last clearing time. A
-/// cancel that a brief or Metadosis asked for comes first, until that last clearing time.
+/// cancel that the Desis limit or Metadosis asked for comes first, until that last clearing time.
 fn advance_day(storage: &StorageHandle<'_>, emission_day: EmissionDate, now: u64) -> Result<()> {
     while advance_step(storage, emission_day, now)? {}
     Ok(())
@@ -110,9 +154,9 @@ fn advance_day(storage: &StorageHandle<'_>, emission_day: EmissionDate, now: u64
 fn advance_step(storage: &StorageHandle<'_>, emission_day: EmissionDate, now: u64) -> Result<bool> {
     let mut contract = storage.contract::<DesisContract>();
     let stage = contract.read_stage(emission_day)?;
-    let (anchor, windows) = day_windows(&contract, emission_day)?;
+    let (anchor, windows) = day_windows(emission_day)?;
     if let Some(reason) = due_cancel(&contract, emission_day, stage, windows, now)? {
-        cancel_auction(storage, &mut contract, emission_day, stage, reason)?;
+        cancel_intex_auction(storage, &mut contract, emission_day, stage, reason)?;
         return Ok(false);
     }
     match stage {
@@ -123,7 +167,7 @@ fn advance_step(storage: &StorageHandle<'_>, emission_day: EmissionDate, now: u6
             end_past_deadline(storage, &mut contract, emission_day, stage).map(|()| false)
         }
         AuctionStage::None if now >= anchor => {
-            let outcome = start_auction(storage, &mut contract, emission_day, windows, now)?;
+            let outcome = start_intex_auction(storage, &mut contract, emission_day, windows, now)?;
             Ok(matches!(outcome, StartOutcome::Started))
         }
         AuctionStage::CommittingBids if now >= windows.commit_end => contract
@@ -144,13 +188,13 @@ fn end_past_deadline(
     stage: AuctionStage,
 ) -> Result<()> {
     if stage == AuctionStage::None {
-        cancel_auction(storage, contract, emission_day, stage, CANCELED_LATE_START)
+        cancel_intex_auction(storage, contract, emission_day, stage, CANCELED_LATE_START)
     } else {
-        fail_auction(storage, contract, emission_day, stage)
+        fail_intex_auction(storage, contract, emission_day, stage)
     }
 }
 
-/// The clearing needs the size, so a day with no brief by the end of its reveal is canceled.
+/// The clearing needs the size, so a day with no Desis limit by the end of its reveal is canceled.
 fn end_reveal(
     storage: &StorageHandle<'_>,
     contract: &mut DesisContract<'_>,
@@ -158,7 +202,7 @@ fn end_reveal(
     now: u64,
 ) -> Result<()> {
     if contract.desis_limit_set.read(&emission_day)? == 0 {
-        cancel_auction(
+        cancel_intex_auction(
             storage,
             contract,
             emission_day,
@@ -185,8 +229,8 @@ fn due_cancel(
     pending_cancel(contract, emission_day, stage)
 }
 
-/// The cancel a day with no result waits for: one that was asked for, or one its brief gives a
-/// started day.
+/// The cancel a day with no result waits for: one that was asked for, or one its Desis limit
+/// gives a started day.
 fn pending_cancel(
     contract: &DesisContract<'_>,
     emission_day: EmissionDate,
@@ -212,7 +256,7 @@ fn pending_cancel(
 
 /// Cancel a day before its result. A started day sends the cancel to every chain it started on.
 /// A day that never started is canceled with no message.
-fn cancel_auction(
+fn cancel_intex_auction(
     storage: &StorageHandle<'_>,
     contract: &mut DesisContract<'_>,
     emission_day: EmissionDate,
@@ -229,6 +273,7 @@ fn cancel_auction(
     return_unused_desis_limit(storage, contract, emission_day)?;
     contract.cancel_reason.write(&emission_day, 0)?;
     contract.write_stage(emission_day, AuctionStage::Canceled)?;
+    outbe_emission::api::record_desis_canceled(storage.clone(), emission_day.value())?;
     if stage != AuctionStage::None {
         contract.queue_intake_cleanup(emission_day)?;
     }
@@ -238,7 +283,7 @@ fn cancel_auction(
 /// A started day with no result by its last clearing time. Queue its bids for cleanup. Nothing goes to
 /// the other chains: they read the day as failed from its own schedule, and the refund time limit
 /// returns the bids there.
-fn fail_auction(
+fn fail_intex_auction(
     storage: &StorageHandle<'_>,
     contract: &mut DesisContract<'_>,
     emission_day: EmissionDate,
@@ -256,18 +301,15 @@ fn fail_auction(
     contract.day_bid_count.write(&emission_day, 0)?;
     return_unused_desis_limit(storage, contract, emission_day)?;
     contract.write_stage(emission_day, AuctionStage::Failed)?;
+    outbe_emission::api::record_desis_failed(storage.clone(), emission_day.value())?;
     contract.queue_intake_cleanup(emission_day)?;
     contract.remove_sched_active(emission_day)
 }
 
 /// The last moment a started day may still clear: early enough that its result reaches every
 /// chain before the day ends there.
-pub(super) fn last_clearing(
-    contract: &DesisContract<'_>,
-    emission_day: EmissionDate,
-) -> Result<u64> {
-    let anchor = u64::from(contract.auction_at.read(&emission_day)?);
-    Ok(Windows::from_anchor(anchor).last_clearing)
+pub(super) fn last_clearing(emission_day: EmissionDate) -> Result<u64> {
+    Ok(day_windows(emission_day)?.1.last_clearing)
 }
 
 /// u32 wire timestamp (bounded until 2106).
@@ -317,9 +359,9 @@ enum StartOutcome {
     Retired,
 }
 
-/// Start a scheduled day. An unpriced or late day, or one whose brief came with no limit or a
-/// sub-unit limit, is canceled with no message. Any other day starts live.
-fn start_auction(
+/// Start a scheduled day. An unpriced or late day, or one whose Desis limit came as zero or below
+/// one unit, is canceled with no message. Any other day starts live.
+fn start_intex_auction(
     storage: &StorageHandle<'_>,
     contract: &mut DesisContract<'_>,
     emission_day: EmissionDate,
@@ -372,7 +414,7 @@ fn start_auction(
     .flatten()
     .next();
     if let Some(reason) = reason {
-        cancel_auction(storage, contract, emission_day, AuctionStage::None, reason)?;
+        cancel_intex_auction(storage, contract, emission_day, AuctionStage::None, reason)?;
         return Ok(StartOutcome::Retired);
     }
     send_intex_auction_start(storage, start)?;
@@ -412,7 +454,7 @@ fn return_unused_desis_limit(
     Ok(())
 }
 
-/// Arm the clearing from the briefed Desis Limit: convert raw PROMIS to whole Intex
+/// Arm the clearing from the Desis Limit: convert raw PROMIS to whole Intex
 /// units, start the fan-in gate and broadcast the collecting-bids stage.
 fn arm_clearing(storage: &StorageHandle<'_>, emission_day: EmissionDate, now: u64) -> Result<()> {
     let mut contract = storage.contract::<DesisContract>();

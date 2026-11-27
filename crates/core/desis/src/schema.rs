@@ -207,9 +207,9 @@ pub struct DesisContract {
     #[attribute(order = 16)]
     pub config_bid_bond_minor: outbe_primitives::storage::dsl::Map<EmissionDate, U256>,
 
-    /// emission_day -> auction start time, recorded when the day is scheduled (bounded until 2106).
+    /// The next emission day whose Intex auction Desis takes: days go in order, none is skipped.
     #[attribute(order = 17)]
-    pub auction_at: outbe_primitives::storage::dsl::Map<EmissionDate, u32>,
+    pub next_auction_day: outbe_primitives::storage::dsl::Value<u32>,
 
     // --- Per-chain bid intake (keyed keccak256(emission_day_be32 ++ chain_be32)) ---
     /// totalPages the chain's first page declared; every later page must carry the same.
@@ -254,10 +254,10 @@ pub struct DesisContract {
     /// emission_day -> Desis Limit awaiting the auction, in raw PROMIS minor units.
     #[attribute(order = 30)]
     pub pending_desis_limit_minor: outbe_primitives::storage::dsl::Map<EmissionDate, U256>,
-    /// emission_day -> 1 when the day was briefed with a limit to sell.
+    /// emission_day -> 1 when the Desis limit of the day has a limit to sell.
     #[attribute(order = 31)]
     pub has_desis_limit: outbe_primitives::storage::dsl::Map<EmissionDate, u8>,
-    /// emission_day -> 1 once the brief of the day arrived, with or without a limit.
+    /// emission_day -> 1 once the Desis limit of the day arrived, with or without a limit.
     #[attribute(order = 52)]
     pub desis_limit_set: outbe_primitives::storage::dsl::Map<EmissionDate, u8>,
     /// emission_day -> reason of a cancel that the next schedule step carries out (0 = none).

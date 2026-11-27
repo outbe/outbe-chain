@@ -7,11 +7,11 @@
 //! ```
 //!
 //! ```compile_fail,E0603
-//! use outbe_metadosis::runtime::process_emission_day;
+//! use outbe_metadosis::runtime::start_metadosis;
 //! ```
 //!
 //! ```compile_fail,E0603
-//! use outbe_metadosis::limits::set_metadosis_limit;
+//! use outbe_metadosis::limits::start_desis_with_limit;
 //! ```
 //!
 //! ```compile_fail,E0603
