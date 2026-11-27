@@ -7,7 +7,6 @@ import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/U
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {IERC6909} from "@openzeppelin/contracts/interfaces/IERC6909.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {IEscrowAdapter, EscrowTimes} from "./interfaces/IEscrowAdapter.sol";
 import {ITheCompact} from "../vendor/the-compact/interfaces/ITheCompact.sol";
@@ -81,8 +80,6 @@ contract EscrowAdapter is OwnableUpgradeable, ReentrancyGuardTransient, UUPSUpgr
         uint8 currentIntexAuctionAssetVersion;
         /// @dev Clearing terms each day's winners charged at, recorded by its first page with winners.
         mapping(uint32 emissionDay => DayClearing) dayClearing;
-        /// @dev WinNotes the auction has not redeemed yet, across all days. One may hold no money.
-        uint256 openWinNotes;
         /// @dev Payment-token units in one protocol unit for the active asset.
         uint256 assetScale;
     }
@@ -404,7 +401,6 @@ contract EscrowAdapter is OwnableUpgradeable, ReentrancyGuardTransient, UUPSUpgr
             lock.status = LockStatus.Won;
             lock.quantity = quantity;
             lock.lockedAmount = change;
-            ++$.openWinNotes;
             address asset = address(_tokenOf(state.assetVersion));
             emit IntexAuctionAssetCharged(emissionDay, bidder, asset, charged);
             emit IntexAuctionWinNoteCreated(emissionDay, bidder, quantity);
@@ -507,7 +503,6 @@ contract EscrowAdapter is OwnableUpgradeable, ReentrancyGuardTransient, UUPSUpgr
         units = lock.quantity;
         uint128 change = lock.lockedAmount;
         delete $.bidLocks[emissionDay][bidder];
-        --$.openWinNotes;
         if (change > 0) _returnAsset(emissionDay, $.auctionEscrowState[emissionDay], bidder, change, ASSET_RETURN);
     }
 
