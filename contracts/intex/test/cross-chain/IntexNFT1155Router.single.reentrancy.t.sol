@@ -1,0 +1,137 @@
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.30;
+
+import {CrossChainTest} from "../utils/CrossChainTest.sol";
+import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
+import {DeployProxy} from "../utils/DeployProxy.sol";
+import {OpenSeriesLib} from "../utils/OpenSeriesLib.sol";
+import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
+import {IIntexNFT1155Router, SendParam, RemoteRouter} from "@contracts/shared/interfaces/IIntexNFT1155Router.sol";
+import {IERC1155Receiver} from "@openzeppelin/contracts/token/ERC1155/IERC1155Receiver.sol";
+
+/// @dev Hostile ERC1155 receiver that, during the `onERC1155Received` callback fired
+///      mid-`receiveMessage` (via `token.crosschainMint` -> `_mint`), re-enters the adapter's
+///      `send` entrypoint. With both `receiveMessage` and `send` carrying `nonReentrant`, the
+///      inner call reverts with `ReentrancyGuardReentrantCall` at the modifier check (before the
+///      zero-`to` validation). We capture the selector. Without the guards, the inner call
+///      would revert with `InvalidReceiver` instead. This difference distinguishes the two cases.
+contract ReentrantSendProbe is IERC1155Receiver {
+    address public immutable adapter;
+    bool public attempted;
+    bytes4 public observedSelector;
+
+    constructor(address adapter_) {
+        adapter = adapter_;
+    }
+
+    function onERC1155Received(address, address, uint256, uint256, bytes calldata) external returns (bytes4) {
+        attempted = true;
+
+        SendParam memory param = SendParam({dstChainId: 0, to: bytes32(0), intexId: 0, units: 0});
+
+        try IIntexNFT1155Router(adapter).send{value: 0}(param) {
+        // unexpected: re-entrant call should always revert (either with the guard or with InvalidReceiver)
+        }
+        catch (bytes memory err) {
+            if (err.length >= 4) {
+                bytes32 word;
+                assembly {
+                    word := mload(add(err, 0x20))
+                }
+                observedSelector = bytes4(word);
+            }
+        }
+
+        return IERC1155Receiver.onERC1155Received.selector;
+    }
+
+    function onERC1155BatchReceived(address, address, uint256[] calldata, uint256[] calldata, bytes calldata)
+        external
+        pure
+        returns (bytes4)
+    {
+        return IERC1155Receiver.onERC1155BatchReceived.selector;
+    }
+
+    function supportsInterface(bytes4 interfaceId) external pure returns (bool) {
+        return interfaceId == type(IERC1155Receiver).interfaceId;
+    }
+}
+
+/// @title IntexNFT1155RouterSingleReentrancyTest
+/// @notice Behavioral test that `receiveMessage` and `send` are mutually `nonReentrant`-guarded.
+/// @dev Source chain (A) caller initiates a transfer to the hostile probe on the destination chain
+///      (B). On B, `receiveMessage` -> `_dispatch` -> `token.crosschainMint` -> `_mint` invokes the
+///      probe's `onERC1155Received`, which attempts to re-enter `adapterB.send`. Expected: the
+///      inner call reverts with `ReentrancyGuardReentrantCall`. This proves that `receiveMessage`
+///      holds the guard AND that `send` carries the modifier.
+contract IntexNFT1155RouterSingleReentrancyTest is CrossChainTest {
+    uint32 private aChainId = 1;
+    uint32 private bChainId = 2;
+
+    IntexNFT1155 private tokenA;
+    IntexNFT1155 private tokenB;
+    IntexNFT1155Router private adapterA;
+    IntexNFT1155Router private adapterB;
+
+    address private user = address(0x1);
+    uint32 private constant SERIES_ID_DAY = 20260401;
+    bytes14 private constant SERIES_ID = "20260401-USD-U";
+    uint256 private constant INTEX_ID = uint256(keccak256(abi.encodePacked(SERIES_ID)));
+    uint256 private constant AMOUNT = 100;
+    uint32 private constant ISSUED_UNITS = 10_000;
+
+    function setUp() public {
+        vm.deal(user, 1000 ether);
+
+        _setUpBridge();
+
+        address adapterAProxy = DeployProxy.reserve();
+        tokenA = DeployProxy.intexNFT1155(
+            address(this),
+            DeployProxy.NftLinks(address(this), adapterAProxy, address(this), address(this), address(this))
+        );
+        address adapterBProxy = DeployProxy.reserve();
+        tokenB = DeployProxy.intexNFT1155(
+            address(this),
+            DeployProxy.NftLinks(address(this), adapterBProxy, address(this), address(this), address(this))
+        );
+
+        adapterA = DeployProxy.intexNFT1155RouterAt(
+            adapterAProxy, address(tokenA), address(bridge), address(this), new RemoteRouter[](0)
+        );
+        adapterB = DeployProxy.intexNFT1155RouterAt(
+            adapterBProxy, address(tokenB), address(bridge), address(this), new RemoteRouter[](0)
+        );
+
+        adapterA.setRemoteRouter(bChainId, _interop(bChainId, address(adapterB)));
+        adapterB.setRemoteRouter(aChainId, _interop(aChainId, address(adapterA)));
+
+        tokenA.openSeries(OpenSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));
+        tokenB.openSeries(OpenSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));
+
+        tokenA.issueIntex(user, AMOUNT, SERIES_ID);
+    }
+
+    function test_receiveMessage_blocks_reentry_to_send() public {
+        ReentrantSendProbe probe = new ReentrantSendProbe(address(adapterB));
+
+        SendParam memory sendParam = SendParam({
+            dstChainId: bChainId, to: bytes32(uint256(uint160(address(probe)))), intexId: INTEX_ID, units: AMOUNT
+        });
+
+        uint256 fee = adapterA.quoteSend(sendParam);
+
+        vm.prank(user);
+        adapterA.send{value: fee}(sendParam);
+
+        _deliver(aChainId, address(adapterA), address(adapterB), bridge.lastPayload());
+
+        assertTrue(probe.attempted(), "probe callback never ran");
+        assertEq(
+            probe.observedSelector(),
+            bytes4(keccak256("ReentrancyGuardReentrantCall()")),
+            "receiveMessage / send reentrancy guard did not fire"
+        );
+    }
+}
