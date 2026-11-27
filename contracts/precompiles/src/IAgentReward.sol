@@ -26,9 +26,7 @@ interface IAgentReward {
     );
     event AgentRewardRateFailed(uint32 indexed emissionDay, uint8 indexed pool, uint256 amountMinor);
     event AgentRewardRedeemed(address indexed account, uint8 indexed pool, uint256 promisLoadMinor, uint256 gemId);
-    event AgentRewardExpired(
-        address indexed account, uint8 indexed pool, uint32 emissionDay, uint256 promisLoadMinor
-    );
+    event AgentRewardExpired(address indexed account, uint8 indexed pool, uint32 emissionDay, uint256 promisLoadMinor);
     event AgentRewardLimitReturned(uint32 indexed emissionDay, uint8 indexed pool, uint256 amountMinor);
 
     /// @notice The rate of `pool` in `emissionDay`, its deadline and the part of the allocated amount
