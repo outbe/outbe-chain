@@ -30,7 +30,7 @@ contract IntexNFT1155Erc4906Test is Test {
         vm.startPrank(admin);
         nft.grantRole(nft.BURNER_ROLE(), bridger);
         vm.stopPrank();
-        intexId = nft.issuedIntexId(SERIES_ID);
+        intexId = uint256(keccak256(abi.encodePacked(SERIES_ID)));
     }
 
     /// @dev Drains recorded logs; counts MetadataUpdate emits and checks the de-indexed shape.

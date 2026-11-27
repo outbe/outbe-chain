@@ -314,12 +314,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         return _s().seriesData[_issuedIntexId(seriesId)].issuedAt != 0;
     }
 
-    /// @inheritdoc IIntexNFT1155
-    function issuedIntexId(bytes14 seriesId) external pure returns (uint256) {
-        return _issuedIntexId(seriesId);
-    }
-
-    /// @dev Pure helper used internally and exposed via `issuedIntexId`.
+    /// @dev The Intex id of a series: `uint256(keccak256(seriesId))`.
     function _issuedIntexId(bytes14 seriesId) private pure returns (uint256) {
         return uint256(keccak256(abi.encodePacked(seriesId)));
     }

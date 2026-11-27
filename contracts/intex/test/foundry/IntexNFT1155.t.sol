@@ -456,10 +456,6 @@ contract IntexNFT1155Test is Test {
         vm.stopPrank();
     }
 
-    function test_IssuedIntexId_IsTheSeriesId() public view {
-        assertEq(nft.issuedIntexId(SERIES_ID_1), uint256(keccak256(abi.encodePacked(SERIES_ID_1))));
-    }
-
     function test_BatchTransferRestrictions() public {
         _openSeries(SERIES_ID_1_DAY, 0);
         _openSeries(SERIES_ID_2_DAY, 0);

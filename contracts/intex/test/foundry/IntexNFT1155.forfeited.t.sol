@@ -35,7 +35,7 @@ contract IntexNFT1155ForfeitedTest is Test {
         token.issueIntex(user, 10, SERIES_ID);
         token.callSeries(SERIES_ID, uint32(block.timestamp));
         vm.stopPrank();
-        intexId = token.issuedIntexId(SERIES_ID);
+        intexId = uint256(keccak256(abi.encodePacked(SERIES_ID)));
         deadline = block.timestamp + CALL_PERIOD;
         closeAt = deadline + token.getIntexSeries(SERIES_ID).callTrigger.transitMargin;
     }

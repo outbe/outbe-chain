@@ -140,7 +140,7 @@ contract IntexAuctionTargetRouterInboundHandlersTest is CrossChainTest {
         intex.grantRole(intex.AUCTION_ROLE(), admin);
         intex.issueIntex(bidder, 5, SERIES_ID);
 
-        uint256 intexId = intex.issuedIntexId(SERIES_ID);
+        uint256 intexId = uint256(keccak256(abi.encodePacked(SERIES_ID)));
         assertEq(intex.balanceOf(bidder, intexId), 5);
 
         _deliver(
@@ -184,7 +184,7 @@ contract IntexAuctionTargetRouterInboundHandlersTest is CrossChainTest {
         _deliver(packet);
 
         assertTrue(intex.seriesExists(SERIES_ID), "series created");
-        assertEq(intex.totalSupply(intex.issuedIntexId(SERIES_ID)), 0, "winners issue their own units");
+        assertEq(intex.totalSupply(uint256(keccak256(abi.encodePacked(SERIES_ID)))), 0, "winners issue their own units");
     }
 
     function _issuancePacket() internal view returns (bytes memory) {

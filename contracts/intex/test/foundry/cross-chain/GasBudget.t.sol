@@ -190,7 +190,7 @@ contract GasBudgetTest is CrossChainTest {
 
         // `multiSend` burns the whole batch from its caller and fans it out to `recipients`.
         address sender = address(0x3000);
-        uint256 intexId = intex.issuedIntexId(SERIES_PREFIX);
+        uint256 intexId = uint256(keccak256(abi.encodePacked(SERIES_PREFIX)));
         intex.issueIntex(sender, items, SERIES_PREFIX);
 
         bytes32[] memory to = new bytes32[](items);
@@ -234,7 +234,7 @@ contract GasBudgetTest is CrossChainTest {
         dstToken.openSeries(OpenSeriesLib.params(EMISSION_DAY, 10_000, 0));
 
         address sender = address(0x3000);
-        uint256 intexId = intex.issuedIntexId(SERIES_PREFIX);
+        uint256 intexId = uint256(keccak256(abi.encodePacked(SERIES_PREFIX)));
         intex.issueIntex(sender, items, SERIES_PREFIX);
 
         // One receiver that rejects every mint, so every item takes the recording path.

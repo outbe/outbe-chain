@@ -67,8 +67,10 @@ contract UpgradeDrillTest is CrossChainTest {
         nft.upgradeToAndCall(address(newImpl), "");
 
         _assertUpgraded(address(nft), address(newImpl));
-        assertEq(nft.balanceOf(owner, nft.issuedIntexId(OpenSeriesLib.seriesId(7))), 3, "balance lost");
-        assertEq(nft.totalSupply(nft.issuedIntexId(OpenSeriesLib.seriesId(7))), 3, "supply lost");
+        assertEq(
+            nft.balanceOf(owner, uint256(keccak256(abi.encodePacked(OpenSeriesLib.seriesId(7))))), 3, "balance lost"
+        );
+        assertEq(nft.totalSupply(uint256(keccak256(abi.encodePacked(OpenSeriesLib.seriesId(7))))), 3, "supply lost");
         IIntexNFT1155.SeriesData memory data = nft.getIntexSeries(OpenSeriesLib.seriesId(7));
         assertGt(data.issuedAt, 0, "series record lost");
         assertEq(uint8(data.state), uint8(IIntexNFT1155.IntexState.Issued), "state lost");
@@ -99,8 +101,16 @@ contract UpgradeDrillTest is CrossChainTest {
         assertEq(address(uint160(uint256(implSlot))), address(newImpl), "implementation not swapped");
         uint256 migratedFlag = uint256(vm.load(address(nft), _V2_REINIT_SLOT));
         assertEq(migratedFlag, UPGRADE_PROBE, "reinitializer did not run");
-        assertEq(nft.balanceOf(owner, nft.issuedIntexId(OpenSeriesLib.seriesId(7))), 3, "balance lost across reinit");
-        assertEq(nft.totalSupply(nft.issuedIntexId(OpenSeriesLib.seriesId(7))), 3, "supply lost across reinit");
+        assertEq(
+            nft.balanceOf(owner, uint256(keccak256(abi.encodePacked(OpenSeriesLib.seriesId(7))))),
+            3,
+            "balance lost across reinit"
+        );
+        assertEq(
+            nft.totalSupply(uint256(keccak256(abi.encodePacked(OpenSeriesLib.seriesId(7))))),
+            3,
+            "supply lost across reinit"
+        );
     }
 
     function test_Drill_IntexAuction() public {

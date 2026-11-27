@@ -249,11 +249,6 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @return True once `openSeries` has run for it.
     function seriesExists(bytes14 seriesId) external view returns (bool);
 
-    /// @notice Issued token id for a series (= `uint256(keccak256(seriesId))`, its `intexId`). Pure helper.
-    /// @param seriesId Series identifier.
-    /// @return The Issued token id.
-    function issuedIntexId(bytes14 seriesId) external pure returns (uint256);
-
     /// @notice Series a day's currency pair was created under.
     /// @param emissionDay Emission day (yyyymmdd).
     /// @param issuanceCurrency Issuance currency (ISO numeric).
