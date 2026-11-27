@@ -1,19 +1,21 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
-import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {IERC7786Recipient} from "@openzeppelin/contracts/interfaces/draft-IERC7786.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 
 import {IERC1155Bridgeable} from "./interfaces/IERC1155Bridgeable.sol";
 import {
     IIntexNFT1155Router,
     SendParam,
     BatchSendParam,
-    MultiRecipientSendParam
+    MultiRecipientSendParam,
+    RemoteRouter
 } from "./interfaces/IIntexNFT1155Router.sol";
 import {IntexNFT1155RouterCodec} from "./libs/IntexNFT1155RouterCodec.sol";
 import {ERC7786Sender} from "./ERC7786Sender.sol";
@@ -30,7 +32,7 @@ contract IntexNFT1155Router is
     IIntexNFT1155Router,
     ERC7786Sender,
     IERC7786Recipient,
-    AccessControlUpgradeable,
+    OwnableUpgradeable,
     ReentrancyGuardTransient,
     UUPSUpgradeable
 {
@@ -83,14 +85,18 @@ contract IntexNFT1155Router is
         _disableInitializers();
     }
 
-    /// @notice Initializes the proxy admin.
-    function initialize(address _delegate) external initializer {
-        if (_delegate == address(0)) revert ZeroAddress("delegate");
-        __AccessControl_init();
-        _grantRole(DEFAULT_ADMIN_ROLE, _delegate);
+    /// @notice Initializes the proxy with its owner and the routers it pairs with on other chains.
+    /// @param owner_ The owner, who upgrades the contract and changes a remote router.
+    /// @param remoteRouters The router on each other chain. Each emits `RemoteRouterSet`.
+    function initialize(address owner_, RemoteRouter[] calldata remoteRouters) external initializer {
+        if (owner_ == address(0)) revert ZeroAddress("owner");
+        __Ownable_init(owner_);
+        for (uint256 i = 0; i < remoteRouters.length; i++) {
+            _setRemoteRouter(remoteRouters[i].chainId, remoteRouters[i].interop);
+        }
     }
 
-    function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
+    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
 
     /// @notice Failed crosschainMint snapshot for item `idx` of the message `receiveId`.
     function getFailedCrosschainReceive(bytes32 receiveId, uint256 idx)
@@ -102,12 +108,16 @@ contract IntexNFT1155Router is
         return (f.to, f.intexId, f.units, f.exists);
     }
 
-    function supportsInterface(bytes4 interfaceId) public view override(AccessControlUpgradeable) returns (bool) {
-        return interfaceId == type(IIntexNFT1155Router).interfaceId || super.supportsInterface(interfaceId);
+    function supportsInterface(bytes4 interfaceId) public pure returns (bool) {
+        return interfaceId == type(IIntexNFT1155Router).interfaceId || interfaceId == type(IERC165).interfaceId;
     }
 
     /// @inheritdoc IIntexNFT1155Router
-    function setRemoteRouter(uint32 chainId, bytes calldata interop) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function setRemoteRouter(uint32 chainId, bytes calldata interop) external onlyOwner {
+        _setRemoteRouter(chainId, interop);
+    }
+
+    function _setRemoteRouter(uint32 chainId, bytes calldata interop) private {
         // Inbound auth derives the key from the sender's own bytes, so the interop must embed the
         // same chainId as the key: a mismatch would silently drop every message from that chain.
         if (interop.length != 0) {

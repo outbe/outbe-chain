@@ -168,12 +168,6 @@ interface IIntexAuction {
     /// @notice Emitted when a bidder cancels its commit in the commit stage.
     event IntexAuctionBidCanceled(uint32 indexed emissionDay, address indexed bidder);
 
-    /// @notice Emitted when an admin sets the escrow.
-    event EscrowSet(address escrow);
-
-    /// @notice Emitted when an admin sets the Intex contract.
-    event IntexContractSet(address intexContract);
-
     /// @notice Emitted when a redeem issues the units of a WinNote.
     event IntexAuctionWinNoteRedeemed(uint32 indexed emissionDay, address indexed bidder, bytes14 indexed seriesId);
 
@@ -226,8 +220,8 @@ interface IIntexAuction {
     error InvalidCommitHash();
     /// @notice Chain id mismatch between the caller-supplied value and `block.chainid`.
     error WrongChain(uint256 expected, uint256 got);
-    /// @notice The current escrow still holds something its bidders can claim.
-    error EscrowHasLiveLocks();
+    /// @notice `caller` is not the IntexAuctionTargetRouter.
+    error UnauthorizedCaller(address caller);
     /// @notice The collection holds no series for the bid's day and currency pair yet.
     error SeriesNotCreated(uint32 emissionDay, uint16 issuanceCurrency, uint16 referenceCurrency);
     /// @notice `unlockIntexAuctionBidBond` was called before the no-reveal penalty window elapsed.
@@ -235,19 +229,10 @@ interface IIntexAuction {
     /// @param nowTs Current block timestamp.
     error IntexAuctionBidBondNotYetUnlockable(uint32 unlockableAt, uint32 nowTs);
 
-    // --- Admin ---
+    // --- Links ---
 
-    /// @notice Wire contract dependencies.
-    /// @dev Bidders claim through the auction from the escrow that took their locks, so the escrow
-    ///      changes only once it has nothing left to claim (`hasOutstandingLocks` is false). Every
-    ///      claim is permissionless, so anyone can bring it there.
-    /// @param _escrow Escrow contract address.
-    function setEscrow(address _escrow) external;
-
-    /// @notice Set the Intex collection winners' units are issued on. It changes only once the
-    ///         escrow has nothing left to claim, like `setEscrow`.
-    /// @param _intexContract Collection address.
-    function setIntexContract(address _intexContract) external;
+    /// @notice IntexAuctionTargetRouter, the only caller of the stage entry points.
+    function intexAuctionTargetRouter() external view returns (address);
 
     // --- Lifecycle ---
 

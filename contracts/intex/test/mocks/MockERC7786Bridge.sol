@@ -129,7 +129,7 @@ contract MockERC7786Bridge is IERC7786GatewaySource, IGatewayQuote {
     function _deliver(bytes memory sender, bytes memory recipient, bytes memory payload) internal {
         (, address target) = recipient.parseEvmV1();
         // Mirror the hub's receiveId (binds source + payload). Recipients that use it as the key for
-        // per-message work (e.g. the NFT bridge clients' failed-mint parking) then see a stable,
+        // per-message work (e.g. the NFT router's failed-mint parking) then see a stable,
         // unique id.
         // A `deliverLast` replay reuses the same id.
         bytes32 receiveId = keccak256(abi.encode(sender, payload));

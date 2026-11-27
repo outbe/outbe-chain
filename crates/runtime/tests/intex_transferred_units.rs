@@ -1,7 +1,12 @@
-//! Issued Intex units change hands on the real `IntexNFT1155` bytecode (`fixtures/*.hex`: forge
-//! `deployedBytecode`, `IntexMetadata` linked at [`METADATA_LIB`]) and settle for their holder.
+//! Issued Intex units change hands on the real `IntexNFT1155` bytecode and settle for their holder.
+//!
+//! `fixtures/IntexNFT1155.hex` holds its links as immutables, so it is the runtime code of a real
+//! deploy: on anvil, `forge create src/shared/IntexNFT1155.sol:IntexNFT1155 --libraries
+//! src/shared/libs/IntexMetadata.sol:IntexMetadata:<METADATA_LIB> --constructor-args <RELAYER>
+//! <RELAYER> <RELAYER> <INTEX_FACTORY_ADDRESS> <GEM_FACTORY_ADDRESS>`, then `cast code`, without
+//! the `0x`.
 
-use alloy_primitives::{keccak256, Address, Bytes, FixedBytes, U256};
+use alloy_primitives::{Address, Bytes, FixedBytes, U256};
 use alloy_sol_types::{sol, SolCall, SolEvent};
 use evm2::evm::{CacheDB, EmptyDB};
 use outbe_core_common::addresses::INTEX_NFT1155_ADDRESS;
@@ -31,8 +36,7 @@ sol! {
     }
 
     interface INft {
-        function initialize(address defaultAdmin) external;
-        function grantRole(bytes32 role, address account) external;
+        function initialize(address owner) external;
         function balanceOf(address account, uint256 id) external view returns (uint256);
         function totalSupply(uint256 tokenId) external view returns (uint256);
         function safeTransferFrom(address from, address to, uint256 id, uint256 value, bytes data) external;
@@ -43,6 +47,7 @@ const ALICE: Address = Address::new([0x11; 20]);
 const BOB: Address = Address::new([0x22; 20]);
 const PAYER: Address = Address::new([0x77; 20]);
 const ADMIN: Address = Address::new([0xad; 20]);
+/// The target router, NFT router and auction the fixture was deployed with.
 const RELAYER: Address = Address::new([0x4e; 20]);
 const ASSET: Address = Address::new([0x33; 20]);
 const VAULT: Address = Address::new([0x55; 20]);
@@ -148,30 +153,13 @@ impl World {
         world
     }
 
-    /// Initialized in place: the admin grants the router and auction roles to the issuer
-    /// and the burner role to the factory precompile.
+    /// Initialized in place; the issuer opens the series and issues to Alice.
     fn install_nft(&mut self) {
         self.ok(
             ADMIN,
             INTEX_NFT1155_ADDRESS,
-            INft::initializeCall {
-                defaultAdmin: ADMIN,
-            },
+            INft::initializeCall { owner: ADMIN },
         );
-        for (role, account) in [
-            ("ROUTER_ROLE", RELAYER),
-            ("AUCTION_ROLE", RELAYER),
-            ("BURNER_ROLE", INTEX_FACTORY_ADDRESS),
-        ] {
-            self.ok(
-                ADMIN,
-                INTEX_NFT1155_ADDRESS,
-                INft::grantRoleCall {
-                    role: keccak256(role.as_bytes()),
-                    account,
-                },
-            );
-        }
         self.ok(
             RELAYER,
             INTEX_NFT1155_ADDRESS,

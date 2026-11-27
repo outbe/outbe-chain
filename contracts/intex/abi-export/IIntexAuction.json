@@ -436,6 +436,19 @@
   },
   {
     "type": "function",
+    "name": "intexAuctionTargetRouter",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "redeemWinNote",
     "inputs": [
       {
@@ -595,32 +608,6 @@
   },
   {
     "type": "function",
-    "name": "setEscrow",
-    "inputs": [
-      {
-        "name": "_escrow",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setIntexContract",
-    "inputs": [
-      {
-        "name": "_intexContract",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "startAuction",
     "inputs": [
       {
@@ -755,19 +742,6 @@
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
-  },
-  {
-    "type": "event",
-    "name": "EscrowSet",
-    "inputs": [
-      {
-        "name": "escrow",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
   },
   {
     "type": "event",
@@ -1037,19 +1011,6 @@
     "anonymous": false
   },
   {
-    "type": "event",
-    "name": "IntexContractSet",
-    "inputs": [
-      {
-        "name": "intexContract",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
     "type": "error",
     "name": "AuctionAlreadyExists",
     "inputs": []
@@ -1079,11 +1040,6 @@
         "internalType": "uint32"
       }
     ]
-  },
-  {
-    "type": "error",
-    "name": "EscrowHasLiveLocks",
-    "inputs": []
   },
   {
     "type": "error",
@@ -1229,6 +1185,17 @@
         "name": "promisLoadMinor",
         "type": "uint128",
         "internalType": "uint128"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "UnauthorizedCaller",
+    "inputs": [
+      {
+        "name": "caller",
+        "type": "address",
+        "internalType": "address"
       }
     ]
   },

@@ -182,6 +182,8 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @notice An `issueIntex` or `crosschainMint` would push `totalSupply` past
     ///         `type(uint32).max`.
     error SupplyCapExceeded(bytes14 seriesId, uint256 attempted, uint256 cap);
+    /// @notice `caller` is not the contract this entry point belongs to.
+    error UnauthorizedCaller(address caller);
 
     // --- Writes ---
 
@@ -222,8 +224,8 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
 
     /// @notice Settle `units` of `owner`'s Issued Intex on Outbe: they leave this token and become
     ///         Settled units of the Intex on Outbe.
-    /// @dev Entry point of the IntexFactory precompile under BURNER_ROLE. It owns the series
-    ///      state, so this burn checks none.
+    /// @dev Entry point of the IntexFactory precompile only. It owns the series state, so this
+    ///      burn checks none.
     /// @param owner Owner whose Issued tokens are burned.
     /// @param seriesId Series identifier.
     /// @param units Issued units to burn.
@@ -231,8 +233,8 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
 
     /// @notice Move `units` of `owner`'s Issued Intex on Outbe into the Gem Factory position
     ///         `gemFactoryPositionId`: the units leave the series and end with `IntexSentToGemFactory`.
-    /// @dev Entry point of the GemFactory precompile under BURNER_ROLE. It owns the series state,
-    ///      so this call checks none.
+    /// @dev Entry point of the GemFactory precompile only. It owns the series state, so this call
+    ///      checks none.
     function sendIntexToGemFactory(address owner, bytes14 seriesId, uint256 units, uint256 gemFactoryPositionId)
         external;
 
@@ -241,6 +243,23 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @param owner Owner whose forfeited units are burned.
     /// @param seriesId Series identifier.
     function forfeitIntex(address owner, bytes14 seriesId) external;
+
+    // --- Links ---
+
+    /// @notice The IntexAuctionTargetRouter, the only caller of `openSeries` and `callSeries`.
+    function intexAuctionTargetRouter() external view returns (address);
+
+    /// @notice The IntexNFT1155Router, the only caller of `crosschainBurn` and `crosschainMint`.
+    function intexNFT1155Router() external view returns (address);
+
+    /// @notice The IntexAuction, the only caller of `issueIntex`.
+    function intexAuction() external view returns (address);
+
+    /// @notice The IntexFactory precompile, the only caller of `settleIntex`. Zero off Outbe.
+    function intexFactory() external view returns (address);
+
+    /// @notice The GemFactory precompile, the only caller of `sendIntexToGemFactory`. Zero off Outbe.
+    function gemFactory() external view returns (address);
 
     // --- Reads ---
 
