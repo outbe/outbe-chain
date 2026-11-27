@@ -8,7 +8,6 @@ use outbe_primitives::{
 };
 use outbe_promislimit::PromisLimitContract;
 use outbe_system_common::time::WorldwideDay;
-use outbe_worldwideday::WorldwideDayContract;
 
 use crate::{
     errors::{MetadosisCallerError, MetadosisStorageCorruptionError},
@@ -46,18 +45,16 @@ pub(crate) fn ready_emission_day(
     {
         return Ok(None);
     }
-    verify_record_wwd_backlink(&WorldwideDayContract::new(ctx.storage.clone()), &record)?;
+    verify_record_wwd_backlink(ctx, &record)?;
     Ok(Some(record))
 }
 
-fn verify_record_wwd_backlink(
-    factory: &WorldwideDayContract<'_>,
-    record: &EmissionDay,
-) -> Result<()> {
+fn verify_record_wwd_backlink(ctx: &BlockRuntimeContext<'_>, record: &EmissionDay) -> Result<()> {
     if record.wwd.value() == 0 {
         return Ok(());
     }
-    let Some(wwd_record) = factory.worldwide_days.get(record.wwd)? else {
+    let Some(wwd_record) = outbe_worldwideday::get_worldwide_day(ctx.storage.clone(), record.wwd)?
+    else {
         return Ok(());
     };
     if wwd_record.emission_day != record.day {
