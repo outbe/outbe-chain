@@ -114,7 +114,7 @@ Configuration rules:
 - Set `topology.use_local_defaults: false` when founders advertise public IPs across hosts.
 - For non-devnet VM networks (such as `testnet`), configure `feeder.rpc_endpoints` in `network.yaml` for every external chain ID required by the active feeder profile (`1`, `97`, and `11155111` for `testnet/pairs.toml`), plus `feeder.api_keys.<provider>` if a profile uses an API-key provider. `network build` embeds these endpoints into every validator `feeder-public.toml` (both founders and `joining/operator-config.example.yaml` for `add-validator`) and refuses to build if any required chain ID is missing or any `REPLACE_WITH_` placeholder remains. Devnet (`network: devnet`) uses the self-contained `mock` provider and requires no external feeder RPCs.
 - When `genesis.base` is not set, `network build` defaults omitted epoch and DKG fields to `3600 / 900 / 300`. Blocks are at least 1 s apart, so this is at least one hour per epoch and at least 15 minutes for the DKG prepare window.
-- `network build` refuses `dkg_prepare_window_blocks < 120` or `dkg_activation_grace_blocks < 120`. Shorter windows risk starving DKG `ACK_COLLECTION_GRACE` (30s).
+- `network build` refuses `dkg_prepare_window_blocks < 60` or `dkg_activation_grace_blocks < 60` (60 blocks is at least one minute). Shorter windows risk starving DKG `ACK_COLLECTION_GRACE` (30s).
 
 ## Build, deploy, start, and inspect
 

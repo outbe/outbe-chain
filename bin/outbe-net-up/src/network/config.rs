@@ -27,7 +27,7 @@ pub const DEFAULT_DKG_PREPARE_WINDOW_BLOCKS: u64 = 900;
 pub const DEFAULT_DKG_ACTIVATION_GRACE_BLOCKS: u64 = 300;
 /// Minimum safe DKG prepare/activation grace window in blocks.
 /// Shorter windows risk starving `ACK_COLLECTION_GRACE` (30s) at ~4 blocks/s.
-pub const MIN_DKG_WINDOW_BLOCKS: u64 = 120;
+pub const MIN_DKG_WINDOW_BLOCKS: u64 = 60;
 pub const EXAMPLE: &str = include_str!("../../templates/network/network.example.yaml");
 
 pub const BASE_RPC_PORT: u16 = 8545;
@@ -607,7 +607,7 @@ impl NetworkConfig {
                 ensure!(
                     value >= MIN_DKG_WINDOW_BLOCKS,
                     "genesis.{name} must be at least {MIN_DKG_WINDOW_BLOCKS} blocks (got {value}); \
-                     shorter windows risk starving DKG ACK_COLLECTION_GRACE (30s) at ~4 blocks/s"
+                     shorter windows risk starving DKG ACK_COLLECTION_GRACE (30s)"
                 );
             }
         }
@@ -1294,24 +1294,24 @@ genesis:
         // Omitting epoch & DKG fields is valid (build applies safe 3600/900/300 defaults).
         config_with(4).validate().unwrap();
 
-        // Prepare window < 120 blocks must be refused with a clear error.
-        for bad in [0, 30, 119] {
+        // Prepare window < 60 blocks must be refused with a clear error.
+        for bad in [0, 30, 59] {
             let mut cfg = config_with(4);
             cfg.genesis.dkg_prepare_window_blocks = Some(bad);
             let err = cfg.validate().unwrap_err().to_string();
             assert!(
-                err.contains("dkg_prepare_window_blocks") && err.contains("120"),
+                err.contains("dkg_prepare_window_blocks") && err.contains("60"),
                 "expected floor error for prepare={bad}, got: {err}"
             );
         }
 
-        // Activation grace < 120 blocks must be refused with a clear error.
-        for bad in [0, 30, 119] {
+        // Activation grace < 60 blocks must be refused with a clear error.
+        for bad in [0, 30, 59] {
             let mut cfg = config_with(4);
             cfg.genesis.dkg_activation_grace_blocks = Some(bad);
             let err = cfg.validate().unwrap_err().to_string();
             assert!(
-                err.contains("dkg_activation_grace_blocks") && err.contains("120"),
+                err.contains("dkg_activation_grace_blocks") && err.contains("60"),
                 "expected floor error for grace={bad}, got: {err}"
             );
         }

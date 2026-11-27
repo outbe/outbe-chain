@@ -286,7 +286,7 @@ fn genesis_cli_config_defaults_epoch_and_dkg_windows_when_omitted() {
     assert_eq!(defaulted["dkg_activation_grace_blocks"], 300);
     outbe_genesis_cli::network::validate_config(&defaulted).unwrap();
 
-    // Explicit valid values (>= 120) are preserved verbatim.
+    // Explicit valid values (>= 60) are preserved verbatim.
     config.genesis.epoch_length_blocks = Some(2400);
     config.genesis.dkg_prepare_window_blocks = Some(120);
     config.genesis.dkg_activation_grace_blocks = Some(180);

@@ -78,8 +78,8 @@ tee:
 # timestamp: 1756032000               # genesis timestamp; default: now
 # gas_limit: "0x1c9c380"
 # epoch_length_blocks: 300
-# dkg_prepare_window_blocks: 30
-# dkg_activation_grace_blocks: 30
+# dkg_prepare_window_blocks: 60
+# dkg_activation_grace_blocks: 60
 # prefund_coen_units: "100000000000000000000000000" # 100000000 COEN per validator
 # min_stake: "10000000000000000000000000"           # 10000000 COEN minimum stake
 # contracts_dir: contracts/predeploys    # code files for the `contracts` section

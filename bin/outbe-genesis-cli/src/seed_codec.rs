@@ -52,7 +52,8 @@ pub use outbe_primitives::validators::DEFAULT_MIN_STAKE_UNITS as MIN_STAKE;
 pub const SECONDS_PER_DAY: u64 = 86_400;
 pub const DEFAULT_UNBONDING_PERIOD: u64 = 21 * SECONDS_PER_DAY;
 pub const DEFAULT_REREGISTRATION_COOLDOWN_BLOCKS: u64 = 151_200;
-pub const DEFAULT_EPOCH_LENGTH_BLOCKS: u64 = 1_200;
+/// Must equal the node default `outbe_simplex::config::DEFAULT_EPOCH_LENGTH_BLOCKS`.
+pub const DEFAULT_EPOCH_LENGTH_BLOCKS: u64 = 3_600;
 
 pub const INTEX_PROFILE_SLOT: u64 = 17;
 pub const GEM_PROFILE_SLOT: u64 = 31;
