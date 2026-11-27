@@ -84,28 +84,51 @@ const VM_NODE_SERVICES: &[&str] = &[
     "outbe-full-node.service",
 ];
 
-/// Services whose only dev override is console output.
-const VM_CONSOLE_ONLY_SERVICES: &[&str] = &[
+/// Relative systemd drop-in filename for console output. Both image flavors install it.
+pub const VM_CONSOLE_DROPIN_NAME: &str = "10-outbe-console.conf";
+
+/// Services whose output goes to the serial console in the VM image.
+const VM_CONSOLE_SERVICES: &[&str] = &[
     "dstack-guest-agent.service",
     "outbe-feeder.service",
+    "outbe-full-node.service",
     "outbe-hyperlane-validator.service",
+    "outbe-joining-validator.service",
     "outbe-radicle.service",
+    "outbe-validator.service",
 ];
 
-/// Render dev-flavor-only systemd drop-ins (`<unit>.d/20-outbe-dev.conf`).
+/// Render the console drop-ins (`<unit>.d/10-outbe-console.conf`) for both image flavors.
 ///
-/// Never installed into the production image:
-/// - The standard output and standard error of the `outbe-*` services and of
-///   `dstack-guest-agent.service` go to the journal and to the serial console
-///   (`StandardOutput=journal+console`). The console shows what each process prints, one time.
-/// - `ExecStart` on the `outbe-chain` node units (`outbe-validator.service`,
-///   `outbe-joining-validator.service`, `outbe-full-node.service`) binds `--metrics` on
-///   `${OUTBE_VM_IP}:9101` instead of `127.0.0.1:9101`. It is derived from [`vm_units`] so
-///   flags cannot drift.
+/// The standard output and standard error of the `outbe-*` services and of
+/// `dstack-guest-agent.service` go to the journal and to the serial console. The console shows
+/// what each process prints, one time. An operator reads it with `outbe-up vm logs` and needs no
+/// access to the guest.
 ///
 /// The node prints at its default stdout level. Detailed debug records go only to the rotating
 /// log file under `--log.file.directory`. journald does not forward its entries to the console:
 /// that would print each line a second time.
+pub fn vm_console_dropins() -> Vec<UnitFile> {
+    VM_CONSOLE_SERVICES
+        .iter()
+        .map(|service_name| UnitFile {
+            name: format!("{service_name}.d/{VM_CONSOLE_DROPIN_NAME}"),
+            content: concat!(
+                "[Service]\n",
+                "StandardOutput=journal+console\n",
+                "StandardError=journal+console\n",
+            )
+            .to_owned(),
+        })
+        .collect()
+}
+
+/// Render dev-flavor-only systemd drop-ins (`<unit>.d/20-outbe-dev.conf`).
+///
+/// Never installed into the production image. `ExecStart` on the `outbe-chain` node units
+/// (`outbe-validator.service`, `outbe-joining-validator.service`, `outbe-full-node.service`)
+/// binds `--metrics` on `${OUTBE_VM_IP}:9101` instead of `127.0.0.1:9101`. It is derived from
+/// [`vm_units`] so flags cannot drift.
 pub fn vm_dev_dropins() -> Vec<UnitFile> {
     let base_units = vm_units();
     let mut dropins = Vec::new();
@@ -127,26 +150,12 @@ pub fn vm_dev_dropins() -> Vec<UnitFile> {
         let dev_exec_start = exec_start.replacen(from, to, 1);
         let content = format!(
             "[Service]\n\
-             StandardOutput=journal+console\n\
-             StandardError=journal+console\n\
              ExecStart=\n\
              {dev_exec_start}\n"
         );
         dropins.push(UnitFile {
             name: format!("{service_name}.d/{VM_DEV_DROPIN_NAME}"),
             content,
-        });
-    }
-
-    for service_name in VM_CONSOLE_ONLY_SERVICES {
-        dropins.push(UnitFile {
-            name: format!("{service_name}.d/{VM_DEV_DROPIN_NAME}"),
-            content: concat!(
-                "[Service]\n",
-                "StandardOutput=journal+console\n",
-                "StandardError=journal+console\n",
-            )
-            .to_owned(),
         });
     }
 

@@ -675,32 +675,15 @@ fn vm_dev_dropins_bind_metrics_on_service_ip_and_preserve_prod_vm_units() {
     assert_eq!(
         names,
         vec![
-            "dstack-guest-agent.service.d/20-outbe-dev.conf",
-            "outbe-feeder.service.d/20-outbe-dev.conf",
             "outbe-full-node.service.d/20-outbe-dev.conf",
-            "outbe-hyperlane-validator.service.d/20-outbe-dev.conf",
             "outbe-joining-validator.service.d/20-outbe-dev.conf",
-            "outbe-radicle.service.d/20-outbe-dev.conf",
             "outbe-validator.service.d/20-outbe-dev.conf",
         ]
     );
-    // Each dev drop-in sends the service output to the journal and the console, one time.
+    // Console output is not a dev override: both flavors get it from the console drop-ins.
     for dropin in &dropins {
-        assert_eq!(
-            dropin
-                .content
-                .matches("StandardOutput=journal+console\n")
-                .count(),
-            1,
-            "{}",
-            dropin.name
-        );
-        assert_eq!(
-            dropin
-                .content
-                .matches("StandardError=journal+console\n")
-                .count(),
-            1,
+        assert!(
+            !dropin.content.contains("StandardOutput="),
             "{}",
             dropin.name
         );
@@ -751,14 +734,31 @@ fn vm_dev_dropins_bind_metrics_on_service_ip_and_preserve_prod_vm_units() {
             "{name}: dev ExecStart must differ only in --metrics address"
         );
     }
+}
 
-    for name in [
-        "dstack-guest-agent.service.d/20-outbe-dev.conf",
-        "outbe-feeder.service.d/20-outbe-dev.conf",
-        "outbe-hyperlane-validator.service.d/20-outbe-dev.conf",
-        "outbe-radicle.service.d/20-outbe-dev.conf",
-    ] {
-        assert!(!unit(&dropins, name).contains("ExecStart"));
+#[test]
+fn vm_console_dropins_print_each_service_to_the_console_one_time() {
+    let dropins = vm_console_dropins();
+    let names: Vec<&str> = dropins.iter().map(|u| u.name.as_str()).collect();
+    assert_eq!(
+        names,
+        vec![
+            "dstack-guest-agent.service.d/10-outbe-console.conf",
+            "outbe-feeder.service.d/10-outbe-console.conf",
+            "outbe-full-node.service.d/10-outbe-console.conf",
+            "outbe-hyperlane-validator.service.d/10-outbe-console.conf",
+            "outbe-joining-validator.service.d/10-outbe-console.conf",
+            "outbe-radicle.service.d/10-outbe-console.conf",
+            "outbe-validator.service.d/10-outbe-console.conf",
+        ]
+    );
+    for dropin in &dropins {
+        assert_eq!(
+            dropin.content,
+            "[Service]\nStandardOutput=journal+console\nStandardError=journal+console\n",
+            "{}",
+            dropin.name
+        );
     }
 }
 

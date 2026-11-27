@@ -144,7 +144,7 @@ fn overlay_assembly_stages_binaries_units_libs_and_keeps_ssh_dev_only() {
             "prod overlay must not contain {rel}"
         );
         assert!(
-            !rel.contains(".service.d/"),
+            !rel.contains(".service.d/") || rel.ends_with("/10-outbe-console.conf"),
             "prod overlay must not contain service drop-in {rel}"
         );
     }
@@ -159,6 +159,14 @@ fn overlay_assembly_stages_binaries_units_libs_and_keeps_ssh_dev_only() {
         assert!(!content.contains("--metrics ${OUTBE_VM_IP}:9101"));
         assert!(!content.contains("--log.stdout.filter"));
         assert!(!content.contains("StandardOutput=journal+console"));
+    }
+    // Both flavors print each service to the serial console one time.
+    for dropin in vm_console_dropins() {
+        let content = fs::read_to_string(systemd.join(&dropin.name)).unwrap();
+        assert_eq!(
+            content,
+            "[Service]\nStandardOutput=journal+console\nStandardError=journal+console\n"
+        );
     }
 
     // Dev-only SSH configuration.
@@ -177,14 +185,13 @@ fn overlay_assembly_stages_binaries_units_libs_and_keeps_ssh_dev_only() {
     // journald does not forward its entries to the console: each service prints there one time.
     assert!(!dev_only.join("etc/systemd/journald.conf.d").exists());
 
-    // Dev-only unit drop-ins: console output, plus service-IP metrics on node units.
+    // Dev-only unit drop-ins: service-IP metrics on node units.
     let dev_systemd = dev_only.join("usr/lib/systemd/system");
     for dropin in vm_dev_dropins() {
         let path = dev_systemd.join(&dropin.name);
         assert!(path.is_file(), "missing dev drop-in {}", dropin.name);
         let content = fs::read_to_string(&path).unwrap();
-        assert!(content.contains("StandardOutput=journal+console"));
-        assert!(content.contains("StandardError=journal+console"));
+        assert!(!content.contains("StandardOutput="));
     }
     for node_unit in [
         "outbe-validator.service",
