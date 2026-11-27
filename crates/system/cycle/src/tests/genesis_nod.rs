@@ -16,7 +16,7 @@ fn genesis_midday_first_cycle_at_next_midnight_settles_genesis_day() {
         run_cycle_tick(&ctx_anchor).unwrap();
         let canonical_wwd = outbe_system_common::time::WorldwideDay::new(20_240_102);
         assert!(
-            outbe_metadosis::api::worldwide_day(ctx_anchor.storage.clone(), canonical_wwd)
+            outbe_worldwideday::api::get_worldwide_day(ctx_anchor.storage.clone(), canonical_wwd)
                 .unwrap()
                 .is_some(),
             "block 1 at the UTC+14 boundary must create the canonical WWD"
@@ -33,13 +33,13 @@ fn genesis_midday_first_cycle_at_next_midnight_settles_genesis_day() {
         run_cycle_tick(&ctx_fire).unwrap();
 
         assert!(
-            outbe_metadosis::api::emission_day(ctx_fire.storage.clone(), 20_240_101)
+            outbe_emission::api::get_emission_day(ctx_fire.storage.clone(), 20_240_101)
                 .unwrap()
                 .is_some(),
             "the first UTC midnight must create the explicitly settled previous UTC day"
         );
         assert!(
-            outbe_metadosis::api::worldwide_day(ctx_fire.storage.clone(), canonical_wwd)
+            outbe_worldwideday::api::get_worldwide_day(ctx_fire.storage.clone(), canonical_wwd)
                 .unwrap()
                 .is_some(),
             "the first UTC midnight must retain the canonical genesis WWD"

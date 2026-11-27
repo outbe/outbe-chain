@@ -1,8 +1,9 @@
+use outbe_emission::EmissionDay;
 use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 
 use crate::constants::METADOSIS_CANCELED_NO_LIMIT;
 use crate::lifecycle::{self, cancel_metadosis};
-use crate::schema::{EmissionDay, MetadosisContract};
+use crate::schema::MetadosisContract;
 
 pub fn process_emission_day(ctx: &BlockRuntimeContext, day: u32) -> Result<()> {
     let mut metadosis = MetadosisContract::new(ctx.storage.clone());

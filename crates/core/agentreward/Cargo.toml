@@ -21,6 +21,7 @@ alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 
 [dev-dependencies]
+outbe-emission = { workspace = true, features = ["test-utils"] }
 outbe-gem = { workspace = true, features = ["test-utils"] }
 outbe-oracle = { workspace = true, features = ["test-utils"] }
 proptest.workspace = true

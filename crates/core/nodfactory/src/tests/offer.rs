@@ -388,15 +388,15 @@ fn assert_real_zk_offer(proof: &[u8]) {
     let nod_id = StorageHandle::enter(&mut provider, |storage| {
         let nod_id = issue_nod(&storage, make_offer()).unwrap();
         let item = nod_api::get_item(&storage, nod_id).unwrap().unwrap();
-        let wwd = outbe_worldwideday::worldwide_day(storage.clone(), TARGET_WWD)
+        let wwd = outbe_worldwideday::get_worldwide_day(storage.clone(), TARGET_WWD)
             .unwrap()
             .unwrap();
         assert_eq!(item.owner, CALLER);
-        assert_eq!(item.series_id.day(), wwd.day);
+        assert_eq!(item.series_id.day(), wwd.emission_day);
         let now = storage.now_secs().unwrap();
         assert_eq!(
             u64::from(item.sub_series_id),
-            (now - now % 3_600 - wwd.offerings_start) / 3_600
+            (now - now % 3_600 - wwd.offering_start) / 3_600
         );
         let totals = outbe_worldwideday::worldwide_day_totals(storage.clone(), TARGET_WWD).unwrap();
         assert_eq!(totals.nod_count, 1);
@@ -520,7 +520,8 @@ fn issue_past_proof(
     }
     let now = storage.now_secs()?;
     let (sub_series_id, entry) = crate::offer::offer_terms(storage, &wwd, input, now, &pricing)?;
-    let request = crate::offer::offer_request(input, (wwd.day, entry), &pricing, zk_context());
+    let request =
+        crate::offer::offer_request(input, (wwd.emission_day, entry), &pricing, zk_context());
     let (nod, result) = crate::offer::issued_nod(nod_api::issue_at_offer(storage, request)?)?;
     let claims = crate::offer::offer_claims(&result)?;
     crate::offer::record_offer(
@@ -532,17 +533,17 @@ fn issue_past_proof(
     )
 }
 
-fn offerings_start(storage: &StorageHandle<'_>) -> u64 {
-    outbe_worldwideday::worldwide_day(storage.clone(), TARGET_WWD)
+fn offering_start(storage: &StorageHandle<'_>) -> u64 {
+    outbe_worldwideday::get_worldwide_day(storage.clone(), TARGET_WWD)
         .unwrap()
         .unwrap()
-        .offerings_start
+        .offering_start
 }
 
 /// Moves the block to `minutes` past the start of offer hour `hour`. With `rate`, prices
 /// COEN/840 and COEN/978 at it for the 24 hours before the hour.
 fn at_offer_hour(storage: &StorageHandle<'_>, (hour, minutes): (u64, u64), rate: Option<u64>) {
-    let at = offerings_start(storage) + hour * 3_600 + minutes * 60;
+    let at = offering_start(storage) + hour * 3_600 + minutes * 60;
     storage.set_block_timestamp(U256::from(at)).unwrap();
     if let Some(rate) = rate {
         for iso in [840, 978] {
@@ -647,11 +648,11 @@ fn issue_nod_at_the_offer_gives_all_terms() {
         let nod_id =
             issue_past_proof(&storage, &offer_of(CALLER, 840, ("100", "0")), None).unwrap();
         let item = nod_api::get_item(&storage, nod_id).unwrap().unwrap();
-        let wwd = outbe_worldwideday::worldwide_day(storage.clone(), TARGET_WWD)
+        let wwd = outbe_worldwideday::get_worldwide_day(storage.clone(), TARGET_WWD)
             .unwrap()
             .unwrap();
         assert_eq!(item.owner, CALLER);
-        assert_eq!(item.series_id.day(), wwd.day);
+        assert_eq!(item.series_id.day(), wwd.emission_day);
         assert_eq!(item.sub_series_id, 3);
         assert!(!item.is_settled);
         assert_eq!(item.issued_at, storage.now_secs().unwrap());
@@ -851,7 +852,7 @@ fn nod_series_opens_with_its_first_nod() {
     let mut provider = priced_world();
     StorageHandle::enter(&mut provider, |storage| {
         assert_eq!(
-            offerings_start(&storage),
+            offering_start(&storage),
             date_key_to_utc_timestamp(OFFER_DAY - 1).unwrap() + 10 * 3_600,
             "the series of E starts at 10:00 E-1"
         );
@@ -914,10 +915,10 @@ fn nod_keeps_the_price_of_its_offer_hour() {
             nominal_and_load(curved, &storage).0 < nominal_and_load(plain, &storage).0,
             "the S-curve prices the nominal, not the entry"
         );
-        let emission_day = outbe_worldwideday::worldwide_day(storage.clone(), TARGET_WWD)
+        let emission_day = outbe_worldwideday::get_worldwide_day(storage.clone(), TARGET_WWD)
             .unwrap()
             .unwrap()
-            .day;
+            .emission_day;
         assert!(
             outbe_oracle::api::get_utc_day_vwap_for_iso(storage.clone(), emission_day, 840)
                 .unwrap()

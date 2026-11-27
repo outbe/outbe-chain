@@ -78,7 +78,7 @@ fn every_utc_day_is_an_emission_day() {
         ];
         let mut expected_promis_total = U256::ZERO;
         for (day, day_index, expected_wwd) in expected_days {
-            let record = outbe_emission::api::get_emission_day_record(handle.clone(), day)
+            let record = outbe_emission::api::get_emission_day(handle.clone(), day)
                 .unwrap()
                 .unwrap_or_else(|| panic!("missing EmissionDay record for {day}"));
             assert_eq!(record.wwd, expected_wwd, "unexpected wwd for day {day}");
@@ -196,7 +196,7 @@ fn start_date_comes_from_genesis_block() {
         let fire_ts = GENESIS_TS + SECONDS_PER_DAY + 3_600;
         let ctx = dispatch_at(handle.clone(), 2, fire_ts);
         crate::handler::process_agent_rewards(&ctx).unwrap();
-        let record = outbe_emission::api::get_emission_day_record(handle, 20_240_101)
+        let record = outbe_emission::api::get_emission_day(handle, 20_240_101)
             .unwrap()
             .expect("genesis day must be allocated");
         assert_eq!(U256::from(record.emission_limit), emission_limit_of_day(0));
@@ -391,10 +391,9 @@ fn wwd_step_runs_once_a_day() {
                 .is_none(),
             "reverted A6 must roll back the creation of WWD 20240107"
         );
-        let ed_20240105 =
-            outbe_emission::api::get_emission_day_record(ctx.storage.clone(), 20_240_105)
-                .unwrap()
-                .expect("A4 must still allocate 20240105 before A6");
+        let ed_20240105 = outbe_emission::api::get_emission_day(ctx.storage.clone(), 20_240_105)
+            .unwrap()
+            .expect("A4 must still allocate 20240105 before A6");
         assert_eq!(
             ed_20240105.state,
             outbe_emission::schema::emission_day_state::PROCESSING,
@@ -405,10 +404,9 @@ fn wwd_step_runs_once_a_day() {
             outbe_emission::schema::metadosis_state::PENDING,
             "the Metadosis of 20240105 starts at 12:00 UTC"
         );
-        let ed_20240104 =
-            outbe_emission::api::get_emission_day_record(ctx.storage.clone(), 20_240_104)
-                .unwrap()
-                .unwrap();
+        let ed_20240104 = outbe_emission::api::get_emission_day(ctx.storage.clone(), 20_240_104)
+            .unwrap()
+            .unwrap();
         assert_eq!(
             ed_20240104.metadosis_state,
             outbe_emission::schema::metadosis_state::COMPLETED,
@@ -426,14 +424,11 @@ fn wwd_step_runs_once_a_day() {
     // Now A6 retries, closes and seals WWD 20240103 that Metadosis already retired, finalizes the
     // forming snapshot of WWD 20240104, creates WWD 20240107 and updates `last_wwd_advance_day = 20240106`.
     storage.enter(|handle| {
-        let mut clear = outbe_emission::api::get_emission_day_record(handle.clone(), 20_240_108)
+        let mut clear = outbe_emission::api::get_emission_day(handle.clone(), 20_240_108)
             .unwrap()
             .unwrap();
         clear.wwd = WorldwideDay::new(0);
-        outbe_emission::schema::EmissionContract::new(handle)
-            .emission_days
-            .update(&clear)
-            .unwrap();
+        outbe_emission::api::put_emission_day(handle, &clear).unwrap();
     });
     let ts_day6_01h = ts_day6_00h + 3_600;
     storage.set_block_number(block_no);
@@ -467,10 +462,9 @@ fn wwd_step_runs_once_a_day() {
                 .is_some(),
             "A6 retry at 01:00 UTC must create WWD X+1 (20240107)"
         );
-        let ed_20240104 =
-            outbe_emission::api::get_emission_day_record(ctx.storage.clone(), 20_240_104)
-                .unwrap()
-                .unwrap();
+        let ed_20240104 = outbe_emission::api::get_emission_day(ctx.storage.clone(), 20_240_104)
+            .unwrap()
+            .unwrap();
         assert_eq!(
             ed_20240104.metadosis_state,
             outbe_emission::schema::metadosis_state::COMPLETED,
@@ -518,7 +512,7 @@ fn wwd_step_runs_once_a_day() {
 fn metadosis_starts_at_the_offering_end() {
     use outbe_emission::schema::metadosis_state;
     let metadosis_state_of = |handle: &StorageHandle<'_>, day: u32| {
-        outbe_emission::api::get_emission_day_record(handle.clone(), day)
+        outbe_emission::api::get_emission_day(handle.clone(), day)
             .unwrap()
             .unwrap()
             .metadosis_state
@@ -528,14 +522,16 @@ fn metadosis_starts_at_the_offering_end() {
     storage.enter(|handle| {
         let anchor = genesis_block(handle.clone(), GENESIS_TS + 60);
         run_cycle_tick(&anchor).unwrap();
-        let wwd =
-            outbe_metadosis::api::worldwide_day(handle.clone(), WorldwideDay::new(20_231_231))
-                .unwrap()
-                .unwrap();
-        let day = outbe_metadosis::api::emission_day(handle, 20_240_101)
+        let wwd = outbe_worldwideday::api::get_worldwide_day(
+            handle.clone(),
+            WorldwideDay::new(20_231_231),
+        )
+        .unwrap()
+        .unwrap();
+        let day = outbe_emission::api::get_emission_day(handle, 20_240_101)
             .unwrap()
             .unwrap();
-        assert_eq!(wwd.day, 20_240_101);
+        assert_eq!(wwd.emission_day, 20_240_101);
         assert_eq!(day.metadosis_start, wwd.offering_end);
         assert_eq!(wwd.offering_end, GENESIS_TS + SECONDS_PER_DAY + 12 * 3_600);
     });
@@ -629,7 +625,7 @@ fn run_blocks(storage: &mut HashMapStorageProvider, blocks: &[CheckedBlock<'_>])
             let ctx = dispatch_at(handle.clone(), block_number, timestamp);
             for &(day, state) in expected {
                 let actual = is_day_allocated(&ctx, day).then(|| {
-                    outbe_emission::api::get_emission_day_record(handle.clone(), day)
+                    outbe_emission::api::get_emission_day(handle.clone(), day)
                         .unwrap()
                         .unwrap()
                         .metadosis_state

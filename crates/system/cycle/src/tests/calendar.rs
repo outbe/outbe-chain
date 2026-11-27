@@ -25,7 +25,7 @@ fn process_emission_day_catches_up_one_oldest_day_per_hourly_run_after_a_multi_d
         assert_eq!(active_utc_day(&fire), 20_240_102);
 
         assert!(
-            outbe_metadosis::api::worldwide_day(
+            outbe_worldwideday::api::get_worldwide_day(
                 fire.storage.clone(),
                 outbe_system_common::time::WorldwideDay::new(20_240_104),
             )
@@ -348,7 +348,7 @@ fn isolated_step_checkpoints_route_failed_allocation_and_failed_metadosis_to_pro
 
         run_due_tasks(&ctx).unwrap();
 
-        let rec = outbe_emission::api::get_emission_day_record(handle.clone(), 20_240_101)
+        let rec = outbe_emission::api::get_emission_day(handle.clone(), 20_240_101)
             .unwrap()
             .unwrap();
         let expected_cap = outbe_emission::day_emission::emission_limit_of_day(0);
@@ -455,7 +455,7 @@ fn isolated_step_checkpoints_route_failed_allocation_and_failed_metadosis_to_pro
         account_parent(&ctx, 4);
         run_due_tasks(&ctx).unwrap();
 
-        let rec = outbe_emission::api::get_emission_day_record(handle.clone(), 20_240_102)
+        let rec = outbe_emission::api::get_emission_day(handle.clone(), 20_240_102)
             .unwrap()
             .unwrap();
         assert_eq!(
@@ -482,7 +482,7 @@ fn isolated_step_checkpoints_route_failed_allocation_and_failed_metadosis_to_pro
 
     // The day of the failed allocation closes at its Metadosis time and cancels its auction.
     let failed_allocation = storage.enter(|handle| {
-        outbe_emission::api::get_emission_day_record(handle, 20_240_101)
+        outbe_emission::api::get_emission_day(handle, 20_240_101)
             .unwrap()
             .unwrap()
     });

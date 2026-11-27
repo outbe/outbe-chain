@@ -11,14 +11,17 @@ fn hourly_process_emission_day_executes_due_emission_day_at_metadosis_start() {
         let anchor = genesis_block(handle.clone(), GENESIS_TS + 60);
         run_cycle_tick(&anchor).unwrap();
         let wwd = outbe_system_common::time::WorldwideDay::new(20_240_101);
-        let wwd_proj = outbe_metadosis::api::worldwide_day(handle.clone(), wwd)
+        let wwd_record = outbe_worldwideday::api::get_worldwide_day(handle.clone(), wwd)
             .unwrap()
             .unwrap();
-        let ed = outbe_metadosis::api::emission_day(handle, wwd_proj.day)
+        let ed = outbe_emission::api::get_emission_day(handle, wwd_record.emission_day)
             .unwrap()
             .unwrap();
         assert_eq!(ed.wwd, wwd);
-        assert_eq!(ed.state, outbe_emission::schema::metadosis_state::PENDING);
+        assert_eq!(
+            ed.metadosis_state,
+            outbe_emission::schema::metadosis_state::PENDING
+        );
         (
             ed,
             ed.metadosis_start + crate::tasks::PROCESS_EMISSION_DAY_START_OFFSET_SECONDS,
@@ -36,11 +39,11 @@ fn hourly_process_emission_day_executes_due_emission_day_at_metadosis_start() {
     storage.enter(|handle| {
         let ctx = dispatch_at(handle.clone(), 20, fire_at);
 
-        let updated = outbe_metadosis::api::emission_day(ctx.storage.clone(), emission_day.day)
+        let updated = outbe_emission::api::get_emission_day(ctx.storage.clone(), emission_day.day)
             .unwrap()
             .unwrap();
         assert_eq!(
-            updated.state,
+            updated.metadosis_state,
             outbe_emission::schema::metadosis_state::COMPLETED
         );
         assert!(
@@ -51,7 +54,7 @@ fn hourly_process_emission_day_executes_due_emission_day_at_metadosis_start() {
             .unwrap()
         );
         let allocated =
-            outbe_emission::api::get_emission_day_record(ctx.storage.clone(), emission_day.day)
+            outbe_emission::api::get_emission_day(ctx.storage.clone(), emission_day.day)
                 .unwrap()
                 .unwrap();
         assert_eq!(
@@ -60,7 +63,7 @@ fn hourly_process_emission_day_executes_due_emission_day_at_metadosis_start() {
         );
         crate::handler::process_agent_rewards(&ctx).unwrap();
         let completed =
-            outbe_emission::api::get_emission_day_record(ctx.storage.clone(), emission_day.day)
+            outbe_emission::api::get_emission_day(ctx.storage.clone(), emission_day.day)
                 .unwrap()
                 .unwrap();
         assert_eq!(
@@ -76,7 +79,7 @@ fn hourly_process_emission_day_executes_due_emission_day_at_metadosis_start() {
         );
         crate::handler::process_agent_rewards(&ctx).unwrap();
         assert_eq!(
-            outbe_emission::api::get_emission_day_record(ctx.storage.clone(), emission_day.day)
+            outbe_emission::api::get_emission_day(ctx.storage.clone(), emission_day.day)
                 .unwrap()
                 .unwrap(),
             completed,
@@ -120,10 +123,10 @@ fn due_emission_day_fixture() -> (HashMapStorageProvider, u32, u64) {
         let anchor = genesis_block(handle.clone(), GENESIS_TS + 60);
         run_cycle_tick(&anchor).unwrap();
         let wwd = outbe_system_common::time::WorldwideDay::new(20_240_101);
-        let wwd_proj = outbe_metadosis::api::worldwide_day(handle.clone(), wwd)
+        let wwd_record = outbe_worldwideday::api::get_worldwide_day(handle.clone(), wwd)
             .unwrap()
             .unwrap();
-        let ed = outbe_metadosis::api::emission_day(handle, wwd_proj.day)
+        let ed = outbe_emission::api::get_emission_day(handle, wwd_record.emission_day)
             .unwrap()
             .unwrap();
         (ed.day, ed.metadosis_start.div_ceil(3_600) * 3_600)
@@ -160,7 +163,7 @@ fn emission_day_record(
     storage: &mut HashMapStorageProvider,
     day: u32,
 ) -> Option<outbe_emission::schema::EmissionDay> {
-    storage.enter(|handle| outbe_emission::api::get_emission_day_record(handle, day).unwrap())
+    storage.enter(|handle| outbe_emission::api::get_emission_day(handle, day).unwrap())
 }
 
 #[test]
@@ -224,7 +227,7 @@ fn conservation_mismatch_fails_the_block() {
     storage.set_block_number(20);
     storage.enter(|handle| {
         let ctx = dispatch_at(handle.clone(), 20, fire_at);
-        let mut record = outbe_emission::api::get_emission_day_record(ctx.storage.clone(), day)
+        let mut record = outbe_emission::api::get_emission_day(ctx.storage.clone(), day)
             .unwrap()
             .unwrap();
         assert_eq!(
@@ -232,10 +235,7 @@ fn conservation_mismatch_fails_the_block() {
             outbe_emission::schema::metadosis_state::COMPLETED
         );
         record.validators += 1;
-        outbe_emission::schema::EmissionContract::new(ctx.storage.clone())
-            .emission_days
-            .update(&record)
-            .unwrap();
+        outbe_emission::api::put_emission_day(ctx.storage.clone(), &record).unwrap();
 
         let error = crate::handler::process_agent_rewards(&ctx).unwrap_err();
         assert!(matches!(
@@ -243,7 +243,7 @@ fn conservation_mismatch_fails_the_block() {
             outbe_primitives::error::PrecompileError::FatalWithCause(_)
         ));
         assert_eq!(
-            outbe_emission::api::get_emission_day_record(ctx.storage.clone(), day)
+            outbe_emission::api::get_emission_day(ctx.storage.clone(), day)
                 .unwrap()
                 .unwrap()
                 .state,

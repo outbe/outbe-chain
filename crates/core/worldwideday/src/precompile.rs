@@ -32,12 +32,10 @@ pub fn dispatch(
                     crate::queries::worldwide_day(&WorldwideDayContract::new(storage.clone()), c)
                 }),
                 worldwideDayTotals(c) => view(c, |c| {
-                    let wwd = outbe_emission::api::get_emission_day_record(
-                        storage.clone(),
-                        c.emissionDay,
-                    )?
-                    .map(|record| record.wwd)
-                    .unwrap_or_else(|| outbe_system_common::time::WorldwideDay::new(0));
+                    let wwd =
+                        outbe_emission::api::get_emission_day(storage.clone(), c.emissionDay)?
+                            .map(|record| record.wwd)
+                            .unwrap_or_else(|| outbe_system_common::time::WorldwideDay::new(0));
                     let totals = crate::api::worldwide_day_totals(storage.clone(), wwd)?;
                     Ok((
                         totals.nod_count,

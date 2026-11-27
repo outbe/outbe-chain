@@ -14,65 +14,32 @@ use super::{
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NewWwdSchedule {
-    pub day: u32,
+    pub emission_day: u32,
     pub forming_start: u64,
     pub forming_end: u64,
-    pub offerings_start: u64,
+    pub offering_start: u64,
     pub offering_end: u64,
-}
-
-/// Immutable, typed read projection for one persisted WorldwideDay.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct WwdProjection {
-    pub worldwide_day: WorldwideDay,
-    pub day: u32,
-    pub forming_start: u64,
-    pub forming_end: u64,
-    pub offerings_start: u64,
-    pub offering_end: u64,
-}
-
-impl WwdProjection {
-    pub fn from_record(worldwide_day: WorldwideDay, record: &WorldwideDayRecord) -> Result<Self> {
-        Ok(Self {
-            worldwide_day,
-            day: record.emission_day,
-            forming_start: record
-                .forming_start()
-                .map_err(super::errors::date_step_error)?,
-            forming_end: record
-                .forming_end()
-                .map_err(super::errors::date_step_error)?,
-            offerings_start: record.offering_start,
-            offering_end: record.offering_end,
-        })
-    }
-
-    #[must_use]
-    pub const fn is_offering_at(&self, timestamp: u64) -> bool {
-        timestamp >= self.offerings_start && timestamp < self.offering_end
-    }
 }
 
 /// Complete bounded snapshot of indexed WWD state.
 #[derive(Debug)]
 pub struct ValidatedWwdAggregate {
-    records: BTreeMap<WorldwideDay, WwdProjection>,
+    records: BTreeMap<WorldwideDay, WorldwideDayRecord>,
     active_order: Vec<WorldwideDay>,
 }
 
 impl ValidatedWwdAggregate {
-    pub fn record(&self, worldwide_day: WorldwideDay) -> Option<&WwdProjection> {
+    pub fn record(&self, worldwide_day: WorldwideDay) -> Option<&WorldwideDayRecord> {
         self.records.get(&worldwide_day)
     }
 
-    pub fn active_records(&self) -> impl Iterator<Item = &WwdProjection> {
+    pub fn active_records(&self) -> impl Iterator<Item = &WorldwideDayRecord> {
         self.active_order
             .iter()
             .map(|wwd| self.records.get(wwd).expect("validated active order"))
     }
 
-    pub fn records(&self) -> impl Iterator<Item = &WwdProjection> {
+    pub fn records(&self) -> impl Iterator<Item = &WorldwideDayRecord> {
         self.records.values()
     }
 
@@ -95,7 +62,11 @@ impl ValidatedWwdAggregate {
                 .get(*wwd)?
                 .ok_or(WwdStorageCorruptionError::ActiveIndexPointsToMissingWwd { wwd: *wwd })?;
             validate_record_shape(*wwd, &record)?;
-            records.insert(*wwd, WwdProjection::from_record(*wwd, &record)?);
+            // The forming window of a pipeline WWD must have a valid date.
+            record
+                .forming_end()
+                .map_err(super::errors::date_step_error)?;
+            records.insert(*wwd, record);
         }
         let active_order: Vec<WorldwideDay> = pipeline_set.into_iter().collect();
         Ok(Self {
@@ -112,10 +83,10 @@ pub fn open_worldwide_day(
 ) -> Result<bool> {
     crate::lease::require_worldwide_day_lease(&factory.storage, worldwide_day)?;
     if let Some(existing) = factory.worldwide_days.get(worldwide_day)? {
-        if existing.emission_day != schedule.day {
+        if existing.emission_day != schedule.emission_day {
             return Err(WwdStorageCorruptionError::WwdDayLinkMismatch {
                 wwd: worldwide_day,
-                expected_day: schedule.day,
+                expected_day: schedule.emission_day,
                 found_day: existing.emission_day,
             }
             .into());
@@ -126,8 +97,8 @@ pub fn open_worldwide_day(
     validate_schedule_shape(worldwide_day, &schedule)?;
     let record = WorldwideDayRecord {
         wwd: worldwide_day,
-        emission_day: schedule.day,
-        offering_start: schedule.offerings_start,
+        emission_day: schedule.emission_day,
+        offering_start: schedule.offering_start,
         offering_end: schedule.offering_end,
     };
     validate_record_shape(worldwide_day, &record)?;
@@ -182,10 +153,10 @@ fn validate_schedule_shape(wwd: WorldwideDay, schedule: &NewWwdSchedule) -> Resu
     ];
     let offering = [
         schedule.forming_start,
-        schedule.offerings_start,
+        schedule.offering_start,
         schedule.offering_end,
     ];
-    if schedule.offerings_start == 0 || !ordered(forming) || !ordered(offering) {
+    if schedule.offering_start == 0 || !ordered(forming) || !ordered(offering) {
         return Err(WwdStorageCorruptionError::WwdNonMonotonicPhaseBoundaries { wwd }.into());
     }
     Ok(())

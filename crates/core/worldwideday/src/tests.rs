@@ -30,7 +30,9 @@ fn pipeline_cap_and_historical_close() {
                     assert!(crate::open_worldwide_day(&mut factory, cur_wwd, schedule)?);
                     assert_eq!(
                         crate::emission_day_of(storage.clone(), cur_wwd)?,
-                        Some(outbe_system_common::time::EmissionDate::new(schedule.day))
+                        Some(outbe_system_common::time::EmissionDate::new(
+                            schedule.emission_day
+                        ))
                     );
                     day_key = outbe_system_common::time::next_date_key(day_key).unwrap();
                 }
@@ -77,7 +79,7 @@ fn pipeline_cap_and_historical_close() {
                 assert_eq!(
                     crate::emission_day_of(storage.clone(), hist_wwd)?,
                     Some(outbe_system_common::time::EmissionDate::new(
-                        hist_schedule.day
+                        hist_schedule.emission_day
                     ))
                 );
                 crate::close_worldwide_day(&mut factory, hist_wwd)?;
@@ -98,7 +100,7 @@ fn pipeline_cap_and_historical_close() {
     assert_eq!(last_opened.worldwideDay, 20260901);
     assert_eq!(last_opened.formingStart, hist_schedule.forming_start);
     assert_eq!(last_opened.formingEnd, hist_schedule.forming_end);
-    assert_eq!(last_opened.offeringStart, hist_schedule.offerings_start);
+    assert_eq!(last_opened.offeringStart, hist_schedule.offering_start);
     assert_eq!(last_opened.offeringEnd, hist_schedule.offering_end);
     let sealed: Vec<_> = events
         .iter()
@@ -130,10 +132,10 @@ fn offering_is_the_next_wwd() {
     let wwd = WorldwideDay::new(20_260_802);
     let (schedule, metadosis_start) = crate::compute_wwd_schedule(wwd).unwrap();
     let next_wwd_start = WorldwideDay::new(20_260_803).start_timestamp().unwrap();
-    assert_eq!(schedule.offerings_start, next_wwd_start);
+    assert_eq!(schedule.offering_start, next_wwd_start);
     assert_eq!(schedule.offering_end, next_wwd_start + 50 * 60 * 60);
     assert_eq!(schedule.forming_end, schedule.offering_end - 24 * 60 * 60);
-    assert_eq!(schedule.day, 20_260_803);
+    assert_eq!(schedule.emission_day, 20_260_803);
     assert_eq!(metadosis_start, schedule.offering_end);
 
     // From 10:00 to 12:00 UTC three offering windows are open.

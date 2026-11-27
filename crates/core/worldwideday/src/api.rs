@@ -5,25 +5,21 @@ use crate::precompile::IWorldwideDay;
 use crate::schema::WorldwideDayContract;
 
 use super::{
-    aggregate::{ValidatedWwdAggregate, WwdProjection},
-    errors::WwdStorageCorruptionError,
+    aggregate::ValidatedWwdAggregate, errors::WwdStorageCorruptionError,
+    record::WorldwideDay as WorldwideDayRecord,
 };
 
-/// Reads one typed WWD projection without exposing its storage facade.
-pub fn worldwide_day(
+/// Reads the stored record of one WWD.
+pub fn get_worldwide_day(
     storage: StorageHandle<'_>,
     wwd: WorldwideDay,
-) -> Result<Option<WwdProjection>> {
-    let contract = WorldwideDayContract::new(storage);
-    let Some(record) = contract.worldwide_days.get(wwd)? else {
-        return Ok(None);
-    };
-    Ok(Some(WwdProjection::from_record(wwd, &record)?))
+) -> Result<Option<WorldwideDayRecord>> {
+    WorldwideDayContract::new(storage).worldwide_days.get(wwd)
 }
 
-/// Reads the complete bounded typed WWD aggregate without exposing indexes or
-/// storage entries. This function sorts the returned projections by WorldwideDay.
-pub fn worldwide_days(storage: StorageHandle<'_>) -> Result<Vec<WwdProjection>> {
+/// Reads the stored records of the complete bounded WWD aggregate without exposing
+/// indexes or storage entries. This function sorts the returned records by WorldwideDay.
+pub fn worldwide_days(storage: StorageHandle<'_>) -> Result<Vec<WorldwideDayRecord>> {
     Ok(ValidatedWwdAggregate::load_and_validate(storage)?
         .records()
         .copied()
@@ -100,19 +96,19 @@ pub fn record_worldwide_day_nod(
 }
 
 /// Returns true when `wwd` exists, is not sealed, and the current block
-/// timestamp is within `[offerings_start, offering_end)`.
+/// timestamp is within `[offering_start, offering_end)`.
 pub fn is_offering_day(storage: StorageHandle<'_>, wwd: WorldwideDay) -> Result<bool> {
     let now = u64::try_from(storage.timestamp()?).unwrap_or(u64::MAX);
-    let Some(projection) = worldwide_day(storage.clone(), wwd)? else {
+    let Some(record) = get_worldwide_day(storage.clone(), wwd)? else {
         return Ok(false);
     };
-    if !projection.is_offering_at(now) {
+    if !record.is_offering_at(now) {
         return Ok(false);
     }
     Ok(!is_worldwide_day_sealed(storage, wwd)?)
 }
 
-/// Returns indexed pipeline WWDs whose offering window `[offerings_start, offering_end)`
+/// Returns indexed pipeline WWDs whose offering window `[offering_start, offering_end)`
 /// contains the current block timestamp and which are not yet sealed.
 pub fn offering_worldwide_days(storage: StorageHandle<'_>) -> Result<Vec<WorldwideDay>> {
     let now = u64::try_from(storage.timestamp()?).unwrap_or(u64::MAX);
