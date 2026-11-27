@@ -31,6 +31,12 @@
 //! recipient through [`api::withdraw_context`]. The pool pays the spent amount
 //! to that recipient, as the ERC20 of the note or as native COEN.
 //!
+//! A spend or a withdrawal also takes an `outbe.paynote.claim_spend` proof,
+//! which spends a locked transfer note directly. Thus the holder of a deposit
+//! or a transfer pays with one proof and no `IPayNote.resolveTransfer` first.
+//! The rest of the locked note becomes an ordinary change note under a serial
+//! the prover picks.
+//!
 //! A **transfer** pays another party without sharing a key. `IPayNote.transfer`
 //! turns part of a note into a locked note for the recipient's public key,
 //! which is the note serial of a key the recipient holds. The recipient

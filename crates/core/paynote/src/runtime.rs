@@ -20,6 +20,7 @@ use outbe_zk::paynote::{
     decode_public_inputs as decode_paynote_public_inputs,
 };
 use outbe_zk::paynote_claim::{self, PaynoteClaim};
+use outbe_zk::paynote_claim_spend::{self, PaynoteClaimSpend};
 use outbe_zk::paynote_merge::{self, PaynoteMerge, MAX_MERGE_INPUTS};
 use outbe_zk::paynote_transfer::{self, PaynoteTransfer};
 use outbe_zk::protocol::zk::Circuit;
@@ -465,8 +466,9 @@ enum Payout {
     Recipient(Address),
 }
 
-/// `consume(proof)` — verify a frozen `outbe.paynote@1.4.0` spend proof and
-/// return the validated claim. The function nullifies the note and appends the
+/// `consume(proof)` — verify a frozen `outbe.paynote@1.4.0` spend proof, or an
+/// `outbe.paynote.claim_spend` proof of a locked transfer note, and return the
+/// validated claim. The function nullifies the note and appends the
 /// change commitment, if there is one. Then it routes `spend_amount` of the
 /// asset from the pool into the reserve vault of the asset.
 ///
@@ -503,13 +505,56 @@ pub(crate) fn withdraw(
     spend(storage, proof, Payout::Recipient(recipient)).map(|_| ())
 }
 
-/// The spend transition that settlement and withdrawal share. All guards run
-/// before the proof is verified, and all effects are one rollback unit.
+/// Header of a combined `outbe.paynote.claim_spend` proof: its public-input
+/// count, which differs from that of `outbe.paynote`.
+const CLAIM_SPEND_HEADER: [u8; 4] =
+    (outbe_zk::noir::paynote_claim_spend::PUBLIC_INPUT_COUNT as u32).to_be_bytes();
+const _: () = assert!(
+    outbe_zk::noir::paynote_claim_spend::PUBLIC_INPUT_COUNT
+        != outbe_zk::noir::paynote::PUBLIC_INPUT_COUNT
+);
+
+/// The spend transition that settlement and withdrawal share. The proof spends
+/// either an ordinary note (`outbe.paynote`) or a locked transfer note
+/// (`outbe.paynote.claim_spend`), which its holder thus claims and spends at
+/// once. All guards run before the proof is verified, and all effects are one
+/// rollback unit.
 fn spend(storage: &StorageHandle<'_>, proof: &[u8], payout: Payout) -> Result<PayNoteClaim> {
     // Framing must decode before the function touches any state.
-    let claim: PayNotePublicInputs = decode_paynote_public_inputs(proof)
-        .and_then(TryInto::try_into)
-        .map_err(|error| PayNoteError::InvalidInput(format!("proof is malformed: {error}")))?;
+    let malformed = |error: outbe_zk::Error| {
+        PrecompileError::from(PayNoteError::InvalidInput(format!(
+            "proof is malformed: {error}"
+        )))
+    };
+    // The combined proof starts with its public-input count, which tells a
+    // claim-spend of a locked transfer note from a spend of an ordinary note.
+    let from_locked = proof.get(..4) == Some(&CLAIM_SPEND_HEADER[..]);
+    let claim = if from_locked {
+        let claim: paynote_claim_spend::alloy::PublicInputs =
+            paynote_claim_spend::decode_public_inputs(proof)
+                .and_then(TryInto::try_into)
+                .map_err(malformed)?;
+        // The circuit lets the sender act only when the deadline is not after
+        // `not_before`, as in `resolve_transfer`.
+        if claim.not_before > storage.now_secs()? {
+            return Err(
+                PayNoteError::InvalidInput("claim not_before is in the future".into()).into(),
+            );
+        }
+        PayNotePublicInputs {
+            chain_id: claim.chain_id,
+            root: claim.root,
+            nullifier: claim.nullifier,
+            asset: claim.asset,
+            context: claim.context,
+            spend_amount: claim.spend_amount,
+            change_commitment: claim.change_commitment,
+        }
+    } else {
+        decode_paynote_public_inputs(proof)
+            .and_then(TryInto::try_into)
+            .map_err(malformed)?
+    };
 
     let (runtime_chain_id, zeros) = chain_state(storage)?;
     let paynote: PayNoteContract<'_> = storage.contract();
@@ -568,7 +613,12 @@ fn spend(storage: &StorageHandle<'_>, proof: &[u8], payout: Payout) -> Result<Pa
         return Err(PayNoteError::NullifierSpent.into());
     }
 
-    match verify_circuit::<Paynote>(proof) {
+    let verified = if from_locked {
+        verify_circuit::<PaynoteClaimSpend>(proof)
+    } else {
+        verify_circuit::<Paynote>(proof)
+    };
+    match verified {
         Ok(true) => {}
         Ok(false) => return Err(PayNoteError::InvalidInput("proof is invalid".into()).into()),
         Err(error) => {
@@ -580,7 +630,8 @@ fn spend(storage: &StorageHandle<'_>, proof: &[u8], payout: Payout) -> Result<Pa
     }
 
     // A full spend requires the zero change sentinel. A partial spend appends
-    // exactly the circuit-derived deterministic change.
+    // exactly the change the circuit binds: deterministic for an ordinary note,
+    // under a serial the prover picks for a locked one.
     let partial = !change.is_zero();
     let change_word = claim.change_commitment;
     if partial {
