@@ -5,10 +5,12 @@
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_system_common::addresses::PAYNOTE_ADDRESS;
+use outbe_zk::codec::{field_from_b256, field_to_b256};
 use outbe_zk::paynote_merge::{
     alloy::{PublicInputs, Witness},
     MAX_MERGE_INPUTS,
 };
+use outbe_zk::primitive::curve::{coords, Affine};
 
 use crate::Field;
 use crate::{
@@ -17,6 +19,89 @@ use crate::{
     schema::PAYNOTE_TREE_DEPTH,
     PayNoteTree,
 };
+
+/// What a recipient publishes in place of an address, in the style of an
+/// ERC-5564 stealth meta-address:
+/// `st:outbe:0x<chain id, 8 bytes><recipient key><view key x><view key y>`.
+///
+/// It names no account, so a payer learns nothing about the addresses the
+/// recipient uses. The payer locks a note to `recipient_pk` and encrypts the
+/// note details to `view_key`. They send the details off-chain.
+///
+/// TODO: publish the note details on-chain, so that the two parties need no
+/// channel of their own. The design follows the ERC-5564 announcement:
+/// - The payer draws an ephemeral Grumpkin key `e`, publishes `E = e·G` and
+///   computes the shared secret `s = x(e·view_key)`.
+/// - The view tag is the first byte of a hash of `s`. A recipient skips every
+///   announcement with another tag without decrypting it.
+/// - The memo is ChaCha20-Poly1305 over `(amount, deadline, sender serial,
+///   rho)`, about 150 bytes, under a key derived from `s` and the locked
+///   commitment.
+/// - A `transfer(proof, ephemeralPubKey, metadata)` overload makes the pool
+///   emit the ERC-5564 `Announcement` event under a PayNote scheme id, with
+///   the view tag as the first metadata byte.
+/// - A new version of the transfer circuit binds the hash of the memo as a
+///   public input. Otherwise anyone could resubmit the proof with another memo.
+/// - The recipient opens the memo, recomputes the locked commitment and checks
+///   `hasCommitment` before they trust it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ReceiverBundle {
+    /// The chain the recipient accepts notes on.
+    pub chain_id: u64,
+    /// The `note_sn` of a key the recipient holds. A transfer lock names it.
+    pub recipient_pk: Field,
+    /// Grumpkin public key that the note details are encrypted to.
+    pub view_key: Affine,
+}
+
+const BUNDLE_PREFIX: &str = "st:outbe:0x";
+
+impl ReceiverBundle {
+    /// Read a bundle that a recipient published for `chain_id`.
+    pub fn parse(text: &str, chain_id: u64) -> Result<Self, PayNoteError> {
+        let invalid = |message: &str| PayNoteError::InvalidInput(message.into());
+        let hex = text
+            .strip_prefix(BUNDLE_PREFIX)
+            .ok_or_else(|| invalid("receiver bundle must start with st:outbe:0x"))?;
+        let bytes: [u8; 104] = alloy_primitives::hex::decode(hex)
+            .ok()
+            .and_then(|bytes| bytes.try_into().ok())
+            .ok_or_else(|| invalid("receiver bundle must hold 104 hex-encoded bytes"))?;
+        let (chain, words) = bytes.split_at(8);
+        if chain != chain_id.to_be_bytes() {
+            return Err(invalid("receiver bundle is for another chain"));
+        }
+        let word = |index: usize| {
+            field_from_b256(&B256::from_slice(&words[index * 32..][..32]))
+                .map_err(|_| invalid("receiver bundle holds a non-canonical field"))
+        };
+        let (recipient_pk, view_key) = (word(0)?, Affine::new_unchecked(word(1)?, word(2)?));
+        if recipient_pk == Field::from(0) {
+            return Err(invalid("receiver bundle has a zero recipient key"));
+        }
+        // Grumpkin has cofactor one, so a point on the curve is in the group.
+        if !view_key.is_on_curve() {
+            return Err(invalid("receiver bundle view key is not on the curve"));
+        }
+        Ok(Self {
+            chain_id,
+            recipient_pk,
+            view_key,
+        })
+    }
+}
+
+impl core::fmt::Display for ReceiverBundle {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let (x, y) = coords(&self.view_key).map_err(|_| core::fmt::Error)?;
+        write!(f, "{BUNDLE_PREFIX}{:016x}", self.chain_id)?;
+        for field in [self.recipient_pk, x, y] {
+            let word = field_to_b256(&field).map_err(|_| core::fmt::Error)?;
+            write!(f, "{}", alloy_primitives::hex::encode(word))?;
+        }
+        Ok(())
+    }
+}
 
 /// Start a PayNote tree with the chain-specific empty leaf.
 pub fn new_tree(chain_id: u64) -> Result<PayNoteTree, PayNoteError> {
@@ -81,7 +166,6 @@ pub fn merge_witness(
     output_spend_key: B256,
 ) -> Result<(PublicInputs, Witness), PayNoteError> {
     use crate::hash::{note_commitment, note_nullifier, note_sn};
-    use outbe_zk::codec::{field_from_b256, field_to_b256};
     let invalid = |message: &str| PayNoteError::InvalidInput(message.into());
     let field = |word: &B256| {
         field_from_b256(word).map_err(|_| invalid("spend key is not a canonical field"))

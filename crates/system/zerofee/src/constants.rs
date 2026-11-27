@@ -19,7 +19,9 @@
 use alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE;
 use outbe_primitives::system_tx::STEADY_BLOCK_GAS_LIMIT;
 
-pub use crate::sponsorship::{ELEVATED_SPONSORED_GAS, FREE_TX_ISSUE_NOD_GAS_LIMIT};
+pub use crate::sponsorship::{
+    ELEVATED_SPONSORED_GAS, FREE_TX_ISSUE_NOD_GAS_LIMIT, FREE_TX_PAYNOTE_PROOF_GAS_LIMIT,
+};
 pub use outbe_primitives::zero_fee_types::FREE_TX_BOOTSTRAP_GAS_LIMIT;
 
 /// Maximum number of sponsored free transactions per signer per UTC day.
@@ -105,6 +107,32 @@ mod selector_tests {
         alloy_sol_types::sol!("../../../contracts/precompiles/src/INodFactory.sol");
     }
     use abi::INodFactory;
+
+    mod paynote_abi {
+        alloy_sol_types::sol!("../../../contracts/precompiles/src/IPayNote.sol");
+    }
+    use paynote_abi::IPayNote;
+
+    #[test]
+    fn paynote_grants_match_the_paynote_abi() {
+        let granted: Vec<[u8; 4]> = ELEVATED_SPONSORED_GAS
+            .iter()
+            .filter(|(target, _, gas)| {
+                *target == outbe_system_common::addresses::PAYNOTE_ADDRESS
+                    && *gas == crate::sponsorship::FREE_TX_PAYNOTE_PROOF_GAS_LIMIT
+            })
+            .map(|(_, selector, _)| *selector)
+            .collect();
+        assert_eq!(
+            granted,
+            [
+                IPayNote::transferCall::SELECTOR,
+                IPayNote::resolveTransferCall::SELECTOR,
+                IPayNote::mergePayNotesCall::SELECTOR,
+                IPayNote::withdrawCall::SELECTOR,
+            ]
+        );
+    }
 
     #[test]
     fn elevated_issue_nod_matches_the_nod_factory_abi() {

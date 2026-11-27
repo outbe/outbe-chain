@@ -6,7 +6,7 @@
 //! production membership witnesses.
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_primitives::storage::hashmap::HashMapStorageProvider;
+use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_system_common::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_zk::codec::{field_from_b256, field_to_b256, u256_limbs_be};
 use outbe_zk::noir::paynote::{Paynote as PayNote, PublicInputs, Witness};
@@ -389,21 +389,24 @@ pub fn claim_spend_proof(
 pub fn seed_pool(provider: &mut HashMapStorageProvider, chain_id: u64, leaves: &[Field]) {
     provider.enable_sub_call_stub();
     provider.stub_sub_call_at(VAULT_ROUTER_ADDRESS, U256::ZERO.to_be_bytes::<32>().into());
-    provider.enter(|storage| {
-        let paynote: PayNoteContract<'_> = storage.contract();
-        let zeros = empty_subtrees(chain_id, PAYNOTE_TREE_DEPTH).unwrap();
-        let empty_root = field_to_b256(&zeros[PAYNOTE_TREE_DEPTH]).unwrap();
-        paynote.current_root.write(empty_root).unwrap();
-        paynote.recent_roots.setup(PAYNOTE_ROOT_WINDOW).unwrap();
-        paynote.recent_roots.push(empty_root).unwrap();
-        for leaf in leaves {
-            runtime::append(&paynote, &zeros, *leaf).unwrap();
-            paynote
-                .commitments
-                .write(&field_to_b256(leaf).unwrap(), true)
-                .unwrap();
-        }
-    });
+    provider.enter(|storage| seed_leaves(&storage, chain_id, leaves));
+}
+
+/// Writes a pool that holds `leaves` into `storage`.
+pub fn seed_leaves(storage: &StorageHandle<'_>, chain_id: u64, leaves: &[Field]) {
+    let paynote: PayNoteContract<'_> = storage.contract();
+    let zeros = empty_subtrees(chain_id, PAYNOTE_TREE_DEPTH).unwrap();
+    let empty_root = field_to_b256(&zeros[PAYNOTE_TREE_DEPTH]).unwrap();
+    paynote.current_root.write(empty_root).unwrap();
+    paynote.recent_roots.setup(PAYNOTE_ROOT_WINDOW).unwrap();
+    paynote.recent_roots.push(empty_root).unwrap();
+    for leaf in leaves {
+        runtime::append(&paynote, &zeros, *leaf).unwrap();
+        paynote
+            .commitments
+            .write(&field_to_b256(leaf).unwrap(), true)
+            .unwrap();
+    }
 }
 
 /// One deposited note plus a spend proof over it: everything a consuming
