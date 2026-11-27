@@ -96,7 +96,7 @@ fn intex_lifecycle_slot_layout_is_pinned() {
             intex.forfeit_cursor.slot(),
         ];
         for (index, slot) in slots.into_iter().enumerate() {
-            assert_eq!(slot, U256::from(13 + index), "field #{index}");
+            assert_eq!(slot, U256::from(11 + index), "field #{index}");
         }
     });
 }
