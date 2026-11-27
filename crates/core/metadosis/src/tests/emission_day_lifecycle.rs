@@ -1,5 +1,4 @@
 use super::*;
-use crate::api;
 use alloy_sol_types::SolEvent;
 use outbe_system_common::time::{date_key_to_utc_timestamp, next_date_key, WorldwideDay};
 
@@ -351,14 +350,16 @@ fn wwd_takes_offers_only_by_the_time_and_seals_on_close() {
         storage
             .set_block_timestamp(U256::from(wwd_record.offering_start))
             .unwrap();
-        assert!(api::is_offering_day(storage.clone(), wwd).unwrap());
-        assert!(api::offering_worldwide_days(storage.clone())
-            .unwrap()
-            .contains(&wwd));
+        assert!(outbe_worldwideday::api::is_offering_day(storage.clone(), wwd).unwrap());
+        assert!(
+            outbe_worldwideday::api::offering_worldwide_days(storage.clone())
+                .unwrap()
+                .contains(&wwd)
+        );
         storage
             .set_block_timestamp(U256::from(wwd_record.offering_end))
             .unwrap();
-        assert!(!api::is_offering_day(storage.clone(), wwd).unwrap());
+        assert!(!outbe_worldwideday::api::is_offering_day(storage.clone(), wwd).unwrap());
 
         // The daily step on 2026-10-04 00:00 UTC seals the offering window.
         let seal_ts = wwd_record.offering_end + 12 * 3_600;
@@ -402,7 +403,7 @@ fn wwd_without_price_runs_as_empty_day() {
         storage
             .set_block_timestamp(U256::from(wwd_record.offering_start))
             .unwrap();
-        assert!(api::is_offering_day(storage.clone(), wwd).unwrap());
+        assert!(outbe_worldwideday::api::is_offering_day(storage.clone(), wwd).unwrap());
 
         let expected_limit = outbe_emission::day_emission::emission_limit_of_day(1);
         let settle_ts = date_key_to_utc_timestamp(20261003).unwrap() + 12 * 3_600;
