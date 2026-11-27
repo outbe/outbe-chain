@@ -10,7 +10,6 @@ outbe-system-common.workspace = true
 outbe-macros.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-validatorset = { path = "../validatorset" }
-outbe-emission.workspace = true
 outbe-promislimit.workspace = true
 outbe-slashindicator.workspace = true
 alloy-primitives.workspace = true
@@ -24,6 +23,7 @@ tracing.workspace = true
 ignored = ["alloy-sol-types"]
 
 [dev-dependencies]
+outbe-emission.workspace = true
 outbe-simplex = { workspace = true, features = ["test-utils"] }
 outbe-validatorset = { path = "../validatorset", features = ["test-utils"] }
 outbe-promislimit.workspace = true
