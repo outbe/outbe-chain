@@ -519,7 +519,9 @@ fn reservation_snapshots_call_profile_terms_and_a_called_full_settlement_deletes
             prod_terms.call_window_seconds
         );
         (
-            runtime::quote_settlement(&storage, id_called_settled).unwrap(),
+            runtime::quote_settlement(&storage, id_called_settled)
+                .unwrap()
+                .payoff_minor,
             credis.group_of(&record).unwrap(),
         )
     });
@@ -567,7 +569,9 @@ fn a_called_series_settled_before_its_deadline_closes_with_zero_forfeit() {
         let credis = CredisContract::new(storage.clone());
         let record = credis.get_credis(id).unwrap();
         (
-            runtime::quote_settlement(&storage, id).unwrap(),
+            runtime::quote_settlement(&storage, id)
+                .unwrap()
+                .payoff_minor,
             credis.group_of(&record).unwrap(),
             outbe_credis::settlement_deadline(&record),
         )
@@ -647,7 +651,7 @@ fn credis_series_opened_once_per_sub_series() {
         opened[0].seriesId,
         alloy_primitives::FixedBytes::from(series)
     );
-    assert_eq!(opened[0].subSeries, 4);
+    assert_eq!(opened[0].subSeriesId, 4);
     assert_eq!(opened[0].entryPriceMinor, oracle_rate());
     assert_eq!(
         opened[0].callPriceMinor,
@@ -665,13 +669,18 @@ fn credis_series_opened_once_per_sub_series() {
         opened[1].seriesId,
         alloy_primitives::FixedBytes::from(series)
     );
-    assert_eq!(opened[1].subSeries, 7);
+    assert_eq!(opened[1].subSeriesId, 7);
     assert_eq!(opened[1].entryPriceMinor, other_entry);
-    let issued = provider
+    let issued: Vec<u16> = provider
         .get_events(outbe_system_common::addresses::CREDIS_ADDRESS)
         .iter()
-        .filter(|log| CredisIssued::decode_log_data(log).is_ok())
-        .count();
-    assert_eq!(issued, 3);
+        .filter_map(|log| CredisIssued::decode_log_data(log).ok())
+        .map(|event| event.subSeriesId)
+        .collect();
+    assert_eq!(
+        issued,
+        [4, 4, 7],
+        "each Credis carries the hour of its reservation"
+    );
     teardown();
 }

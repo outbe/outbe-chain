@@ -238,11 +238,11 @@ contract AuctionTest is Test {
         assertEq(uint8(auction.auctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.Completed));
         IIntexAuction.AuctionData memory fin = auction.getAuctionInfo(emissionDay);
         assertEq(fin.result.clearingRate, 75);
-        assertEq(fin.result.issuedUnits, 100);
+        assertEq(fin.result.totalUnits, 100);
         assertEq(fin.result.wonBidsCount, 2);
         assertEq(fin.params.promisLoadMinor, PROMIS_LOAD_MINOR);
-        // issuedPromisLoadMinor is derived on-chain as issuedUnits * promisLoadMinor.
-        assertEq(fin.result.issuedPromisLoadMinor, uint128(100) * PROMIS_LOAD_MINOR);
+        // totalPromisLoadMinor is derived on-chain as totalUnits * promisLoadMinor.
+        assertEq(fin.result.totalPromisLoadMinor, uint128(100) * PROMIS_LOAD_MINOR);
         _assertDayEvents(vm.getRecordedLogs(), 1, 1, 0);
     }
 
@@ -682,7 +682,7 @@ contract AuctionTest is Test {
         auction.startAuctionClearing(emissionDay);
 
         vm.expectRevert(
-            abi.encodeWithSelector(IIntexAuction.IssuedPromisOverflow.selector, type(uint32).max, type(uint128).max)
+            abi.encodeWithSelector(IIntexAuction.TotalPromisLoadOverflow.selector, type(uint32).max, type(uint128).max)
         );
         vm.prank(bridger);
         auction.completeAuction(emissionDay, 0, 0, type(uint32).max, floor, 0);
@@ -732,9 +732,9 @@ contract AuctionTest is Test {
         assertEq(uint8(auction.auctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.Completed));
         IIntexAuction.AuctionData memory fin = auction.getAuctionInfo(emissionDay);
         assertEq(fin.result.wonBidsCount, 0);
-        assertEq(fin.result.issuedUnits, 0);
+        assertEq(fin.result.totalUnits, 0);
         assertEq(fin.result.clearingRate, floor);
-        assertEq(fin.result.issuedPromisLoadMinor, 0);
+        assertEq(fin.result.totalPromisLoadMinor, 0);
     }
 
     /// @dev No-sale with no supply: even when `minBidRate > 0`, the clearing rate can be 0
@@ -764,9 +764,9 @@ contract AuctionTest is Test {
         assertEq(uint8(auction.auctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.Completed));
         IIntexAuction.AuctionData memory fin = auction.getAuctionInfo(emissionDay);
         assertEq(fin.result.clearingRate, 0);
-        assertEq(fin.result.issuedUnits, 0);
+        assertEq(fin.result.totalUnits, 0);
         assertEq(fin.result.wonBidsCount, 0);
-        assertEq(fin.result.issuedPromisLoadMinor, 0);
+        assertEq(fin.result.totalPromisLoadMinor, 0);
         _assertDayEvents(vm.getRecordedLogs(), 1, 1, 0);
 
         // Idempotent: re-clearing a completed auction is rejected on the stage gate.

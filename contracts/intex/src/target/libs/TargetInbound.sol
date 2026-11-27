@@ -177,7 +177,7 @@ library TargetInbound {
                 selector == IIntexAuction.WonIntexAuctionBidsExceedRevealed.selector
                     || selector == IIntexAuction.ClearingRateBelowMin.selector
                     || selector == IIntexAuction.ZeroValue.selector
-                    || selector == IIntexAuction.IssuedPromisOverflow.selector
+                    || selector == IIntexAuction.TotalPromisLoadOverflow.selector
             ) {
                 why = InboundReason.INVALID;
             } else {
@@ -305,7 +305,7 @@ library TargetInbound {
         // `known[s]` also records an in-chunk predecessor, so the second payload does not re-create the series.
         bool[] memory known = new bool[](series.length);
         for (uint256 s = 0; s < series.length; s++) {
-            if (series[s].issuedUnits == 0) {
+            if (series[s].totalUnits == 0) {
                 _ignoreMessage(BridgeMsgCodec.MSG_INTEX_SERIES, emissionDay, InboundReason.INVALID);
                 return;
             }
@@ -353,7 +353,7 @@ library TargetInbound {
                         issuedAt: payload.issuedAt,
                         issuanceCurrency: payload.issuanceCurrency,
                         referenceCurrency: payload.referenceCurrency,
-                        issuedUnits: payload.issuedUnits,
+                        totalUnits: payload.totalUnits,
                         promisLoadMinor: payload.promisLoadMinor,
                         entryPriceMinor: payload.entryPriceMinor,
                         callPriceMinor: payload.callPriceMinor,
@@ -376,7 +376,7 @@ library TargetInbound {
         returns (bool)
     {
         return a.emissionDay == b.emissionDay && a.issuanceCurrency == b.issuanceCurrency
-            && a.referenceCurrency == b.referenceCurrency && a.issuedUnits == b.issuedUnits
+            && a.referenceCurrency == b.referenceCurrency && a.totalUnits == b.totalUnits
             && a.promisLoadMinor == b.promisLoadMinor && a.entryPriceMinor == b.entryPriceMinor
             && a.callPriceMinor == b.callPriceMinor && a.callWindow == b.callWindow
             && a.callThreshold == b.callThreshold && a.callNoticePeriod == b.callNoticePeriod
@@ -391,7 +391,7 @@ library TargetInbound {
     {
         IIntexNFT1155.SeriesData memory d = links.intexNFT1155.getIntexSeries(payload.seriesId);
         return d.emissionDay == payload.emissionDay && d.issuanceCurrency == payload.issuanceCurrency
-            && d.referenceCurrency == payload.referenceCurrency && d.issuedUnits == payload.issuedUnits
+            && d.referenceCurrency == payload.referenceCurrency && d.totalUnits == payload.totalUnits
             && d.promisLoadMinor == payload.promisLoadMinor && d.entryPriceMinor == payload.entryPriceMinor
             && d.callPriceMinor == payload.callPriceMinor && d.callTrigger.callWindow == payload.callWindow
             && d.callTrigger.callThreshold == payload.callThreshold

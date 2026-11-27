@@ -29,7 +29,7 @@ pub enum CredisFactoryError {
     #[error("Credis is closed")]
     CredisClosed,
     #[error("payment is below the fee accrued since the last settlement")]
-    PaymentBelowAccruedFee,
+    PaymentBelowFee,
     #[error("Credis is not called")]
     NotCalled,
     #[error("Credis is not Issued")]
@@ -87,7 +87,7 @@ impl From<CredisFactoryError> for PrecompileError {
             CredisFactoryError::InvalidOwner => revert_with(I::InvalidOwner {}),
             CredisFactoryError::CredisAlreadyExists => revert_with(I::CredisAlreadyExists {}),
             CredisFactoryError::CredisClosed => revert_with(I::CredisClosed {}),
-            CredisFactoryError::PaymentBelowAccruedFee => revert_with(I::PaymentBelowAccruedFee {}),
+            CredisFactoryError::PaymentBelowFee => revert_with(I::PaymentBelowFee {}),
             CredisFactoryError::NotCalled => revert_with(I::NotCalled {}),
             CredisFactoryError::CredisNotIssued => revert_with(I::CredisNotIssued {}),
             CredisFactoryError::SettlementDeadlineNotPassed => {

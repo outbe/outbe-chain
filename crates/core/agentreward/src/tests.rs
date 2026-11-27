@@ -735,7 +735,7 @@ fn same_block_claims_with_different_currencies_have_distinct_ids() {
             error,
             outbe_primitives::error::PrecompileError::RevertBytes(bytes)
                 if bytes.as_ref() == alloy_sol_types::SolError::abi_encode(
-                    &outbe_gem::precompile::IGem::AlreadyExists {}
+                    &outbe_gem::precompile::IGem::GemAlreadyExists {}
                 ).as_slice()
         ));
         assert_eq!(contract.agent_reward_total(alice).unwrap(), remaining);

@@ -35,7 +35,7 @@ contract IntexNFT1155RouterSingleTest is CrossChainTest {
     bytes14 private constant SERIES_ID = "20260401-USD-U";
     uint256 private constant INTEX_ID = uint256(keccak256(abi.encodePacked(SERIES_ID)));
     uint256 private constant AMOUNT = 100;
-    uint32 private constant ISSUED_UNITS = 10_000;
+    uint32 private constant TOTAL_UNITS = 10_000;
 
     function setUp() public {
         vm.deal(user, 1000 ether);
@@ -61,8 +61,8 @@ contract IntexNFT1155RouterSingleTest is CrossChainTest {
         adapterB.setRemoteRouter(A_CHAIN_ID, _interop(A_CHAIN_ID, address(adapterA)));
 
         // Create series on both chains
-        tokenA.openSeries(OpenSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));
-        tokenB.openSeries(OpenSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));
+        tokenA.openSeries(OpenSeriesLib.params(SERIES_ID_DAY, TOTAL_UNITS, 0));
+        tokenB.openSeries(OpenSeriesLib.params(SERIES_ID_DAY, TOTAL_UNITS, 0));
 
         // Mint initial tokens to user on chain A
         tokenA.issueIntex(user, AMOUNT, SERIES_ID);
@@ -142,7 +142,7 @@ contract IntexNFT1155RouterSingleTest is CrossChainTest {
         uint32 failDay = 20260402;
         bytes14 failSeries = "20260402-USD-U";
         uint256 failIntexId = uint256(keccak256(abi.encodePacked(failSeries)));
-        tokenA.openSeries(OpenSeriesLib.params(failDay, ISSUED_UNITS, 0));
+        tokenA.openSeries(OpenSeriesLib.params(failDay, TOTAL_UNITS, 0));
         tokenA.issueIntex(user, AMOUNT, failSeries);
         SendParam memory sendParam = SendParam({
             dstChainId: B_CHAIN_ID, to: bytes32(uint256(uint160(user))), intexId: failIntexId, units: AMOUNT
@@ -162,7 +162,7 @@ contract IntexNFT1155RouterSingleTest is CrossChainTest {
         }
         assertEq(failed, 1);
 
-        tokenB.openSeries(OpenSeriesLib.params(failDay, ISSUED_UNITS, 0));
+        tokenB.openSeries(OpenSeriesLib.params(failDay, TOTAL_UNITS, 0));
         vm.expectEmit(true, true, true, true, address(adapterB));
         emit IIntexNFT1155Router.IntexCrosschainReceived(receiveId, A_CHAIN_ID, user, failIntexId, uint32(AMOUNT));
         adapterB.retryIntexCrosschainReceive(receiveId, 0);
@@ -289,7 +289,7 @@ contract IntexNFT1155RouterSingleTest is CrossChainTest {
         uint32 failDay = 20260402;
         bytes14 failSeries = "20260402-USD-U";
         uint256 failIntexId = uint256(keccak256(abi.encodePacked(failSeries)));
-        tokenA.openSeries(OpenSeriesLib.params(failDay, ISSUED_UNITS, 0));
+        tokenA.openSeries(OpenSeriesLib.params(failDay, TOTAL_UNITS, 0));
         tokenA.issueIntex(user, AMOUNT, failSeries);
 
         SendParam memory sendParam = SendParam({
@@ -316,7 +316,7 @@ contract IntexNFT1155RouterSingleTest is CrossChainTest {
         assertEq(amount, AMOUNT);
 
         // Fix the cause on B, then retry -> minted and entry cleared.
-        tokenB.openSeries(OpenSeriesLib.params(failDay, ISSUED_UNITS, 0));
+        tokenB.openSeries(OpenSeriesLib.params(failDay, TOTAL_UNITS, 0));
         adapterB.retryIntexCrosschainReceive(receiveId, 0);
         assertEq(tokenB.balanceOf(user, failIntexId), AMOUNT, "minted on retry");
 
@@ -335,7 +335,7 @@ contract IntexNFT1155RouterSingleTest is CrossChainTest {
         uint32 failDay = 20260402;
         bytes14 failSeries = "20260402-USD-U";
         uint256 failIntexId = uint256(keccak256(abi.encodePacked(failSeries)));
-        tokenA.openSeries(OpenSeriesLib.params(failDay, ISSUED_UNITS, 0));
+        tokenA.openSeries(OpenSeriesLib.params(failDay, TOTAL_UNITS, 0));
         tokenA.issueIntex(user, AMOUNT, failSeries);
 
         SendParam memory sendParam = SendParam({

@@ -44,7 +44,7 @@ fn issue_creates_series_in_registry() {
         assert_eq!(r.promis_load_minor, U256::from(PROMIS_LOAD_MINOR));
         assert_eq!(r.entry_price_minor, U256::from(ENTRY_PRICE));
         // The trigger is derived from the clearing price at issuance.
-        assert_eq!(r.issued_units, 100);
+        assert_eq!(r.total_units, 100);
         assert_eq!(r.call_notice_period_seconds, CALL_NOTICE_PERIOD);
         // Window/threshold/call-period are IntexFactory protocol constants now.
         assert_eq!(r.call_price_minor, U256::from(EXPECTED_TRIGGER));
@@ -171,7 +171,7 @@ fn issue_rejects_duplicate_series() {
 fn issue_zero_winners_leaves_the_day_untouched() {
     with_factory(|s| {
         let mut p = sample(7);
-        p.issued_units = 0;
+        p.total_units = 0;
         runtime::open_intex_series(&s, p).unwrap();
 
         assert!(!outbe_intex::api::series_exists(&s, sid(7)).unwrap());
@@ -189,7 +189,7 @@ fn issue_sends_every_target_chain_the_series() {
         assert_eq!(chains, vec![10, 20, 30]);
         for leg in &legs {
             assert_eq!(SeriesId::from(leg.payload.seriesId), sid(7));
-            assert_eq!(leg.payload.issuedUnits, 100);
+            assert_eq!(leg.payload.totalUnits, 100);
         }
     });
 }
@@ -244,7 +244,7 @@ fn leg(chain_id: u32, day: u32, series: u32) -> runtime::IssuanceLeg {
         seriesId: sid(series).into(),
         emissionDay: day,
         issuedAt: ISSUED_AT,
-        issuedUnits: 1,
+        totalUnits: 1,
         promisLoadMinor: PROMIS_LOAD_MINOR,
         entryPriceMinor: 0,
         callNoticePeriod: 0,

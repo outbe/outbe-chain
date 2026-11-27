@@ -43,7 +43,7 @@ contract IntexAuctionTargetRouterIssuanceBatchTest is CrossChainTest {
         payload.seriesId = seriesId;
         payload.emissionDay = DAY;
         payload.issuedAt = uint32(block.timestamp);
-        payload.issuedUnits = 1_000;
+        payload.totalUnits = 1_000;
         payload.promisLoadMinor = 1_000;
         payload.entryPriceMinor = 100e6;
         payload.issuanceCurrency = 840;
@@ -77,7 +77,9 @@ contract IntexAuctionTargetRouterIssuanceBatchTest is CrossChainTest {
         assertTrue(intex.seriesExists("20250101-USD-U"), "dollar series");
         assertTrue(intex.seriesExists("20250101-EUR-E"), "euro series");
         assertTrue(intex.seriesExists("20250101-TRY-U"), "lira series");
-        assertEq(intex.totalSupply(intex.issuedIntexId("20250101-USD-U")), 0, "the message mints nothing");
+        assertEq(
+            intex.totalSupply(uint256(keccak256(abi.encodePacked("20250101-USD-U")))), 0, "the message mints nothing"
+        );
     }
 
     function test_ASeriesRepeatedInALaterMessageIsCreatedOnce() public {

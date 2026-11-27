@@ -163,7 +163,7 @@ contract GasBudgetTest is CrossChainTest {
                 seriesId: bytes14(uint112(uint112(SERIES_PREFIX) + s + 1)),
                 emissionDay: EMISSION_DAY,
                 issuedAt: uint32(block.timestamp),
-                issuedUnits: 10_000,
+                totalUnits: 10_000,
                 promisLoadMinor: 1e6,
                 entryPriceMinor: 100e6,
                 callNoticePeriod: 0,
@@ -203,7 +203,7 @@ contract GasBudgetTest is CrossChainTest {
 
         // `multiSend` burns the whole batch from its caller and fans it out to `recipients`.
         address sender = address(0x3000);
-        uint256 intexId = intex.issuedIntexId(SERIES_PREFIX);
+        uint256 intexId = uint256(keccak256(abi.encodePacked(SERIES_PREFIX)));
         intex.issueIntex(sender, items, SERIES_PREFIX);
 
         bytes32[] memory to = new bytes32[](items);
@@ -247,7 +247,7 @@ contract GasBudgetTest is CrossChainTest {
         dstToken.openSeries(OpenSeriesLib.params(EMISSION_DAY, 10_000, 0));
 
         address sender = address(0x3000);
-        uint256 intexId = intex.issuedIntexId(SERIES_PREFIX);
+        uint256 intexId = uint256(keccak256(abi.encodePacked(SERIES_PREFIX)));
         intex.issueIntex(sender, items, SERIES_PREFIX);
 
         // One receiver that rejects every mint, so every item takes the recording path.
@@ -347,7 +347,7 @@ contract AuctionGasBudgetTest is CrossChainTest {
     uint32 internal constant BNB_CHAIN_ID = 1;
     uint32 internal constant OUTBE_CHAIN_ID = 2;
     uint32 internal constant EMISSION_DAY = 20250101;
-    uint32 internal constant ISSUED_UNITS = 10_000;
+    uint32 internal constant TOTAL_UNITS = 10_000;
     uint64 internal constant ENTRY_PRICE = 100e6;
 
     IntexAuctionTargetRouter internal router;
@@ -458,7 +458,7 @@ contract AuctionGasBudgetTest is CrossChainTest {
         auction.startAuctionClearing(EMISSION_DAY);
 
         uint256 spent = _deliver(
-            BridgeMsgCodec.encodeIntexAuctionResult(EMISSION_DAY, AuctionResultLib.day(ISSUED_UNITS, ENTRY_PRICE, 0))
+            BridgeMsgCodec.encodeIntexAuctionResult(EMISSION_DAY, AuctionResultLib.day(TOTAL_UNITS, ENTRY_PRICE, 0))
         );
 
         emit log_named_uint("auction_result", spent);
@@ -664,7 +664,7 @@ contract GasBudgetLateIssuanceTest is CrossChainTest {
                 seriesId: bytes14(uint112(uint112(SERIES_PREFIX) + s + 1)),
                 emissionDay: EMISSION_DAY,
                 issuedAt: ISSUED_AT,
-                issuedUnits: 10_000,
+                totalUnits: 10_000,
                 promisLoadMinor: 1e6,
                 entryPriceMinor: 100e6,
                 callNoticePeriod: 0,

@@ -97,10 +97,7 @@ pub fn dispatch(
                 powDifficulty(_) => metadata::<IIntexFactory::powDifficultyCall>(|| {
                     Ok(outbe_core_common::pow::POW_DIFFICULTY)
                 }),
-                ownerBalances(c) => view(c, |c| {
-                    runtime::owner_balances(&storage, series_of(&storage, c.intexId)?, c.owner)
-                }),
-                callState(c) => view(c, |c| crate::call_state::call_state(&storage, c.intexId)),
+                getCallState(c) => view(c, |c| crate::call_state::call_state(&storage, c.intexId)),
                 targetChains(_) => metadata::<IIntexFactory::targetChainsCall>(|| {
                     let (chain_ids, modes) = crate::targets::target_chains(&storage)?
                         .into_iter()
@@ -151,5 +148,5 @@ pub fn dispatch(
 fn series_of(storage: &StorageHandle<'_>, intex_id: U256) -> Result<SeriesId> {
     outbe_intex::api::find_series_by_id(storage, intex_id)?
         .map(|record| record.series_id)
-        .ok_or_else(|| outbe_intex::IntexError::SeriesNotFound.into())
+        .ok_or_else(|| outbe_intex::IntexError::IntexNotFound.into())
 }

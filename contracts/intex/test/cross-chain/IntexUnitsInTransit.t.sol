@@ -142,7 +142,7 @@ contract IntexUnitsInTransitTest is CrossChainTest {
     /// B, where the series is not open yet, so the mint fails and B keeps it.
     function _start(uint256 k) private returns (bytes32 idB) {
         tokenA.issueIntex(user, ISSUED, SERIES);
-        tokenA.burnIntex(user, SERIES, SETTLED);
+        tokenA.settleIntex(user, SERIES, SETTLED);
         tokenA.sendIntexToGemFactory(user, SERIES, TO_GEM_FACTORY, 1);
         idB = _send(k);
         assertEq(_kept(routerB, idB), k);
@@ -158,7 +158,7 @@ contract IntexUnitsInTransitTest is CrossChainTest {
         vm.warp(uint256(calledAt) + data.callTrigger.callNoticePeriod + data.callTrigger.transitMargin + 1);
         assertEq(uint8(tokenA.getIntexSeries(SERIES).state), uint8(IIntexNFT1155.IntexState.Forfeited));
         forfeited = tokenA.balanceOf(user, ID);
-        if (forfeited != 0) tokenA.burnForfeited(user, SERIES);
+        if (forfeited != 0) tokenA.forfeitIntex(user, SERIES);
     }
 
     function _send(uint256 k) private returns (bytes32 receiveId) {

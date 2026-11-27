@@ -93,47 +93,6 @@
   },
   {
     "type": "function",
-    "name": "burnForfeited",
-    "inputs": [
-      {
-        "name": "owner",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "seriesId",
-        "type": "bytes14",
-        "internalType": "bytes14"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "burnIntex",
-    "inputs": [
-      {
-        "name": "owner",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "seriesId",
-        "type": "bytes14",
-        "internalType": "bytes14"
-      },
-      {
-        "name": "units",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "callSeries",
     "inputs": [
       {
@@ -216,22 +175,21 @@
   },
   {
     "type": "function",
-    "name": "emissionDayOf",
+    "name": "forfeitIntex",
     "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "internalType": "address"
+      },
       {
         "name": "seriesId",
         "type": "bytes14",
         "internalType": "bytes14"
       }
     ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ],
-    "stateMutability": "view"
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -273,7 +231,7 @@
             "internalType": "uint16"
           },
           {
-            "name": "issuedUnits",
+            "name": "totalUnits",
             "type": "uint32",
             "internalType": "uint32"
           },
@@ -381,7 +339,7 @@
             "internalType": "uint16"
           },
           {
-            "name": "issuedUnits",
+            "name": "totalUnits",
             "type": "uint32",
             "internalType": "uint32"
           },
@@ -576,25 +534,6 @@
   },
   {
     "type": "function",
-    "name": "issuedIntexId",
-    "inputs": [
-      {
-        "name": "seriesId",
-        "type": "bytes14",
-        "internalType": "bytes14"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "pure"
-  },
-  {
-    "type": "function",
     "name": "name",
     "inputs": [],
     "outputs": [
@@ -641,7 +580,7 @@
             "internalType": "uint16"
           },
           {
-            "name": "issuedUnits",
+            "name": "totalUnits",
             "type": "uint32",
             "internalType": "uint32"
           },
@@ -822,25 +761,6 @@
   },
   {
     "type": "function",
-    "name": "seriesAt",
-    "inputs": [
-      {
-        "name": "index",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bytes14",
-        "internalType": "bytes14"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "seriesExists",
     "inputs": [
       {
@@ -889,25 +809,6 @@
   },
   {
     "type": "function",
-    "name": "seriesIdsByEmissionDay",
-    "inputs": [
-      {
-        "name": "emissionDay",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bytes14[]",
-        "internalType": "bytes14[]"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "setApprovalForAll",
     "inputs": [
       {
@@ -919,6 +820,29 @@
         "name": "approved",
         "type": "bool",
         "internalType": "bool"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "settleIntex",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "seriesId",
+        "type": "bytes14",
+        "internalType": "bytes14"
+      },
+      {
+        "name": "units",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [],
@@ -955,19 +879,6 @@
       }
     ],
     "stateMutability": "pure"
-  },
-  {
-    "type": "function",
-    "name": "totalSeries",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -1706,11 +1617,6 @@
   },
   {
     "type": "error",
-    "name": "SeriesIndexOutOfRange",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "SupplyCapExceeded",
     "inputs": [
       {
@@ -1802,7 +1708,7 @@
   },
   {
     "type": "error",
-    "name": "ZeroIssuedUnits",
+    "name": "ZeroTotalUnits",
     "inputs": []
   },
   {

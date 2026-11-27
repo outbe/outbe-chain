@@ -35,7 +35,7 @@ contract IntexNFT1155ForfeitedTest is Test {
         token.issueIntex(user, 10, SERIES_ID);
         token.callSeries(SERIES_ID, uint32(block.timestamp));
         vm.stopPrank();
-        intexId = token.issuedIntexId(SERIES_ID);
+        intexId = uint256(keccak256(abi.encodePacked(SERIES_ID)));
         deadline = block.timestamp + CALL_PERIOD;
         closeAt = deadline + token.getIntexSeries(SERIES_ID).callTrigger.transitMargin;
     }
@@ -88,7 +88,7 @@ contract IntexNFT1155ForfeitedTest is Test {
         vm.expectEmit(address(token));
         emit IIntexNFT1155.IntexForfeited(intexId, user, 840, 840, 10);
         vm.prank(anyone);
-        token.burnForfeited(user, SERIES_ID);
+        token.forfeitIntex(user, SERIES_ID);
 
         assertEq(token.balanceOf(user, intexId), 0);
         assertEq(token.getIntexSeries(SERIES_ID).totalSupply, 0);
@@ -103,12 +103,12 @@ contract IntexNFT1155ForfeitedTest is Test {
                 uint8(IIntexNFT1155.IntexState.Called)
             )
         );
-        token.burnForfeited(user, SERIES_ID);
+        token.forfeitIntex(user, SERIES_ID);
     }
 
     function test_BurnForfeited_RevertsForAnEmptyBalance() public {
         vm.warp(closeAt + 1);
         vm.expectRevert(IIntexNFT1155.ZeroUnits.selector);
-        token.burnForfeited(makeAddr("other"), SERIES_ID);
+        token.forfeitIntex(makeAddr("other"), SERIES_ID);
     }
 }

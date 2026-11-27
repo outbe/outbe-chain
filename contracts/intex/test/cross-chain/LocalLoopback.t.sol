@@ -206,7 +206,7 @@ contract LocalLoopbackTest is Test {
         });
         _fromOutbe(BridgeMsgCodec.encodeIntexAuctionResult(DAY, r), IntexGas.INTEX_AUCTION_RESULT);
         IIntexAuction.IntexAuctionResult memory result = auction.getAuctionInfo(DAY).result;
-        assertEq(result.issuedUnits, 50, "issued");
+        assertEq(result.totalUnits, 50, "issued");
         assertEq(result.clearingRate, 700_000, "clearing rate");
 
         // 6. REFUND_INSTRUCTIONS: the delivery takes each winner's payment AND hands the paid WCOEN
@@ -236,7 +236,7 @@ contract LocalLoopbackTest is Test {
             seriesId: OpenSeriesLib.seriesId(DAY),
             emissionDay: DAY,
             issuedAt: uint32(block.timestamp),
-            issuedUnits: 50,
+            totalUnits: 50,
             promisLoadMinor: PROMIS_LOAD_MINOR,
             entryPriceMinor: 1e6,
             callNoticePeriod: 0,
@@ -253,7 +253,7 @@ contract LocalLoopbackTest is Test {
         // Each winner issues its own units through the auction.
         auction.redeemWinNote(DAY, iba1);
         auction.redeemWinNote(DAY, iba2);
-        uint256 intexId = intex.issuedIntexId(OpenSeriesLib.seriesId(DAY));
+        uint256 intexId = uint256(keccak256(abi.encodePacked(OpenSeriesLib.seriesId(DAY))));
         assertEq(intex.balanceOf(iba1, intexId), 30, "iba1 issued");
         assertEq(intex.balanceOf(iba2, intexId), 20, "iba2 issued");
 

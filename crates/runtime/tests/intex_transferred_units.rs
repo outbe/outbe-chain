@@ -55,7 +55,7 @@ const VAULT: Address = Address::new([0x55; 20]);
 const METADATA_LIB: Address = Address::new([0x4c; 20]);
 const TIMESTAMP: u64 = 1_700_000_000;
 const SERIES: [u8; 14] = *b"20241220-USD-U";
-const ISSUED_UNITS: u64 = 10;
+const TOTAL_UNITS: u64 = 10;
 const TRANSFERRED_UNITS: u64 = 4;
 const SETTLED_UNITS: u64 = 3;
 
@@ -101,7 +101,7 @@ impl World {
                 CreateSeriesParams {
                     series_id: SeriesId::from(FixedBytes(SERIES)),
                     emission_day: EmissionDate::new(20_241_220),
-                    issued_units: ISSUED_UNITS as u32,
+                    total_units: TOTAL_UNITS as u32,
                     promis_load_minor: 1_500_000,
                     entry_price_minor: U256::from(2_000_000),
                     call_price_minor: U256::from(4_560_000),
@@ -170,7 +170,7 @@ impl World {
                     issuedAt: TIMESTAMP,
                     issuanceCurrency: 840,
                     referenceCurrency: 840,
-                    issuedUnits: ISSUED_UNITS as u32,
+                    totalUnits: TOTAL_UNITS as u32,
                     promisLoadMinor: 1_500_000,
                     entryPriceMinor: 2_000_000,
                     callPriceMinor: 4_560_000,
@@ -188,7 +188,7 @@ impl World {
             INTEX_NFT1155_ADDRESS,
             IIntexNFT1155::issueIntexCall {
                 to: ALICE,
-                units: U256::from(ISSUED_UNITS),
+                units: U256::from(TOTAL_UNITS),
                 seriesId: FixedBytes(SERIES),
             },
         );
@@ -319,7 +319,7 @@ impl World {
 #[test]
 fn transferred_unsettled_intex_units_settle_to_their_new_owner_and_never_to_the_sender() {
     let mut world = World::new();
-    assert_eq!(world.holdings(), [ISSUED_UNITS, 0, 0, 0]);
+    assert_eq!(world.holdings(), [TOTAL_UNITS, 0, 0, 0]);
 
     world.transfer_to_bob(TRANSFERRED_UNITS);
     assert_eq!(
@@ -356,7 +356,7 @@ fn transferred_unsettled_intex_units_settle_to_their_new_owner_and_never_to_the_
     let supplies = world.supplies();
     let logs = world.evm.logs().to_vec();
     let payer_after = world.asset_balance(PAYER);
-    for (owner, units) in [(BOB, 2), (ALICE, 7), (ALICE, ISSUED_UNITS)] {
+    for (owner, units) in [(BOB, 2), (ALICE, 7), (ALICE, TOTAL_UNITS)] {
         let out = world.settle_for(owner, units);
         assert!(
             matches!(out.status, SubCallStatus::Revert(_)),
@@ -387,5 +387,5 @@ fn transferred_unsettled_intex_units_settle_to_their_new_owner_and_never_to_the_
         out.status
     );
     assert_eq!(world.holdings(), [0, 0, 6, 4]);
-    assert_eq!(world.supplies(), [0, ISSUED_UNITS]);
+    assert_eq!(world.supplies(), [0, TOTAL_UNITS]);
 }

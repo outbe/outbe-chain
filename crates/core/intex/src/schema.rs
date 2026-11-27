@@ -78,7 +78,7 @@ pub use outbe_core_common::series_id::{SeriesId, SERIES_ID_LEN};
 pub struct CreateSeriesParams {
     pub series_id: SeriesId,
     pub emission_day: EmissionDate,
-    pub issued_units: u32,
+    pub total_units: u32,
     /// PROMIS-units per Intex unit (1e6). Bounded by source `uint128`.
     pub promis_load_minor: u128,
     /// Entry price (per-unit, reference ISO stable-units, 1e6). Primary
@@ -122,7 +122,7 @@ pub struct SeriesRecord {
     pub reference_currency: u16,
 
     #[attribute(order = 5)]
-    pub issued_units: u32,
+    pub total_units: u32,
 
     // call_trigger group. Storage keeps it flat (the storage DSL has no nested-struct
     // codec). `call_trigger()` exposes it nested.
@@ -184,7 +184,7 @@ pub struct IntexContract {
     #[attribute(order = 2)]
     pub series_position: outbe_primitives::storage::dsl::Map<SeriesId, u32>,
 
-    // Disjoint classes: a series forfeits `issued_units - settled - mined -
+    // Disjoint classes: a series forfeits `total_units - settled - mined -
     // gem_factory` at its deadline. Not on `SeriesRecord` because a record write
     // rewrites every field.
     /// intex_id -> units paid for and not yet mined.
@@ -199,19 +199,10 @@ pub struct IntexContract {
     #[attribute(order = 29)]
     pub mined_units: outbe_primitives::storage::dsl::Map<U256, u32>,
 
-    // Per-owner ledgers. The owner's Issued units are its token balance, so the
-    // registry keeps the Settled balance and what left the token.
+    // The owner's Issued units are its token balance, so the registry keeps the Settled balance.
     /// `owner_units_key` -> units this owner settled and has not mined yet.
     #[attribute(order = 78)]
     pub owner_settled_units: outbe_primitives::storage::dsl::Map<B256, u32>,
-
-    /// `owner_units_key` -> units this owner mined in the series.
-    #[attribute(order = 30)]
-    pub owner_mined_units: outbe_primitives::storage::dsl::Map<B256, u32>,
-
-    /// `owner_units_key` -> units this owner sent to the Gem Factory.
-    #[attribute(order = 31)]
-    pub owner_gem_factory_units: outbe_primitives::storage::dsl::Map<B256, u32>,
 
     // --- Call lifecycle: the price bins the daily scan walks and the called groups ---
     // Call-price bin index the daily Called scan walks. A series enters it at issuance.

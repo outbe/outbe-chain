@@ -13,8 +13,8 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum IntexError {
-    #[error("series not found")]
-    SeriesNotFound,
+    #[error("intex not found")]
+    IntexNotFound,
     #[error("issuedAt must be non-zero")]
     ZeroIssuedAt,
     #[error("invalid stored lifecycle state value: {0}")]
@@ -62,7 +62,7 @@ impl From<IntexError> for PrecompileError {
     fn from(err: IntexError) -> Self {
         use IIntex as I;
         match err {
-            IntexError::SeriesNotFound => revert_with(I::SeriesNotFound {}),
+            IntexError::IntexNotFound => revert_with(I::IntexNotFound {}),
             IntexError::ZeroIssuedAt => revert_with(I::ZeroIssuedAt {}),
             IntexError::InvalidStateValue(value) => revert_with(I::InvalidStateValue { value }),
             IntexError::InvalidSeriesId => revert_with(I::InvalidSeriesId {}),

@@ -1,7 +1,7 @@
 [
   {
     "type": "function",
-    "name": "callState",
+    "name": "getCallState",
     "inputs": [
       {
         "name": "nodId",

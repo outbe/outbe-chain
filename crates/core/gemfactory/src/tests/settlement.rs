@@ -342,7 +342,7 @@ fn a_series_in_any_reference_currency_can_be_sent() {
             outbe_intex::CreateSeriesParams {
                 series_id: source_series_id(),
                 emission_day: EmissionDate::new(0),
-                issued_units: SENT_UNITS as u32,
+                total_units: SENT_UNITS as u32,
                 promis_load_minor: six_decimal_u128(),
                 entry_price_minor: six_decimal_unit(),
                 call_price_minor: U256::ZERO,

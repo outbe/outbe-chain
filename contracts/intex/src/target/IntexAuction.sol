@@ -63,7 +63,7 @@ contract IntexAuction is
         /// @dev Revealed bids per series.
         mapping(uint32 emissionDay => IIntexAuction.SubmittedIntexAuctionBidData[]) revealedBids;
         /// @dev Cleared marker per series. `completeAuction` sets it once. It is the sole
-        ///      `Completed`-stage signal, so a no-sale clearing (issuedUnits == 0,
+        ///      `Completed`-stage signal, so a no-sale clearing (totalUnits == 0,
         ///      clearingRate may be 0) also reads as Completed, not just a positive-rate sale.
         mapping(uint32 emissionDay => bool) cleared;
         /// @dev Set by the first clearing start of the day.
@@ -192,7 +192,7 @@ contract IntexAuction is
             schedule: schedule,
             params: params,
             result: IIntexAuction.IntexAuctionResult({
-                issuedPromisLoadMinor: 0, clearingRate: 0, issuedUnits: 0, wonBidsCount: 0
+                totalPromisLoadMinor: 0, clearingRate: 0, totalUnits: 0, wonBidsCount: 0
             })
         });
 
@@ -280,14 +280,14 @@ contract IntexAuction is
             revert ClearingRateBelowMin(clearingRate, a.params.minBidRate);
         }
 
-        // Outbe provides the final data. `issuedPromisLoadMinor` is derived on-chain.
-        a.result.issuedUnits = quantity;
+        // Outbe provides the final data. `totalPromisLoadMinor` is derived on-chain.
+        a.result.totalUnits = quantity;
         a.result.clearingRate = clearingRate;
         a.result.wonBidsCount = wonBidsCount;
         // 256-bit product: over-range reverts typed, not Panic(0x11).
         uint256 loadedPromis = uint256(quantity) * a.params.promisLoadMinor;
-        if (loadedPromis > type(uint128).max) revert IssuedPromisOverflow(quantity, a.params.promisLoadMinor);
-        a.result.issuedPromisLoadMinor = uint128(loadedPromis);
+        if (loadedPromis > type(uint128).max) revert TotalPromisLoadOverflow(quantity, a.params.promisLoadMinor);
+        a.result.totalPromisLoadMinor = uint128(loadedPromis);
         $.cleared[emissionDay] = true;
 
         emit IntexAuctionCompleted(emissionDay, wonQuantity, wonBidsCount, quantity, clearingRate, totalDemand);

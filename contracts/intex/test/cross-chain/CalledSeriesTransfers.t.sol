@@ -34,7 +34,7 @@ contract CalledSeriesTransfersTest is CrossChainTest {
 
         intex.openSeries(OpenSeriesLib.params(EMISSION_DAY, 10_000, 1 days));
         intex.issueIntex(owner, 10, SERIES_ID);
-        intexId = intex.issuedIntexId(SERIES_ID);
+        intexId = uint256(keccak256(abi.encodePacked(SERIES_ID)));
         intex.callSeries(SERIES_ID, uint32(block.timestamp));
     }
 
@@ -85,7 +85,7 @@ contract CalledSeriesTransfersTest is CrossChainTest {
         bytes14 open = "20260502-USD-U";
         intex.issueIntex(owner, 5, open);
 
-        uint256 openIntexId = intex.issuedIntexId(open);
+        uint256 openIntexId = uint256(keccak256(abi.encodePacked(open)));
         vm.prank(owner);
         nftRouter.send(
             SendParam({

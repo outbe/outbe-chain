@@ -16,7 +16,7 @@ library OpenSeriesLib {
         return bytes14(out);
     }
 
-    function params(uint32 emissionDay, uint32 issuedUnits, uint32 callNoticePeriod)
+    function params(uint32 emissionDay, uint32 totalUnits, uint32 callNoticePeriod)
         internal
         view
         returns (IIntexNFT1155.OpenSeriesParams memory)
@@ -27,7 +27,7 @@ library OpenSeriesLib {
             issuedAt: uint64(block.timestamp),
             issuanceCurrency: 840,
             referenceCurrency: 840,
-            issuedUnits: issuedUnits,
+            totalUnits: totalUnits,
             promisLoadMinor: 100_000 * 1e6,
             entryPriceMinor: 1e6,
             callPriceMinor: 200,

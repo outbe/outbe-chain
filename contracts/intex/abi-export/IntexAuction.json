@@ -386,12 +386,12 @@
                 "internalType": "uint32"
               },
               {
-                "name": "issuedUnits",
+                "name": "totalUnits",
                 "type": "uint32",
                 "internalType": "uint32"
               },
               {
-                "name": "issuedPromisLoadMinor",
+                "name": "totalPromisLoadMinor",
                 "type": "uint128",
                 "internalType": "uint128"
               }
@@ -569,12 +569,12 @@
                 "internalType": "uint32"
               },
               {
-                "name": "issuedUnits",
+                "name": "totalUnits",
                 "type": "uint32",
                 "internalType": "uint32"
               },
               {
-                "name": "issuedPromisLoadMinor",
+                "name": "totalPromisLoadMinor",
                 "type": "uint128",
                 "internalType": "uint128"
               }
@@ -1552,22 +1552,6 @@
   },
   {
     "type": "error",
-    "name": "IssuedPromisOverflow",
-    "inputs": [
-      {
-        "name": "issuedUnits",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "promisLoadMinor",
-        "type": "uint128",
-        "internalType": "uint128"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "NotInitializing",
     "inputs": []
   },
@@ -1653,6 +1637,22 @@
         "name": "currentStage",
         "type": "uint8",
         "internalType": "enum IIntexAuction.AuctionStage"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TotalPromisLoadOverflow",
+    "inputs": [
+      {
+        "name": "totalUnits",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "promisLoadMinor",
+        "type": "uint128",
+        "internalType": "uint128"
       }
     ]
   },

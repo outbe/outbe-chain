@@ -40,10 +40,6 @@ contract IntexNFT1155 is ERC1155Upgradeable, OwnableUpgradeable, UUPSUpgradeable
     struct IntexNFT1155Storage {
         /// @dev Series-level data, stored once per series under its token id.
         mapping(uint256 intexId => IIntexNFT1155.SeriesData) seriesData;
-        /// @dev Every series ever created on this chain, in creation order.
-        bytes14[] allSeries;
-        /// @dev Series ids issued per emission day.
-        mapping(uint32 emissionDay => bytes14[] seriesIds) seriesOfDay;
         /// @dev The series a day's currency pair was created under.
         mapping(
             uint32 emissionDay
@@ -125,16 +121,6 @@ contract IntexNFT1155 is ERC1155Upgradeable, OwnableUpgradeable, UUPSUpgradeable
     }
 
     /// @inheritdoc IIntexNFT1155
-    function emissionDayOf(bytes14 seriesId) external view returns (uint32) {
-        return _s().seriesData[_issuedIntexId(seriesId)].emissionDay;
-    }
-
-    /// @inheritdoc IIntexNFT1155
-    function seriesIdsByEmissionDay(uint32 emissionDay) external view returns (bytes14[] memory) {
-        return _s().seriesOfDay[emissionDay];
-    }
-
-    /// @inheritdoc IIntexNFT1155
     function seriesIdOf(uint32 emissionDay, uint16 issuanceCurrency, uint16 referenceCurrency)
         external
         view
@@ -153,7 +139,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, OwnableUpgradeable, UUPSUpgradeable
         }
 
         // A series is born from an auction that cleared at least one unit.
-        if (params.issuedUnits == 0) revert ZeroIssuedUnits();
+        if (params.totalUnits == 0) revert ZeroTotalUnits();
 
         // Zero is how this contract reads "no such series". A future stamp would
         // postpone the call window past what the origin agreed.
@@ -164,7 +150,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, OwnableUpgradeable, UUPSUpgradeable
         IIntexNFT1155.SeriesData memory seed = IIntexNFT1155.SeriesData({
             issuanceCurrency: params.issuanceCurrency,
             referenceCurrency: params.referenceCurrency,
-            issuedUnits: params.issuedUnits,
+            totalUnits: params.totalUnits,
             promisLoadMinor: params.promisLoadMinor,
             entryPriceMinor: params.entryPriceMinor,
             callPriceMinor: params.callPriceMinor,
@@ -183,10 +169,6 @@ contract IntexNFT1155 is ERC1155Upgradeable, OwnableUpgradeable, UUPSUpgradeable
         });
         $.seriesData[intexId] = seed;
 
-        // Series remain in allSeries permanently even after supply reaches 0. This
-        // preserves the historical record and avoids O(n) removal.
-        $.allSeries.push(params.seriesId);
-        $.seriesOfDay[params.emissionDay].push(params.seriesId);
         $.seriesOfPair[params.emissionDay][params.issuanceCurrency][params.referenceCurrency] = params.seriesId;
 
         emit IntexSeriesOpened(
@@ -199,7 +181,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, OwnableUpgradeable, UUPSUpgradeable
             params.callTrigger.callThreshold,
             params.callTrigger.callNoticePeriod,
             params.callTrigger.transitMargin,
-            params.issuedUnits,
+            params.totalUnits,
             params.promisLoadMinor
         );
         emit MetadataUpdate(intexId);
@@ -331,7 +313,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, OwnableUpgradeable, UUPSUpgradeable
     }
 
     /// @inheritdoc IIntexNFT1155
-    function burnIntex(address owner, bytes14 seriesId, uint256 units) external onlyFrom(INTEX_FACTORY) {
+    function settleIntex(address owner, bytes14 seriesId, uint256 units) external onlyFrom(INTEX_FACTORY) {
         _burnIssued(owner, seriesId, units);
     }
 
@@ -359,7 +341,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, OwnableUpgradeable, UUPSUpgradeable
     }
 
     /// @inheritdoc IIntexNFT1155
-    function burnForfeited(address owner, bytes14 seriesId) external {
+    function forfeitIntex(address owner, bytes14 seriesId) external {
         uint256 intexId = _issuedIntexId(seriesId);
         IIntexNFT1155.SeriesData storage data = _s().seriesData[intexId];
         if (data.issuedAt == 0) revert IntexNotFound(intexId);
@@ -382,12 +364,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, OwnableUpgradeable, UUPSUpgradeable
         return _s().seriesData[_issuedIntexId(seriesId)].issuedAt != 0;
     }
 
-    /// @inheritdoc IIntexNFT1155
-    function issuedIntexId(bytes14 seriesId) external pure returns (uint256) {
-        return _issuedIntexId(seriesId);
-    }
-
-    /// @dev Pure helper used internally and exposed via `issuedIntexId`.
+    /// @dev The Intex id of a series: `uint256(keccak256(seriesId))`.
     function _issuedIntexId(bytes14 seriesId) private pure returns (uint256) {
         return uint256(keccak256(abi.encodePacked(seriesId)));
     }
@@ -461,7 +438,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, OwnableUpgradeable, UUPSUpgradeable
 
     /// @notice ERC1155 transfer hook: freezes Forfeited series.
     /// @dev Transfer lock.
-    ///      - Mint/burn paths (from/to address(0)) are always allowed (issue, burnIntex,
+    ///      - Mint/burn paths (from/to address(0)) are always allowed (issue, settleIntex,
     ///        bridge crosschainBurn/crosschainMint).
     ///      - Owner-to-owner transfers stay open until a Called series' settlement deadline, the
     ///        same moment its units stop leaving by bridge. Bridge gating is separate and lives in
@@ -486,20 +463,6 @@ contract IntexNFT1155 is ERC1155Upgradeable, OwnableUpgradeable, UUPSUpgradeable
         }
 
         super._update(from, to, ids, values);
-    }
-
-    // --- Series view functions ---
-
-    /// @inheritdoc IIntexNFT1155
-    function totalSeries() external view returns (uint256) {
-        return _s().allSeries.length;
-    }
-
-    /// @inheritdoc IIntexNFT1155
-    function seriesAt(uint256 index) external view returns (bytes14) {
-        bytes14[] storage allSeries = _s().allSeries;
-        if (index >= allSeries.length) revert SeriesIndexOutOfRange();
-        return allSeries[index];
     }
 
     /// @notice ERC-165 interface detection.

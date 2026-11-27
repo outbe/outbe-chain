@@ -79,7 +79,7 @@ contract IntexNFT1155RouterSingleReentrancyTest is CrossChainTest {
     bytes14 private constant SERIES_ID = "20260401-USD-U";
     uint256 private constant INTEX_ID = uint256(keccak256(abi.encodePacked(SERIES_ID)));
     uint256 private constant AMOUNT = 100;
-    uint32 private constant ISSUED_UNITS = 10_000;
+    uint32 private constant TOTAL_UNITS = 10_000;
 
     function setUp() public {
         vm.deal(user, 1000 ether);
@@ -107,8 +107,8 @@ contract IntexNFT1155RouterSingleReentrancyTest is CrossChainTest {
         adapterA.setRemoteRouter(bChainId, _interop(bChainId, address(adapterB)));
         adapterB.setRemoteRouter(aChainId, _interop(aChainId, address(adapterA)));
 
-        tokenA.openSeries(OpenSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));
-        tokenB.openSeries(OpenSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));
+        tokenA.openSeries(OpenSeriesLib.params(SERIES_ID_DAY, TOTAL_UNITS, 0));
+        tokenB.openSeries(OpenSeriesLib.params(SERIES_ID_DAY, TOTAL_UNITS, 0));
 
         tokenA.issueIntex(user, AMOUNT, SERIES_ID);
     }

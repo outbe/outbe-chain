@@ -4,8 +4,8 @@ pragma solidity ^0.8.30;
 interface IGem {
     error NonTransferable();
     error GemNotFound();
-    error AlreadySettled();
-    error AlreadyExists();
+    error GemAlreadySettled();
+    error GemAlreadyExists();
     error ZeroOwner();
     error UnknownProfileSelector(uint8 value);
     error GroupExistenceMismatch(uint256 groupId, uint32 memberCount);

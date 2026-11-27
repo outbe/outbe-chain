@@ -84,7 +84,7 @@
             "internalType": "uint256"
           },
           {
-            "name": "issuedUnits",
+            "name": "totalUnits",
             "type": "uint32",
             "internalType": "uint32"
           },
@@ -162,6 +162,178 @@
             "name": "groupKey",
             "type": "bytes32",
             "internalType": "bytes32"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getIntexSeries",
+    "inputs": [
+      {
+        "name": "seriesId",
+        "type": "bytes14",
+        "internalType": "bytes14"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct IIntex.SeriesData",
+        "components": [
+          {
+            "name": "intexId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "seriesId",
+            "type": "bytes14",
+            "internalType": "bytes14"
+          },
+          {
+            "name": "promisLoadMinor",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "entryPriceMinor",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "totalUnits",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "callWindow",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "callThreshold",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "callPriceMinor",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "state",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "issuedAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "calledAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "callNoticePeriod",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "issuanceCurrency",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "referenceCurrency",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "emissionDay",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "settledUnits",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "minedUnits",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "gemFactoryUnits",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "settlementDeadline",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "groupKey",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "intexUnitCounts",
+    "inputs": [
+      {
+        "name": "intexId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct IIntex.UnitCounts",
+        "components": [
+          {
+            "name": "totalUnits",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "issuedUnits",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "settledUnits",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "minedUnits",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "gemFactoryUnits",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "forfeitedUnits",
+            "type": "uint32",
+            "internalType": "uint32"
           }
         ]
       }
@@ -286,76 +458,6 @@
         "name": "",
         "type": "bytes14",
         "internalType": "bytes14"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "seriesExists",
-    "inputs": [
-      {
-        "name": "intexId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "seriesUnitCounts",
-    "inputs": [
-      {
-        "name": "intexId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "tuple",
-        "internalType": "struct IIntex.UnitCounts",
-        "components": [
-          {
-            "name": "issuedUnits",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "activeUnits",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "settledUnits",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "minedUnits",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "gemFactoryUnits",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "forfeitedUnits",
-            "type": "uint32",
-            "internalType": "uint32"
-          }
-        ]
       }
     ],
     "stateMutability": "view"
@@ -586,6 +688,11 @@
   },
   {
     "type": "error",
+    "name": "IntexNotFound",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InvalidSeriesId",
     "inputs": []
   },
@@ -613,11 +720,6 @@
   {
     "type": "error",
     "name": "SeriesIndexOutOfRange",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "SeriesNotFound",
     "inputs": []
   },
   {

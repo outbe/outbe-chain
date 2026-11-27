@@ -46,7 +46,7 @@ contract IntexNFT1155SupplyInvariantTest is StdInvariant, Test {
 
     uint32 internal constant SERIES_ID_DAY = 20250101;
     bytes14 internal constant SERIES_ID = "20250101-USD-U";
-    uint32 internal constant ISSUED_UNITS = 10_000;
+    uint32 internal constant TOTAL_UNITS = 10_000;
 
     function setUp() public {
         bidders.push(address(0xB1));
@@ -59,7 +59,7 @@ contract IntexNFT1155SupplyInvariantTest is StdInvariant, Test {
         intex = DeployProxy.intexNFT1155At(
             intexAt, admin, DeployProxy.NftLinks(admin, address(handler), address(handler), admin, admin)
         );
-        intex.openSeries(OpenSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));
+        intex.openSeries(OpenSeriesLib.params(SERIES_ID_DAY, TOTAL_UNITS, 0));
 
         bytes4[] memory selectors = new bytes4[](2);
         selectors[0] = NFT1155SupplyHandler.mint.selector;
@@ -68,11 +68,11 @@ contract IntexNFT1155SupplyInvariantTest is StdInvariant, Test {
         targetContract(address(handler));
     }
 
-    /// @dev `issuedUnits` never moves, and parity (sum balanceOf == totalSupply) holds.
-    function invariant_issuedUnitsAndParity() public view {
-        uint256 intexId = intex.issuedIntexId(SERIES_ID);
+    /// @dev `totalUnits` never moves, and parity (sum balanceOf == totalSupply) holds.
+    function invariant_totalUnitsAndParity() public view {
+        uint256 intexId = uint256(keccak256(abi.encodePacked(SERIES_ID)));
         IIntexNFT1155.SeriesData memory d = intex.getIntexSeries(SERIES_ID);
-        assertEq(d.issuedUnits, ISSUED_UNITS, "issuedUnits is immutable");
+        assertEq(d.totalUnits, TOTAL_UNITS, "totalUnits is immutable");
         uint256 sum;
         for (uint256 i = 0; i < bidders.length; i++) {
             sum += intex.balanceOf(bidders[i], intexId);

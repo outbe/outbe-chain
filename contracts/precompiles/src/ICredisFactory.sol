@@ -11,7 +11,7 @@ interface ICredisFactory {
     error InvalidOwner();
     error CredisAlreadyExists();
     error CredisClosed();
-    error PaymentBelowAccruedFee();
+    error PaymentBelowFee();
     error NotCalled();
     error CredisNotFound();
     error CredisNotIssued();
@@ -34,7 +34,7 @@ interface ICredisFactory {
 
     event CredisSeriesOpened(
         bytes14 indexed seriesId,
-        uint8 subSeries,
+        uint16 indexed subSeriesId,
         uint16 issuanceCurrency,
         uint16 referenceCurrency,
         uint256 entryPriceMinor,
@@ -46,7 +46,7 @@ interface ICredisFactory {
     /// Every unsettled Credis of the sub-series is called with its call group.
     event CredisSeriesCalled(
         bytes14 indexed seriesId,
-        uint8 subSeries,
+        uint16 indexed subSeriesId,
         uint16 issuanceCurrency,
         uint16 referenceCurrency,
         uint64 calledAt,
@@ -55,7 +55,7 @@ interface ICredisFactory {
     /// The deadline of the call group passed: the unsettled Credis of the sub-series are forfeited.
     event CredisSeriesClosed(
         bytes14 indexed seriesId,
-        uint8 subSeries,
+        uint16 indexed subSeriesId,
         uint16 issuanceCurrency,
         uint16 referenceCurrency,
         uint32 forfeitedCount,
@@ -78,12 +78,13 @@ interface ICredisFactory {
     function settleCredis(uint256 credisId, address asset, uint256 amountCapMinor)
         external
         returns (uint256 settledAmountMinor, uint256 settledFeeMinor);
-    /// What paying the Credis off now takes: its outstanding amount plus the fee
-    /// accrued since the last settlement. Zero once it is Forfeited by its deadline; a full
+    /// What paying the Credis off now takes: `payoffMinor` is its outstanding amount plus
+    /// `feeMinor`, the fee accrued since the last settlement. `feeMinor` is also the smallest
+    /// amount `settleCredis` takes. Both are zero once it is Forfeited by its deadline; a full
     /// settlement or a forfeit deletes the Credis, and then the read reverts. Fee
     /// grows by whole days, so a payment landing a day later needs that day more;
     /// `settleCredis` takes only what is owed, so paying more is safe.
-    function quoteSettlement(uint256 credisId) external view returns (uint256 payoffMinor);
+    function quoteSettlement(uint256 credisId) external view returns (uint256 payoffMinor, uint256 feeMinor);
 
     /// @notice How close a right is to its group's call. The window ends at the last
     ///         finalized UTC day. Prices are COEN in `referenceCurrency` at scale 1e6.
@@ -105,7 +106,7 @@ interface ICredisFactory {
 
     /// @notice Read the call progress of `credisId`. Reverts `CredisNotFound`, or
     ///         `CredisNotIssued` once it is Called, Settled or Forfeited.
-    function callState(uint256 credisId) external view returns (CallState memory);
+    function getCallState(uint256 credisId) external view returns (CallState memory);
     /// The owner gives up an Issued or Called Credis before its settlement deadline: its remaining
     /// Gratis burns, the amount is forfeited and the Credis is deleted.
     function forfeitCredis(uint256 credisId)

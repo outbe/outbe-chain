@@ -67,7 +67,7 @@ contract IntexAuctionTargetRouterCallNoticeSlotTest is CrossChainTest {
         payload.seriesId = OpenSeriesLib.seriesId(DAY);
         payload.emissionDay = DAY;
         payload.issuedAt = uint32(block.timestamp);
-        payload.issuedUnits = 10;
+        payload.totalUnits = 10;
         payload.promisLoadMinor = 1;
         payload.issuanceCurrency = 840;
         payload.referenceCurrency = 840;

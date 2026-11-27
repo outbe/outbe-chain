@@ -128,7 +128,7 @@ contract IntexAuctionClaimsTest is Test {
     }
 
     function _units(address who) internal view returns (uint256) {
-        return intex.balanceOf(who, intex.issuedIntexId(OpenSeriesLib.seriesId(DAY)));
+        return intex.balanceOf(who, uint256(keccak256(abi.encodePacked(OpenSeriesLib.seriesId(DAY)))));
     }
 
     function _change(uint16 quantity) internal pure returns (uint256) {

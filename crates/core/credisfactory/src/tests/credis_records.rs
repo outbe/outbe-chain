@@ -497,7 +497,7 @@ fn settle_rejects_a_payment_below_the_accrued_fee() {
         assert_eq!(
             err.to_string(),
             outbe_primitives::error::PrecompileError::from(
-                crate::errors::CredisFactoryError::PaymentBelowAccruedFee
+                crate::errors::CredisFactoryError::PaymentBelowFee
             )
             .to_string()
         );
@@ -757,7 +757,7 @@ fn settle_below_the_accrued_fee_reverts_and_changes_nothing() {
         assert_eq!(
             err.to_string(),
             outbe_primitives::error::PrecompileError::from(
-                crate::errors::CredisFactoryError::PaymentBelowAccruedFee
+                crate::errors::CredisFactoryError::PaymentBelowFee
             )
             .to_string()
         );
@@ -811,7 +811,7 @@ fn settle_below_the_accrued_fee_reverts_and_changes_nothing() {
         assert_eq!(
             err.to_string(),
             outbe_primitives::error::PrecompileError::from(
-                crate::errors::CredisFactoryError::PaymentBelowAccruedFee
+                crate::errors::CredisFactoryError::PaymentBelowFee
             )
             .to_string()
         );
@@ -915,7 +915,7 @@ fn rejected_settlement_leaves_lifetime_interest_and_emits_nothing() {
         assert_eq!(
             err.to_string(),
             outbe_primitives::error::PrecompileError::from(
-                crate::errors::CredisFactoryError::PaymentBelowAccruedFee
+                crate::errors::CredisFactoryError::PaymentBelowFee
             )
             .to_string()
         );
@@ -943,7 +943,7 @@ fn rejected_settlement_leaves_lifetime_interest_and_emits_nothing() {
         assert_eq!(
             err.to_string(),
             outbe_primitives::error::PrecompileError::from(
-                crate::errors::CredisFactoryError::PaymentBelowAccruedFee
+                crate::errors::CredisFactoryError::PaymentBelowFee
             )
             .to_string()
         );
@@ -1206,7 +1206,7 @@ fn dust_settlements_cannot_evade_the_coupon() {
             &err,
             outbe_primitives::error::PrecompileError::RevertBytes(bytes)
                 if bytes.starts_with(
-                    &<crate::precompile::ICredisFactory::PaymentBelowAccruedFee as alloy_sol_types::SolError>::SELECTOR
+                    &<crate::precompile::ICredisFactory::PaymentBelowFee as alloy_sol_types::SolError>::SELECTOR
                 )
         ));
 
@@ -1701,7 +1701,7 @@ fn removing_from_the_middle_keeps_the_call_index_consistent() {
 }
 
 #[test]
-fn sums_and_indexes_span_all_of_an_accounts_credis() {
+fn indexes_span_all_of_an_accounts_credis() {
     let mut provider = credis_provider();
     let first = open_at_block(&mut provider, 1, params(alice()));
     open_at_block(&mut provider, 2, params(alice()));
@@ -1709,15 +1709,7 @@ fn sums_and_indexes_span_all_of_an_accounts_credis() {
     StorageHandle::enter(&mut provider, |storage| {
         let mut credis = CredisContract::new(storage);
 
-        assert_eq!(
-            credis.amount_and_outstanding_of(alice()).unwrap(),
-            (
-                U256::from(PRINCIPAL) * U256::from(2u64),
-                U256::from(PRINCIPAL) * U256::from(2u64)
-            )
-        );
-
-        // The full settlement of one deletes it and takes it out of both sums.
+        // The full settlement of one deletes it.
         rules::settle(
             &mut credis,
             first,
@@ -1726,10 +1718,6 @@ fn sums_and_indexes_span_all_of_an_accounts_credis() {
             settlement_asset(),
         )
         .unwrap();
-        assert_eq!(
-            credis.amount_and_outstanding_of(alice()).unwrap(),
-            (U256::from(PRINCIPAL), U256::from(PRINCIPAL))
-        );
 
         assert_eq!(credis.credis_count_of(alice()).unwrap(), 1);
         assert_eq!(credis.credis_count_of(bob()).unwrap(), 1);
@@ -1865,16 +1853,6 @@ fn precompile_enumerates_credis_per_owner() {
             vec![first]
         );
 
-        // `credisExists` answers without reverting.
-        let exists = |id: U256| {
-            ICredis::credisExistsCall::abi_decode_returns(&call(
-                ICredis::credisExistsCall { credisId: id }.abi_encode(),
-            ))
-            .unwrap()
-        };
-        assert!(exists(first));
-        assert!(!exists(U256::from(0xdeadu64)));
-
         // `ownerOf` resolves the owner of a single Credis.
         let out = call(ICredis::ownerOfCall { credisId: first }.abi_encode());
         assert_eq!(
@@ -1901,37 +1879,6 @@ fn precompile_enumerates_credis_per_owner() {
 }
 
 #[test]
-fn precompile_reports_principal_and_outstanding_together() {
-    let mut provider = credis_provider();
-    let first = open_at_block(&mut provider, 1, params(alice()));
-    open_at_block(&mut provider, 2, params(alice()));
-    StorageHandle::enter(&mut provider, |storage| {
-        let id = {
-            let mut credis = CredisContract::new(storage.clone());
-            let id = first;
-            // The full settlement of one Credis takes it out of both sums.
-            rules::settle(
-                &mut credis,
-                id,
-                U256::from(999_999_999_999u64),
-                at(1),
-                settlement_asset(),
-            )
-            .unwrap();
-            id
-        };
-        let _ = id;
-
-        let data = ICredis::credisAmountAndOutstandingOfCall { owner: alice() }.abi_encode();
-        let out = dispatch(storage, &data, alice(), U256::ZERO).unwrap();
-        let decoded = ICredis::credisAmountAndOutstandingOfCall::abi_decode_returns(&out).unwrap();
-
-        assert_eq!(decoded.amountMinor, U256::from(PRINCIPAL));
-        assert_eq!(decoded.outstandingAmountMinor, U256::from(PRINCIPAL));
-    });
-}
-
-#[test]
 fn precompile_time_views_reject_wide_timestamps_after_record_lookup() {
     let mut provider = credis_provider();
     let id = open_at_block(&mut provider, 1, params(alice()));
@@ -1939,7 +1886,6 @@ fn precompile_time_views_reject_wide_timestamps_after_record_lookup() {
         let calls = [
             ICredis::tokenURICall { credisId: id }.abi_encode(),
             ICredis::getCredisCall { credisId: id }.abi_encode(),
-            ICredis::accruedFeeMinorCall { credisId: id }.abi_encode(),
         ];
         storage.set_block_timestamp(U256::from(u64::MAX)).unwrap();
         for data in &calls {
@@ -1992,24 +1938,21 @@ fn precompile_interest_views_use_the_storage_timestamp() {
     });
 
     // At origination nothing has accrued.
-    let accrued = ICredis::accruedFeeMinorCall { credisId: id }.abi_encode();
-    let out = StorageHandle::enter(&mut storage, |handle| {
-        dispatch(handle, &accrued, alice(), U256::ZERO).unwrap()
-    });
-    assert_eq!(
-        ICredis::accruedFeeMinorCall::abi_decode_returns(&out).unwrap(),
-        U256::ZERO
-    );
+    let quote =
+        crate::precompile::ICredisFactory::quoteSettlementCall { credisId: id }.abi_encode();
+    let fee = |storage: &mut HashMapStorageProvider| {
+        let out = StorageHandle::enter(storage, |handle| {
+            crate::precompile::dispatch(handle, &quote, alice(), U256::ZERO).unwrap()
+        });
+        crate::precompile::ICredisFactory::quoteSettlementCall::abi_decode_returns(&out)
+            .unwrap()
+            .feeMinor
+    };
+    assert_eq!(fee(&mut storage), U256::ZERO);
 
     // 100 days later it matches the worked example.
     storage.set_timestamp(U256::from(at(100)));
-    let out = StorageHandle::enter(&mut storage, |handle| {
-        dispatch(handle, &accrued, alice(), U256::ZERO).unwrap()
-    });
-    assert_eq!(
-        ICredis::accruedFeeMinorCall::abi_decode_returns(&out).unwrap(),
-        U256::from(10_958_904u64)
-    );
+    assert_eq!(fee(&mut storage), U256::from(10_958_904u64));
 
     StorageHandle::enter(&mut storage, |handle| {
         rules::settle(
@@ -2021,12 +1964,14 @@ fn precompile_interest_views_use_the_storage_timestamp() {
         )
         .unwrap();
     });
-    let paid = ICredis::settledFeeMinorCall { credisId: id }.abi_encode();
+    let record = ICredis::getCredisCall { credisId: id }.abi_encode();
     let out = StorageHandle::enter(&mut storage, |handle| {
-        dispatch(handle, &paid, alice(), U256::ZERO).unwrap()
+        dispatch(handle, &record, alice(), U256::ZERO).unwrap()
     });
     assert_eq!(
-        ICredis::settledFeeMinorCall::abi_decode_returns(&out).unwrap(),
+        ICredis::getCredisCall::abi_decode_returns(&out)
+            .unwrap()
+            .settledFeeMinor,
         U256::from(10_958_904u64)
     );
 }
@@ -2571,12 +2516,6 @@ fn the_outcome_identities_hold_through_partial_settlements_and_forfeit() {
                 .unwrap()
                 .is_zero()
         );
-        // The owner's sums count a lapsed Credis until the forfeit pass deletes it.
-        assert_eq!(
-            credis.amount_and_outstanding_of(alice()).unwrap(),
-            (U256::from(PRINCIPAL), U256::from(PRINCIPAL / 2))
-        );
-
         assert_eq!(check(&credis, later), before_sweep);
         assert_eq!(
             credis.get_credis(id).unwrap().settled_fee_minor,
@@ -2584,10 +2523,6 @@ fn the_outcome_identities_hold_through_partial_settlements_and_forfeit() {
             "a lapsed Credis books no interest"
         );
         forfeit_lapsed(&mut credis, id, deadline + 1).unwrap();
-        assert_eq!(
-            credis.amount_and_outstanding_of(alice()).unwrap(),
-            (U256::ZERO, U256::ZERO)
-        );
     });
 }
 
@@ -2668,11 +2603,12 @@ fn zero_policy_rate_charges_no_fee() {
 
     provider.set_timestamp(U256::from(at(90)));
     StorageHandle::enter(&mut provider, |storage| {
-        let fee = super::credis_view(&storage, ICredis::accruedFeeMinorCall { credisId: id });
-        assert_eq!(fee, U256::ZERO);
         assert_eq!(
             crate::runtime::quote_settlement(&storage, id).unwrap(),
-            U256::from(PRINCIPAL)
+            crate::runtime::SettlementQuote {
+                payoff_minor: U256::from(PRINCIPAL),
+                fee_minor: U256::ZERO,
+            }
         );
 
         let repayment = rules::settle(
@@ -2691,6 +2627,12 @@ fn zero_policy_rate_charges_no_fee() {
 
         assert!(!CredisContract::new(storage).credis_exists(id).unwrap());
     });
+}
+
+fn fee_of(storage: &StorageHandle<'_>, id: U256) -> U256 {
+    crate::runtime::quote_settlement(storage, id)
+        .unwrap()
+        .fee_minor
 }
 
 fn assert_parts_add_up(data: &ICredis::CredisData) {
@@ -2724,13 +2666,13 @@ fn credis_names_use_amount_and_fee() {
     provider.set_timestamp(U256::from(at(30)));
     let (lapsing_fee, _) = StorageHandle::enter(&mut provider, |storage| {
         let mut credis = CredisContract::new(storage.clone());
-        let lapsing_fee =
-            super::credis_view(&storage, ICredis::accruedFeeMinorCall { credisId: lapsing });
+        let lapsing_fee = fee_of(&storage, lapsing);
         assert!(lapsing_fee > U256::ZERO);
-        let paid_fee =
-            super::credis_view(&storage, ICredis::accruedFeeMinorCall { credisId: paid });
+        let paid_fee = fee_of(&storage, paid);
         assert_eq!(
-            crate::runtime::quote_settlement(&storage, paid).unwrap(),
+            crate::runtime::quote_settlement(&storage, paid)
+                .unwrap()
+                .payoff_minor,
             principal + paid_fee
         );
 
@@ -2758,10 +2700,7 @@ fn credis_names_use_amount_and_fee() {
         assert_eq!(part.outstandingAmountMinor, principal - half);
         assert_eq!(part.outcome.forfeitedAmountMinor, U256::ZERO);
         assert_eq!(part.settledFeeMinor, lapsing_fee);
-        assert_eq!(
-            super::credis_view(&storage, ICredis::accruedFeeMinorCall { credisId: lapsing }),
-            U256::ZERO
-        );
+        assert_eq!(fee_of(&storage, lapsing), U256::ZERO);
 
         assert!(!CredisContract::new(storage.clone())
             .credis_exists(paid)
@@ -2783,31 +2722,7 @@ fn credis_names_use_amount_and_fee() {
         assert_eq!(lapsed.outcome.forfeitedAmountMinor, principal - half);
         assert!(lapsed.outcome.forfeitedGratisMinor > U256::ZERO);
         assert_eq!(lapsed.settledFeeMinor, lapsing_fee);
-        assert_eq!(
-            super::credis_view(&storage, ICredis::settledFeeMinorCall { credisId: lapsing }),
-            lapsing_fee
-        );
-        assert_eq!(
-            super::credis_view(&storage, ICredis::accruedFeeMinorCall { credisId: lapsing }),
-            U256::ZERO
-        );
-
-        let alice_sums = super::credis_view(
-            &storage,
-            ICredis::credisAmountAndOutstandingOfCall { owner: alice() },
-        );
-        assert_eq!(
-            (alice_sums.amountMinor, alice_sums.outstandingAmountMinor),
-            (principal, principal - half)
-        );
-        let bob_sums = super::credis_view(
-            &storage,
-            ICredis::credisAmountAndOutstandingOfCall { owner: bob() },
-        );
-        assert_eq!(
-            (bob_sums.amountMinor, bob_sums.outstandingAmountMinor),
-            (U256::ZERO, U256::ZERO)
-        );
+        assert_eq!(fee_of(&storage, lapsing), U256::ZERO);
 
         let forfeit = forfeit_lapsed(
             &mut CredisContract::new(storage.clone()),
@@ -2822,14 +2737,6 @@ fn credis_names_use_amount_and_fee() {
         assert_eq!(
             forfeit.forfeited_gratis_minor,
             lapsed.outcome.forfeitedGratisMinor
-        );
-        let alice_sums = super::credis_view(
-            &storage,
-            ICredis::credisAmountAndOutstandingOfCall { owner: alice() },
-        );
-        assert_eq!(
-            (alice_sums.amountMinor, alice_sums.outstandingAmountMinor),
-            (U256::ZERO, U256::ZERO)
         );
     });
 }

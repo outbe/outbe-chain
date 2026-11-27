@@ -41,7 +41,7 @@ contract IntexNFT1155MetadataTest is Test {
         token.openSeries(params);
         vm.prank(bridger);
         token.issueIntex(user, 10, SERIES_ID);
-        intexId = token.issuedIntexId(SERIES_ID);
+        intexId = uint256(keccak256(abi.encodePacked(SERIES_ID)));
     }
 
     function _json(uint256 intexId) internal view returns (bytes memory) {
@@ -81,7 +81,7 @@ contract IntexNFT1155MetadataTest is Test {
         params.seriesId = shortId;
         vm.prank(bridger);
         token.openSeries(params);
-        uint256 issued = token.issuedIntexId(shortId);
+        uint256 issued = uint256(keccak256(abi.encodePacked(shortId)));
         _assertContains(_json(issued), "\"name\":\"Intex 20260623-USD\",");
     }
 

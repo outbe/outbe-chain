@@ -24,7 +24,7 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
     uint32 private constant SERIES_ID_DAY = 20260401;
     bytes14 private constant SERIES_ID = "20260401-USD-U";
     uint256 private constant INTEX_ID = uint256(keccak256(abi.encodePacked(SERIES_ID)));
-    uint32 private constant ISSUED_UNITS = 10_000;
+    uint32 private constant TOTAL_UNITS = 10_000;
 
     IntexNFT1155 private tokenA;
     IntexNFT1155 private tokenB;
@@ -59,8 +59,8 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         adapterA.setRemoteRouter(B_CHAIN_ID, _interop(B_CHAIN_ID, address(adapterB)));
         adapterB.setRemoteRouter(A_CHAIN_ID, _interop(A_CHAIN_ID, address(adapterA)));
 
-        tokenA.openSeries(OpenSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));
-        tokenB.openSeries(OpenSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));
+        tokenA.openSeries(OpenSeriesLib.params(SERIES_ID_DAY, TOTAL_UNITS, 0));
+        tokenB.openSeries(OpenSeriesLib.params(SERIES_ID_DAY, TOTAL_UNITS, 0));
     }
 
     function test_HopAToB_TotalSupplyPreserved() public {
@@ -102,7 +102,7 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         uint32 parkDay = 20260601;
         bytes14 parkSeries = "20260601-USD-U";
         uint256 parkIntexId = uint256(keccak256(abi.encodePacked(parkSeries)));
-        tokenA.openSeries(OpenSeriesLib.params(parkDay, ISSUED_UNITS, 0));
+        tokenA.openSeries(OpenSeriesLib.params(parkDay, TOTAL_UNITS, 0));
 
         uint256 minted = 100;
         uint256 bridged = 100;
@@ -124,7 +124,7 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
 
         // Fix the destination cause and retry - parked moves into B.totalSupply with no
         // change to the global sum.
-        tokenB.openSeries(OpenSeriesLib.params(parkDay, ISSUED_UNITS, 0));
+        tokenB.openSeries(OpenSeriesLib.params(parkDay, TOTAL_UNITS, 0));
         adapterB.retryIntexCrosschainReceive(receiveId, 0);
 
         assertEq(tokenB.totalSupply(parkIntexId), bridged, "B.totalSupply == bridged after retry");
@@ -140,7 +140,7 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         uint32 parkDay = 20260601;
         bytes14 parkSeries = "20260601-USD-U";
         uint256 parkIntexId = uint256(keccak256(abi.encodePacked(parkSeries)));
-        tokenA.openSeries(OpenSeriesLib.params(parkDay, ISSUED_UNITS, 0));
+        tokenA.openSeries(OpenSeriesLib.params(parkDay, TOTAL_UNITS, 0));
 
         uint256 minted = 100;
         tokenA.issueIntex(user, minted, parkSeries);
@@ -176,7 +176,7 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         uint32 day = 20260602;
         bytes14 series = "20260602-USD-U";
         uint256 id = uint256(keccak256(abi.encodePacked(series)));
-        tokenA.openSeries(OpenSeriesLib.params(day, ISSUED_UNITS, 60));
+        tokenA.openSeries(OpenSeriesLib.params(day, TOTAL_UNITS, 60));
         tokenA.issueIntex(user, 100, series);
         bytes32 receiveId = _send(adapterA, adapterB, A_CHAIN_ID, user, id, 60);
         (,, uint256 parked, bool exists) = adapterB.getFailedCrosschainReceive(receiveId, 0);
@@ -186,7 +186,7 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.IntexNotFound.selector, id));
         adapterB.retryIntexCrosschainReceive(receiveId, 0);
 
-        tokenB.openSeries(OpenSeriesLib.params(day, ISSUED_UNITS, 60));
+        tokenB.openSeries(OpenSeriesLib.params(day, TOTAL_UNITS, 60));
         uint32 calledAt = uint32(block.timestamp);
         tokenA.callSeries(series, calledAt);
         tokenB.callSeries(series, calledAt);
@@ -224,8 +224,8 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         uint32 day = 20260603;
         bytes14 series = "20260603-USD-U";
         uint256 id = uint256(keccak256(abi.encodePacked(series)));
-        tokenA.openSeries(OpenSeriesLib.params(day, ISSUED_UNITS, 60));
-        tokenB.openSeries(OpenSeriesLib.params(day, ISSUED_UNITS, 60));
+        tokenA.openSeries(OpenSeriesLib.params(day, TOTAL_UNITS, 60));
+        tokenB.openSeries(OpenSeriesLib.params(day, TOTAL_UNITS, 60));
         tokenA.issueIntex(user, 100, series);
 
         uint32 calledAt = uint32(block.timestamp);
@@ -273,7 +273,7 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
     }
 
     function testFuzz_Hop_TotalSupplyPreserved(uint256 issuedSeed, uint256 bridgedSeed) public {
-        uint256 minted = bound(issuedSeed, 1, ISSUED_UNITS);
+        uint256 minted = bound(issuedSeed, 1, TOTAL_UNITS);
         uint256 bridged = bound(bridgedSeed, 0, minted);
 
         tokenA.issueIntex(user, minted, SERIES_ID);
