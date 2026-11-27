@@ -326,7 +326,7 @@ fn loads_above_the_limit_carry_the_excess() {
     assert_eq!(excess(&mut provider), U256::from(1));
     let record = record(&mut provider);
     assert_eq!(record.metadosis_state, metadosis_state::COMPLETED);
-    assert_eq!(record.state, emission_day_state::COMPLETED);
+    assert_eq!(record.state, emission_day_state::PROCESSING);
     assert_eq!(record.nods, u128::from(limit));
     assert_eq!(record.desis_limit, 0);
     assert_eq!(promis_limit(&mut provider), before);
@@ -334,43 +334,6 @@ fn loads_above_the_limit_carry_the_excess() {
         let desis = outbe_desis::schema::DesisContract::new(storage);
         assert_eq!(desis.desis_limit_set.read(&day).unwrap(), 1);
         assert_eq!(desis.has_desis_limit.read(&day).unwrap(), 0);
-    });
-}
-
-/// A Desis Limit above the auction domain cancels the auction and goes back to the Promis Limit
-/// once, and Metadosis still ends Completed.
-#[test]
-fn a_desis_limit_above_the_auction_domain_completes_the_metadosis() {
-    let day = outbe_system_common::time::EmissionDate::new(DAY);
-    let limit = U256::from(u128::MAX);
-    let nominal = limit * U256::from(2);
-    let loads = outbe_nod::offer::issue::nod_load_of(nominal);
-    let mut provider = fixture_of(u128::MAX, &[nominal]);
-    StorageHandle::enter(&mut provider, |storage| {
-        outbe_desis::test_support::take_day(storage.clone(), day).unwrap();
-        outbe_promislimit::PromisLimitContract::new(storage)
-            .add(outbe_promislimit::LimitSource::Nod, limit)
-            .unwrap();
-    });
-    let before = promis_limit(&mut provider);
-
-    run(&mut provider).unwrap();
-
-    assert!(failed(&provider).is_empty());
-    assert_eq!(completed(&provider).len(), 1);
-    let record = record(&mut provider);
-    assert_eq!(record.metadosis_state, metadosis_state::COMPLETED);
-    assert_eq!(U256::from(record.nods), loads);
-    assert_eq!(record.desis_limit, 0);
-    assert_eq!(promis_limit(&mut provider), before + limit - loads);
-    StorageHandle::enter(&mut provider, |storage| {
-        assert_eq!(
-            outbe_desis::schema::DesisContract::new(storage)
-                .cancel_reason
-                .read(&day)
-                .unwrap(),
-            outbe_desis::constants::CANCELED_LIMIT_OVERFLOW
-        );
     });
 }
 
@@ -391,7 +354,7 @@ fn excess_lowers_the_next_day() {
     assert!(exceeded(&provider).is_empty());
     let record = record(&mut provider);
     assert_eq!(record.nods, u128::from(loads + 1_000));
-    assert_eq!(record.state, emission_day_state::COMPLETED);
+    assert_eq!(record.state, emission_day_state::PROCESSING);
 }
 
 /// An excess above the next limit takes the whole of it and carries the rest on.

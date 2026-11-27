@@ -205,10 +205,12 @@ fn wwd_step_opens_the_wwd_of_the_day_and_seals_it_at_the_offering_end() {
     let mut storage = cycle_storage();
     storage.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 64);
     let pipeline = |ctx: &BlockRuntimeContext<'_>| {
-        WorldwideDayContract::new(ctx.storage.clone())
+        let mut open = WorldwideDayContract::new(ctx.storage.clone())
             .pipeline_wwd
             .read_all()
-            .unwrap()
+            .unwrap();
+        open.sort();
+        open
     };
     let last_day = |ctx: &BlockRuntimeContext<'_>| {
         WorldwideDayContract::new(ctx.storage.clone())

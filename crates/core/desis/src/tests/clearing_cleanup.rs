@@ -40,6 +40,7 @@ fn poll(s: &StorageHandle<'_>) {
 fn a_waiting_gate_does_not_starve_another_ready_auction() {
     with_storage(|s| {
         open_clearing(&s, 100);
+        crate::tests::record_started_day(&s, NEXT_EMISSION_DAY);
         let mut contract = s.contract::<DesisContract>();
         let config = contract.read_auction_config(EMISSION_DAY).unwrap();
         contract

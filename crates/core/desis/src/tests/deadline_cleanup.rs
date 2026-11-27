@@ -71,7 +71,10 @@ fn deadline_retirement_fits_budget_for_1088_and_64_accepted_bids() {
             })
             .unwrap();
             let cost = s.gas_used().unwrap() - gas_before;
-            assert!(cost <= ADVANCE_DAY_BASE_GAS + ADVANCE_FAIL_GAS);
+            assert!(
+                cost <= ADVANCE_DAY_BASE_GAS + ADVANCE_FAIL_GAS,
+                "retirement cost {cost}"
+            );
             if let Some(previous) = retirement_cost.replace(cost) {
                 assert_eq!(
                     cost, previous,
@@ -145,7 +148,7 @@ fn schedule_retires_every_backlogged_day_in_one_tick_and_keeps_a_not_ready_day()
     with_storage(|s| {
         let later = EmissionDate::new(20231115);
         let mut contract = s.contract::<DesisContract>();
-        for day in [later, EMISSION_DAY, EmissionDate::new(20231114)] {
+        for day in [later, EMISSION_DAY, EmissionDate::new(20231112)] {
             crate::tests::record_started_day(&s, day);
             contract
                 .write_stage(day, AuctionStage::CommittingBids)
@@ -163,7 +166,7 @@ fn schedule_retires_every_backlogged_day_in_one_tick_and_keeps_a_not_ready_day()
         );
         // The swapped-in tail must not be skipped after removing slot one.
         assert_eq!(
-            contract.read_stage(EmissionDate::new(20231114)).unwrap(),
+            contract.read_stage(EmissionDate::new(20231112)).unwrap(),
             AuctionStage::Failed
         );
         assert_eq!(contract.sched_active_count.read().unwrap(), 1);

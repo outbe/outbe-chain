@@ -6,8 +6,8 @@ use crate::constants::{ADVANCE_DAY_BASE_GAS, MAX_TARGET_CHAINS};
 const COMMITTING: EmissionDate = EmissionDate::new(20231112);
 /// At `NOW`, the reveal stage of this day ends.
 const REVEALING: EmissionDate = EmissionDate::new(20231111);
-/// At `NOW`, this day waits for its bids. Nothing is due.
-const WAITING: EmissionDate = EmissionDate::new(20231110);
+/// At `NOW`, this day waits for its bids, and its last clearing time is ahead. Nothing is due.
+const WAITING: EmissionDate = EmissionDate::new(20231114);
 
 /// Put a started day in the schedule at `stage`; its windows come from the day.
 fn schedule_started(

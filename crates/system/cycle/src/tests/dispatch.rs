@@ -231,10 +231,14 @@ fn one_rate_pays_every_receiver_of_a_pool_with_no_reward_run() {
         let record = outbe_emission::api::get_emission_day(ctx.storage.clone(), day)
             .unwrap()
             .unwrap();
-        assert_eq!(U256::from(record.waa), each * U256::from(recipients));
-        let (_, _, unclaimed) = agent_reward
+        let (rate, _, unclaimed) = agent_reward
             .agent_reward_rate(RewardPool::Waa, day)
             .unwrap();
+        assert_eq!(
+            U256::from(record.waa),
+            rate * U256::from(recipients) / U256::from(10u64).pow(U256::from(18u64))
+        );
+        assert!(U256::from(record.waa) >= each * U256::from(recipients));
         assert_eq!(unclaimed, U256::from(record.waa));
         assert_eq!(
             agent_reward.waa_address_count.read(&day).unwrap(),

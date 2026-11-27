@@ -198,12 +198,12 @@ fn a_rate_is_set_once_and_closes_the_weights_of_its_day() {
         );
         assert!(matches!(
             contract.set_agent_reward_rate(RewardPool::Waa, DAY),
-            Err(outbe_primitives::error::PrecompileError::Fatal(_))
+            Err(outbe_primitives::error::PrecompileError::FatalWithCause(_))
         ));
         // The Validator and CCA rates come before the record of the day starts.
         assert!(matches!(
             contract.set_agent_reward_rate(RewardPool::Validator, DAY),
-            Err(outbe_primitives::error::PrecompileError::Fatal(_))
+            Err(outbe_primitives::error::PrecompileError::FatalWithCause(_))
         ));
     });
 }

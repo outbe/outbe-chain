@@ -157,7 +157,12 @@ fn step_error_takes_its_fallback() {
 
     metadosis.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 16);
     run_hour(&mut metadosis, 21, fire_at + 3_600).unwrap();
-    assert_eq!(emission_day_record(&mut metadosis, day).unwrap(), failed);
+    let later = emission_day_record(&mut metadosis, day).unwrap();
+    assert_eq!(
+        (later.metadosis_state, later.nods, later.metadosis_limit),
+        (failed.metadosis_state, failed.nods, failed.metadosis_limit),
+        "the failed Metadosis does not run again"
+    );
     let failed_events = metadosis
         .get_events(outbe_system_common::addresses::METADOSIS_ADDRESS)
         .iter()

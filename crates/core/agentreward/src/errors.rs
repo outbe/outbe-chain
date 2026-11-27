@@ -49,9 +49,8 @@ impl From<AgentRewardError> for PrecompileError {
     fn from(err: AgentRewardError) -> Self {
         use IAgentReward as I;
         match err {
-            AgentRewardError::RateNotDue { .. }
-            | AgentRewardError::RateOverflow
-            | AgentRewardError::UnclaimedUnderflow { .. } => {
+            AgentRewardError::RateNotDue { .. } => PrecompileError::FatalWithCause(Box::new(err)),
+            AgentRewardError::RateOverflow | AgentRewardError::UnclaimedUnderflow { .. } => {
                 PrecompileError::Fatal(err.to_string())
             }
             AgentRewardError::OfferCounterOverflow => revert_with(I::OfferCounterOverflow {}),
