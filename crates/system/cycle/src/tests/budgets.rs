@@ -221,10 +221,6 @@ fn late_protocol_exhaustion_rolls_back_calendar_and_allocation_then_retries_acro
         );
     });
     assert!(completed_tasks(&storage).is_empty());
-    assert!(storage
-        .get_events(CYCLE_ADDRESS)
-        .iter()
-        .all(|log| ICycle::DayEmissionLimitAllocationFailed::decode_log_data(log).is_err()));
 
     storage.set_block_number(3);
     storage.set_gas_limit(100_000_000);

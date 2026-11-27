@@ -46,43 +46,10 @@ fn hourly_process_emission_day_executes_due_emission_day_at_metadosis_start() {
             updated.metadosis_state,
             outbe_emission::schema::metadosis_state::COMPLETED
         );
-        assert!(
-            outbe_agentreward::distribution::has_pending_accruals_for_day(
-                &ctx.storage,
-                emission_day.day,
-            )
-            .unwrap()
-        );
-        let allocated =
-            outbe_emission::api::get_emission_day(ctx.storage.clone(), emission_day.day)
-                .unwrap()
-                .unwrap();
         assert_eq!(
-            allocated.state,
-            outbe_emission::schema::emission_day_state::PROCESSING
-        );
-        crate::handler::process_agent_rewards(&ctx).unwrap();
-        let completed =
-            outbe_emission::api::get_emission_day(ctx.storage.clone(), emission_day.day)
-                .unwrap()
-                .unwrap();
-        assert_eq!(
-            completed.state,
-            outbe_emission::schema::emission_day_state::COMPLETED
-        );
-        assert!(
-            !outbe_agentreward::distribution::has_pending_accruals_for_day(
-                &ctx.storage,
-                emission_day.day,
-            )
-            .unwrap()
-        );
-        crate::handler::process_agent_rewards(&ctx).unwrap();
-        assert_eq!(
-            outbe_emission::api::get_emission_day(ctx.storage.clone(), emission_day.day)
-                .unwrap()
-                .unwrap(),
-            completed,
+            updated.state,
+            outbe_emission::schema::emission_day_state::PROCESSING,
+            "the record completes when Desis of the day ends"
         );
 
         let cycle: Cycle<'_> = ctx.storage.contract::<Cycle<'_>>();
@@ -139,11 +106,20 @@ fn due_emission_day_fixture() -> (HashMapStorageProvider, u32, u64) {
     (storage, day, fire_at)
 }
 
-/// A day whose allocation failed, closed as its Metadosis closes it.
+/// A completed day with no amounts, so the Cycle starts the day after it.
 fn close_failed_allocation(handle: StorageHandle<'_>, day: u32) {
-    outbe_emission::api::record_failed_day_allocation(handle.clone(), day, U256::ZERO).unwrap();
-    outbe_emission::api::record_metadosis_canceled(handle.clone(), day).unwrap();
-    outbe_emission::api::complete_day_emission_limit(handle, day).unwrap();
+    use outbe_emission::schema::{desis_state, emission_day_state, metadosis_state};
+    let mut record = outbe_emission::EmissionDay::new(
+        day,
+        outbe_system_common::time::WorldwideDay::new(0),
+        outbe_emission::api::compute_metadosis_start(day).unwrap(),
+        0,
+        [0; 5],
+    );
+    record.state = emission_day_state::COMPLETED;
+    record.metadosis_state = metadosis_state::COMPLETED;
+    record.desis_state = desis_state::COMPLETED;
+    outbe_emission::api::put_emission_day(handle, &record).unwrap();
 }
 
 fn run_hour(
@@ -170,39 +146,18 @@ fn emission_day_record(
 fn step_error_takes_its_fallback() {
     use outbe_emission::schema::{emission_day_state, metadosis_state};
 
-    let (mut allocation, day, fire_at) = due_emission_day_fixture();
-    allocation.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 0);
-    run_hour(&mut allocation, 20, fire_at).unwrap();
-    let failed_allocation = emission_day_record(&mut allocation, day).unwrap();
-    assert_eq!(failed_allocation.state, emission_day_state::PROCESSING);
-    assert_eq!(failed_allocation.metadosis_state, metadosis_state::PENDING);
-    assert_eq!(failed_allocation.metadosis_limit, 0);
-    assert_eq!(
-        failed_allocation.promis_limit,
-        failed_allocation.emission_limit
-    );
-    let failed_allocation = outbe_emission::schema::EmissionDay {
-        state: emission_day_state::COMPLETED,
-        metadosis_state: metadosis_state::CANCELED,
-        ..failed_allocation
-    };
-
+    // With no mutation frame, Metadosis reverts and its fallback closes it.
     let (mut metadosis, day, fire_at) = due_emission_day_fixture();
-    // Two frames cover the allocation and the WWD step, so the Metadosis step has none.
-    metadosis.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 2);
+    metadosis.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 0);
     run_hour(&mut metadosis, 20, fire_at).unwrap();
-    let failed_metadosis = emission_day_record(&mut metadosis, day).unwrap();
-    assert_eq!(failed_metadosis.metadosis_state, metadosis_state::FAILED);
-    assert_ne!(failed_metadosis.metadosis_limit, 0, "the allocation stays");
+    let failed = emission_day_record(&mut metadosis, day).unwrap();
+    assert_eq!(failed.state, emission_day_state::PROCESSING);
+    assert_eq!(failed.metadosis_state, metadosis_state::FAILED);
+    assert_ne!(failed.metadosis_limit, 0, "the limit stays in the record");
 
-    for (storage, closed) in [
-        (&mut allocation, failed_allocation),
-        (&mut metadosis, failed_metadosis),
-    ] {
-        storage.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 16);
-        run_hour(storage, 21, fire_at + 3_600).unwrap();
-        assert_eq!(emission_day_record(storage, day).unwrap(), closed);
-    }
+    metadosis.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 16);
+    run_hour(&mut metadosis, 21, fire_at + 3_600).unwrap();
+    assert_eq!(emission_day_record(&mut metadosis, day).unwrap(), failed);
     let failed_events = metadosis
         .get_events(outbe_system_common::addresses::METADOSIS_ADDRESS)
         .iter()
@@ -237,7 +192,8 @@ fn conservation_mismatch_fails_the_block() {
         record.validators += 1;
         outbe_emission::api::put_emission_day(ctx.storage.clone(), &record).unwrap();
 
-        let error = crate::handler::process_agent_rewards(&ctx).unwrap_err();
+        let error =
+            outbe_emission::api::record_desis_canceled(ctx.storage.clone(), day).unwrap_err();
         assert!(matches!(
             error,
             outbe_primitives::error::PrecompileError::FatalWithCause(_)

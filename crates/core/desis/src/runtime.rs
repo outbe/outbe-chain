@@ -449,4 +449,6 @@ pub(crate) use clearing::{
 };
 pub use schedule::advance_intex_auctions;
 #[cfg(test)]
-pub(crate) use schedule::{advance_intex_auctions_at, take_due_days};
+pub(crate) use schedule::advance_intex_auctions_at;
+#[cfg(any(test, feature = "test-utils"))]
+pub(crate) use schedule::take_due_days;

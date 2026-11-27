@@ -31,6 +31,8 @@ pub enum CycleError {
     InvalidBlockUtcDay { active: u32, block: u32 },
     #[error("ProcessEmissionDay active UTC day {active} is after block UTC day {block}")]
     ActiveUtcDayAfterBlock { active: u32, block: u32 },
+    #[error("the record of emission day {day} names another WWD than the opened WWD {wwd}")]
+    EmissionDayWwdConflict { day: u32, wwd: u32 },
     #[error("last_accounted_block_number regression: current={current}, attempted={attempted}")]
     BlockNumberRegression { current: u64, attempted: u64 },
     #[error("accounting progress input is zero")]
@@ -67,6 +69,9 @@ impl From<CycleError> for PrecompileError {
             error @ (CycleError::ZeroTaskWorkBudget
             | CycleError::InsufficientWorkCapacity
             | CycleError::InvalidTaskId { .. }) => PrecompileError::Fatal(error.to_string()),
+            error @ CycleError::EmissionDayWwdConflict { .. } => {
+                PrecompileError::Revert(error.to_string())
+            }
             error @ CycleError::InvalidActiveUtcDay {
                 active: _,
                 block: _,

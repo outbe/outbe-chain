@@ -33,7 +33,7 @@ fn poll(s: &StorageHandle<'_>) {
         },
         s.clone(),
     );
-    runtime::complete_auctions(&ctx).unwrap();
+    runtime::complete_intex_auctions(&ctx).unwrap();
 }
 
 #[test]
@@ -48,10 +48,6 @@ fn a_waiting_gate_does_not_starve_another_ready_auction() {
         contract
             .config_promis_load_minor
             .write(&NEXT_EMISSION_DAY, U256::from(LOAD_MINOR))
-            .unwrap();
-        contract
-            .auction_at
-            .write(&NEXT_EMISSION_DAY, u32::try_from(ANCHOR).unwrap())
             .unwrap();
         contract
             .write_stage(NEXT_EMISSION_DAY, AuctionStage::CollectingBids)

@@ -22,6 +22,7 @@ thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+outbe-desis = { workspace = true, features = ["test-utils"] }
 outbe-emission = { workspace = true, features = ["test-utils"] }
 outbe-core-common.workspace = true
 outbe-nod = { workspace = true, features = ["test-enclave"] }

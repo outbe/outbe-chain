@@ -226,44 +226,92 @@ pub(super) fn reward_world() -> CacheDB<EmptyDB> {
     db
 }
 
-pub(super) fn credit(db: &mut CacheDB<EmptyDB>, pool: RewardPool, amount: U256) {
+/// The emission day of the rewards of the tests.
+pub(super) const DAY: u32 = 20_231_113;
+
+/// Gives `account` the whole `amount` of `pool` in emission day `day`: `account` is the only
+/// receiver of the pool, and the rate of the pool is set.
+pub(super) fn credit_to(
+    db: &mut CacheDB<EmptyDB>,
+    account: Address,
+    pool: RewardPool,
+    day: u32,
+    amount: U256,
+) {
     with_storage(db, |storage| {
-        AgentRewardContract::new(storage)
-            .add_agent_reward(pool, CCA, amount)
-            .unwrap();
+        let mut agent = AgentRewardContract::new(storage.clone());
+        let rewards = outbe_rewards::schema::Rewards::new(storage.clone());
+        match pool {
+            RewardPool::Waa => agent.increment_waa_offer(day, account).unwrap(),
+            RewardPool::Sra => agent.increment_sra_offer(day, account).unwrap(),
+            RewardPool::Validator => {
+                rewards
+                    .day_votes
+                    .get_nested(&day)
+                    .write(&account, 1)
+                    .unwrap();
+                rewards.day_voter_count.write(&day, 1).unwrap();
+                rewards.day_total_votes.write(&day, U256::ONE).unwrap();
+            }
+            RewardPool::Cca => {
+                outbe_ccaregistry::api::credis_issued(&storage, account, day, U256::ONE).unwrap();
+            }
+        }
+        if rewards.last_sealed_day.read().unwrap() < day {
+            rewards.last_sealed_day.write(day).unwrap();
+        }
+        let limit = u128::try_from(amount).unwrap();
+        let mut limits = [0u128; 5];
+        limits[match pool {
+            RewardPool::Validator => 0,
+            RewardPool::Cca => 1,
+            RewardPool::Waa => 2,
+            RewardPool::Sra => 3,
+        }] = limit;
+        let mut record = outbe_emission::EmissionDay::new(
+            day,
+            outbe_system_common::time::WorldwideDay::new(0),
+            outbe_emission::api::compute_metadosis_start(day).unwrap(),
+            limit,
+            limits,
+        );
+        if matches!(pool, RewardPool::Waa | RewardPool::Sra) {
+            record.state = outbe_emission::schema::emission_day_state::PROCESSING;
+        }
+        outbe_emission::api::put_emission_day(storage.clone(), &record).unwrap();
+        agent.set_agent_reward_rate(pool, day).unwrap();
     });
 }
 
-pub(super) fn claim_tx(
-    db: &mut CacheDB<EmptyDB>,
-    pool: RewardPool,
-    requested: U256,
-) -> TxResult<OutbeEvmTypes> {
+/// Gives CCA the whole `amount` of `pool` in [`DAY`].
+pub(super) fn credit(db: &mut CacheDB<EmptyDB>, pool: RewardPool, amount: U256) {
+    credit_to(db, CCA, pool, DAY, amount);
+}
+
+pub(super) fn claim_call(pool: RewardPool, days: &[u32]) -> Vec<u8> {
+    IAgentReward::redeemAgentRewardCall {
+        pool: pool as u8,
+        emissionDays: days.to_vec(),
+        issuanceCurrency: 840,
+        referenceCurrency: 840,
+    }
+    .abi_encode()
+}
+
+pub(super) fn claim_tx(db: &mut CacheDB<EmptyDB>, pool: RewardPool) -> TxResult<OutbeEvmTypes> {
     tx_to(
         db,
         AGENT_REWARD_ADDRESS,
         U256::ZERO,
-        IAgentReward::redeemAgentRewardCall {
-            pool: pool as u8,
-            promisLoadMinor: requested,
-            issuanceCurrency: 840,
-            referenceCurrency: 840,
-        }
-        .abi_encode(),
+        claim_call(pool, &[DAY]),
         NOW,
     )
 }
 
-/// Claims `requested` of CCA's `held` balance in `pool` by transaction, zero for all
-/// of it, and checks the Gem, both events and what stays claimable.
-pub(super) fn claim_by_tx(
-    db: &mut CacheDB<EmptyDB>,
-    pool: RewardPool,
-    held: U256,
-    requested: U256,
-) -> U256 {
-    let load = if requested.is_zero() { held } else { requested };
-    let result = claim_tx(db, pool, requested);
+/// Claims the reward `amount` of CCA in `pool` and [`DAY`] by transaction, and checks the Gem,
+/// both events and that the weight is gone.
+pub(super) fn claim_by_tx(db: &mut CacheDB<EmptyDB>, pool: RewardPool, amount: U256) -> U256 {
+    let result = claim_tx(db, pool);
     assert!(result.is_success(), "{result:?}");
     let gem_id = IAgentReward::redeemAgentRewardCall::abi_decode_returns(&result.output).unwrap();
     let claimed = result
@@ -274,7 +322,7 @@ pub(super) fn claim_by_tx(
         .data;
     assert_eq!(claimed.account, CCA);
     assert_eq!(claimed.pool, pool as u8);
-    assert_eq!(claimed.promisLoadMinor, load);
+    assert_eq!(claimed.promisLoadMinor, amount);
     assert_eq!(claimed.gemId, gem_id);
     let issued = result
         .logs
@@ -283,18 +331,18 @@ pub(super) fn claim_by_tx(
         .expect("the claim emits GemIssued")
         .data;
     assert_eq!(issued.gemId, gem_id);
-    assert_eq!(issued.payload.as_ref(), &load.to_be_bytes::<32>());
+    assert_eq!(issued.payload.as_ref(), &amount.to_be_bytes::<32>());
     with_storage(db, |storage| {
         let gem = outbe_gem::api::get_view(&storage, gem_id).unwrap().unwrap();
         assert_eq!(gem.item.owner, CCA);
-        assert_eq!(gem.item.promis_load_minor, load);
+        assert_eq!(gem.item.promis_load_minor, amount);
         assert_eq!(gem.item.entry_price_minor, discounted(PRICE));
         assert_eq!(gem.item.issued_at, NOW);
         assert_eq!(
             AgentRewardContract::new(storage)
-                .get_agent_reward(pool, CCA)
+                .weight(pool, DAY, CCA)
                 .unwrap(),
-            held - load
+            U256::ZERO
         );
     });
     assert_eq!(balance(db, AGENT_REWARD_ADDRESS), U256::ZERO);
@@ -305,28 +353,28 @@ pub(super) fn expiration_call(account: Address, pool: RewardPool) -> Vec<u8> {
     IAgentReward::expireAgentRewardCall {
         account,
         pool: pool as u8,
+        emissionDays: vec![DAY],
     }
     .abi_encode()
 }
 
-pub(super) fn balance_deadline(
-    db: &mut CacheDB<EmptyDB>,
-    account: Address,
-    pool: RewardPool,
-) -> u64 {
+/// The deadline of the reward of `pool` in [`DAY`]; zero when the day has no rate left.
+pub(super) fn reward_deadline(db: &mut CacheDB<EmptyDB>, pool: RewardPool) -> u64 {
     let result = tx_to(
         db,
         AGENT_REWARD_ADDRESS,
         U256::ZERO,
-        IAgentReward::agentRewardDeadlineCall {
-            account,
+        IAgentReward::getAgentRewardRateCall {
             pool: pool as u8,
+            emissionDay: DAY,
         }
         .abi_encode(),
         NOW,
     );
     assert!(result.is_success(), "{result:?}");
-    IAgentReward::agentRewardDeadlineCall::abi_decode_returns(&result.output).unwrap()
+    IAgentReward::getAgentRewardRateCall::abi_decode_returns(&result.output)
+        .unwrap()
+        .deadline
 }
 
 pub(super) fn promis_limit(db: &mut CacheDB<EmptyDB>) -> U256 {

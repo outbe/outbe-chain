@@ -143,10 +143,18 @@ fn is_valid_utc_day(date_key: u32) -> bool {
 fn create_linked_records(ctx: &BlockRuntimeContext, opened: &[WorldwideDay]) -> Result<()> {
     for wwd in opened {
         let (schedule, _) = outbe_worldwideday::compute_wwd_schedule(*wwd)?;
-        if outbe_emission::api::get_emission_day(ctx.storage.clone(), schedule.emission_day)?
-            .is_none()
-        {
-            outbe_emission::api::create_emission_day(ctx, schedule.emission_day, *wwd)?;
+        match outbe_emission::api::get_emission_day(ctx.storage.clone(), schedule.emission_day)? {
+            None => {
+                outbe_emission::api::create_emission_day(ctx, schedule.emission_day, *wwd)?;
+            }
+            Some(record) if record.wwd == *wwd => {}
+            Some(_) => {
+                return Err(CycleError::EmissionDayWwdConflict {
+                    day: schedule.emission_day,
+                    wwd: wwd.value(),
+                }
+                .into())
+            }
         }
     }
     Ok(())

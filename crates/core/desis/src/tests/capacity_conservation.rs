@@ -57,8 +57,8 @@ fn world_selling(units: u16) -> HashMapStorageProvider {
                 .unwrap();
             oracle.utc_day_vwap_last_finalized.write(day).unwrap();
         }
-        crate::api::schedule_auction(s.clone(), DAY).unwrap();
-        crate::api::set_desis_limit(
+        crate::tests::schedule_auction(s.clone(), DAY).unwrap();
+        crate::api::start_desis(
             s.clone(),
             crate::api::DesisLimit {
                 emission_day: DAY,
@@ -70,7 +70,9 @@ fn world_selling(units: u16) -> HashMapStorageProvider {
     });
     for at in [NOW, ANCHOR + SECONDS_PER_DAY, CLEAR_AT] {
         p.set_timestamp(U256::from(at));
-        StorageHandle::enter(&mut p, |s| runtime::schedule_tick(&s, at).unwrap());
+        StorageHandle::enter(&mut p, |s| {
+            runtime::advance_intex_auctions_at(&s, at).unwrap()
+        });
     }
     StorageHandle::enter(&mut p, |s| {
         let bids = if units > 0 {
@@ -116,7 +118,7 @@ fn world_selling(units: u16) -> HashMapStorageProvider {
 fn gate(p: &mut HashMapStorageProvider) -> Result<()> {
     p.set_timestamp(U256::from(CLEAR_AT));
     StorageHandle::enter(p, |s| {
-        runtime::complete_auctions(&BlockRuntimeContext::new(
+        runtime::complete_intex_auctions(&BlockRuntimeContext::new(
             BlockContext {
                 block_gas_limit: 0,
                 user_gas_used: 0,

@@ -137,8 +137,8 @@ fn completed(storage: &HashMapStorageProvider) -> IDesis::DesisCompleted {
 fn assert_repeat_tick_is_quiet(storage: &mut HashMapStorageProvider) {
     let before = logs(storage).len();
     StorageHandle::enter(storage, |s| {
-        runtime::schedule_tick(&s, NOW).unwrap();
-        runtime::complete_auctions(&BlockRuntimeContext::new(
+        runtime::advance_intex_auctions_at(&s, NOW).unwrap();
+        runtime::complete_intex_auctions(&BlockRuntimeContext::new(
             BlockContext {
                 block_gas_limit: 0,
                 user_gas_used: 0,
@@ -236,7 +236,7 @@ fn each_cancel_reason_balances_and_a_repeat_tick_is_quiet() {
             |s| {
                 brief_at(s, EMISSION_DAY, 0, false);
                 unprice_day(s, NOW);
-                runtime::schedule_tick(s, NOW).unwrap();
+                runtime::advance_intex_auctions_at(s, NOW).unwrap();
             },
             U256::ZERO,
         ),
@@ -245,7 +245,7 @@ fn each_cancel_reason_balances_and_a_repeat_tick_is_quiet() {
             |s| {
                 brief_at(s, EMISSION_DAY, 0, true);
                 unprice_day(s, NOW);
-                runtime::schedule_tick(s, NOW).unwrap();
+                runtime::advance_intex_auctions_at(s, NOW).unwrap();
             },
             U256::ZERO,
         ),
@@ -253,7 +253,7 @@ fn each_cancel_reason_balances_and_a_repeat_tick_is_quiet() {
             CANCELED_BELOW_ONE_UNIT,
             |s| {
                 brief_at(s, EMISSION_DAY, LOAD_MINOR - 1, true);
-                runtime::schedule_tick(s, NOW).unwrap();
+                runtime::advance_intex_auctions_at(s, NOW).unwrap();
             },
             U256::from(LOAD_MINOR - 1),
         ),
@@ -261,7 +261,7 @@ fn each_cancel_reason_balances_and_a_repeat_tick_is_quiet() {
             CANCELED_LATE_START,
             |s| {
                 brief(s, true);
-                runtime::schedule_tick(s, LAST_START + 1).unwrap();
+                runtime::advance_intex_auctions_at(s, LAST_START + 1).unwrap();
             },
             U256::from(10 * LOAD_MINOR),
         ),
@@ -280,17 +280,17 @@ fn each_cancel_reason_balances_and_a_repeat_tick_is_quiet() {
 fn an_oversized_brief_cancels_in_order_and_a_second_brief_is_returned() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |s| {
-        crate::api::schedule_auction(s.clone(), EMISSION_DAY).unwrap();
+        crate::tests::schedule_auction(s.clone(), EMISSION_DAY).unwrap();
         let oversized = crate::api::DesisLimit {
             emission_day: EMISSION_DAY,
             desis_limit_minor: U256::MAX,
             has_limit: true,
         };
         assert!(matches!(
-            crate::api::set_desis_limit(s.clone(), oversized).unwrap(),
+            crate::api::start_desis(s.clone(), oversized).unwrap(),
             crate::api::DesisLimitReceipt::ReturnedToPromisLimit { .. }
         ));
-        runtime::schedule_tick(&s, NOW).unwrap();
+        runtime::advance_intex_auctions_at(&s, NOW).unwrap();
         assert_eq!(
             s.contract::<DesisContract>()
                 .read_stage(EMISSION_DAY)
@@ -298,7 +298,7 @@ fn an_oversized_brief_cancels_in_order_and_a_second_brief_is_returned() {
             AuctionStage::Canceled
         );
         assert!(matches!(
-            crate::api::set_desis_limit(s.clone(), oversized).unwrap(),
+            crate::api::start_desis(s.clone(), oversized).unwrap(),
             crate::api::DesisLimitReceipt::ReturnedToPromisLimit {
                 reason: crate::api::DesisLimitRejectionReason::AuctionClosed,
                 ..
@@ -334,8 +334,8 @@ fn an_oversized_brief_cancels_in_order_and_a_second_brief_is_returned() {
 fn a_failed_auction_reports_the_stage_before_the_zero_allocation() {
     let mut storage = world(|s| {
         brief(s, true);
-        runtime::schedule_tick(s, NOW).unwrap();
-        runtime::schedule_tick(s, LAST_CLEARING).unwrap();
+        runtime::advance_intex_auctions_at(s, NOW).unwrap();
+        runtime::advance_intex_auctions_at(s, LAST_CLEARING).unwrap();
         assert_eq!(
             s.contract::<DesisContract>()
                 .read_stage(EMISSION_DAY)
@@ -372,7 +372,7 @@ fn a_failed_auction_reports_the_stage_before_the_zero_allocation() {
 fn a_live_start_announces_the_windows_and_the_folded_profile() {
     let mut storage = world(|s| {
         brief(s, true);
-        runtime::schedule_tick(s, NOW).unwrap();
+        runtime::advance_intex_auctions_at(s, NOW).unwrap();
     });
     let config = StorageHandle::enter(&mut storage, |s| {
         s.contract::<DesisContract>()

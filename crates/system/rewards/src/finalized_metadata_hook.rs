@@ -247,13 +247,20 @@ mod tests {
                     .unwrap(),
                 U256::from(2)
             );
+            for voter in [VAL_X, VAL_Y] {
+                assert_eq!(
+                    crate::api::validator_weight(&ctx.storage, 20240101, voter).unwrap(),
+                    U256::from(1)
+                );
+            }
             assert_eq!(
-                crate::api::get_day_voters(&ctx, 20240101).unwrap(),
-                vec![(VAL_X, 1), (VAL_Y, 1)]
+                ctx.storage
+                    .contract::<Rewards>()
+                    .day_voter_count
+                    .read(&20240102)
+                    .unwrap(),
+                0
             );
-            assert!(crate::api::get_day_voters(&ctx, 20240102)
-                .unwrap()
-                .is_empty());
         });
     }
 
@@ -332,7 +339,7 @@ mod tests {
     }
 
     #[test]
-    fn records_per_voter_participation_and_voter_list() {
+    fn records_per_voter_participation_and_voter_count() {
         with_funded_genesis_block(100, |ctx| {
             record_parent_xy(&ctx, FB_HASH_A, 1);
 
@@ -341,11 +348,6 @@ mod tests {
             assert_eq!(day_votes.read(&VAL_X).unwrap(), 1);
             assert_eq!(day_votes.read(&VAL_Y).unwrap(), 1);
             assert_eq!(rewards.day_voter_count.read(&20240101).unwrap(), 2);
-
-            let day_voter_at = rewards.day_voter_at.get_nested(&20240101);
-            // First-seen order: VAL_X at idx 0, VAL_Y at idx 1.
-            assert_eq!(day_voter_at.read(&0u32).unwrap(), VAL_X);
-            assert_eq!(day_voter_at.read(&1u32).unwrap(), VAL_Y);
         });
     }
 
@@ -481,8 +483,7 @@ mod tests {
     //
     // The test only exercises *duplicate* replays of already-applied
     // events. The test intentionally does NOT cover re-ordering of distinct
-    // events. `day_voter_at[day][i]` records first-seen order, so a different
-    // order produces a different (still valid) storage layout.
+    // events.
 
     use proptest::prelude::*;
 
@@ -495,7 +496,6 @@ mod tests {
         // Per-day aggregates.
         day_fee_sum_native: std::collections::BTreeMap<u32, U256>,
         day_voter_count: std::collections::BTreeMap<u32, u32>,
-        day_voter_at: std::collections::BTreeMap<(u32, u32), Address>,
         day_votes_per_voter: std::collections::BTreeMap<(u32, Address), u64>,
         // Per-fb_hash guards.
         block_metadata_counted: std::collections::BTreeMap<B256, bool>,
@@ -512,16 +512,10 @@ mod tests {
         let rewards = ctx.storage.contract::<Rewards>();
         let mut day_fee_sum_native = std::collections::BTreeMap::new();
         let mut day_voter_count = std::collections::BTreeMap::new();
-        let mut day_voter_at = std::collections::BTreeMap::new();
         let mut day_votes_per_voter = std::collections::BTreeMap::new();
         for &d in days {
             day_fee_sum_native.insert(d, rewards.day_fee_sum_native.read(&d).unwrap());
-            let count = rewards.day_voter_count.read(&d).unwrap();
-            day_voter_count.insert(d, count);
-            let voter_at = rewards.day_voter_at.get_nested(&d);
-            for i in 0..count {
-                day_voter_at.insert((d, i), voter_at.read(&i).unwrap());
-            }
+            day_voter_count.insert(d, rewards.day_voter_count.read(&d).unwrap());
             let participation = rewards.day_votes.get_nested(&d);
             for &v in voters {
                 day_votes_per_voter.insert((d, v), participation.read(&v).unwrap());
@@ -539,7 +533,6 @@ mod tests {
             rewards_balance: ctx.storage.balance(REWARDS_ADDRESS).unwrap(),
             day_fee_sum_native,
             day_voter_count,
-            day_voter_at,
             day_votes_per_voter,
             block_metadata_counted,
             voter_balances,

@@ -1,7 +1,7 @@
 //! Task dispatch, emission settlement and validator top-up conservation.
 
 use alloy_sol_types::SolEvent;
-use outbe_emission::allocation::EmissionSinkId;
+use outbe_agentreward::api::RewardPool;
 use outbe_primitives::error::PrecompileError;
 use outbe_system_common::addresses::CYCLE_ADDRESS;
 
@@ -140,7 +140,6 @@ fn process_emission_day_keeps_midnight_slot_pending_until_late_reward_window_clo
     storage.set_block_number(14);
     storage.enter(|handle| {
         let ctx = dispatch_at(handle, 14, GENESIS_TS + SECONDS_PER_DAY + 3);
-        crate::handler::process_agent_rewards(&ctx).unwrap();
         assert!(is_day_allocated(&ctx, 20240101));
         let cycle = ctx.storage.contract::<Cycle>();
         assert_eq!(active_utc_day(&ctx), 20240102);
@@ -158,11 +157,7 @@ fn process_emission_day_keeps_midnight_slot_pending_until_late_reward_window_clo
                 .unwrap(),
             14
         );
-        let validator_claimable = |voter| {
-            outbe_agentreward::AgentRewardContract::new(ctx.storage.clone())
-                .get_agent_reward(outbe_agentreward::schema::RewardPool::Validator, voter)
-                .unwrap()
-        };
+        let validator_claimable = |voter| day_reward(&ctx, RewardPool::Validator, 20240101, voter);
         // The late voter counts the same as the base-certificate voter.
         assert_eq!(validator_claimable(early), validator_claimable(late));
         assert!(validator_claimable(late) > U256::ZERO);
@@ -194,15 +189,15 @@ fn end_to_end_emission_dispatch_marks_day_settled_and_credits_metadosis() {
             GENESIS_TS + SECONDS_PER_DAY + PROCESS_EMISSION_DAY_START_OFFSET_SECONDS
         );
 
-        // No offers for any AgentReward pool: all three WAA/SRA/CCA
-        // allocations return to terminal Metadosis and no native COEN moves.
+        // No offers for any AgentReward pool: the pools with no receiver send their limit to
+        // the Promis Limit, and no native COEN moves.
         let agent_reward_balance = ctx_fire
             .storage
             .balance(outbe_system_common::addresses::AGENT_REWARD_ADDRESS)
             .unwrap();
         assert_eq!(agent_reward_balance, U256::ZERO);
 
-        // No eligible CCA: its full allocation goes to terminal Metadosis.
+        // No eligible CCA: its whole limit goes to the Promis Limit.
         let cca = ctx_fire
             .storage
             .balance(outbe_system_common::addresses::CCA_REGISTRY_ADDRESS)
@@ -210,144 +205,78 @@ fn end_to_end_emission_dispatch_marks_day_settled_and_credits_metadosis() {
         assert_eq!(
             cca,
             U256::ZERO,
-            "no eligible CCA weight; pool goes to Metadosis"
+            "no eligible CCA weight; the pool goes to the Promis Limit"
         );
     });
 }
 
 #[test]
-fn every_block_credits_a_queued_reward_slice_between_hourly_cycles() {
-    use outbe_agentreward::api::{allocate_day_agent_rewards, DayAgentPools};
-    use outbe_agentreward::constants::ACCRUAL_RECIPIENTS_PER_BLOCK;
-    use outbe_agentreward::schema::RewardPool;
-
+fn one_rate_pays_every_receiver_of_a_pool_with_no_reward_run() {
     with_anchored_cycle(|handle| {
-        let day = outbe_system_common::time::WorldwideDay::new(20_231_231);
-        let slice = u64::from(ACCRUAL_RECIPIENTS_PER_BLOCK);
-        let recipients = slice + 4;
+        let day = 20_240_101;
+        let recipients = 260u64;
         let recipient = |n: u64| Address::from_word(U256::from(n + 1).into());
         let mut agent_reward = outbe_agentreward::AgentRewardContract::new(handle.clone());
         for n in 0..recipients {
             agent_reward.increment_waa_offer(day, recipient(n)).unwrap();
         }
-        let claimable = |n: u64| {
-            outbe_agentreward::AgentRewardContract::new(handle.clone())
-                .get_agent_reward(RewardPool::Waa, recipient(n))
-                .unwrap()
-        };
+        let ctx = runtime_context(block_ctx(2, GENESIS_TS + SECONDS_PER_DAY + 60), handle);
+        run_emission_limit_daily(&ctx).unwrap();
 
-        let mut block = block_ctx(2, ANCHOR_TS + 10);
-        block.genesis_timestamp = GENESIS_TS - SECONDS_PER_DAY;
-        let ctx = runtime_context(block, handle.clone());
-        outbe_rewards::api::seal_votes_and_fees(&ctx, day.value()).unwrap();
-        let amount = U256::from(recipients * 1_000);
-        allocate_day_agent_rewards(
-            &ctx,
-            day,
-            DayAgentPools {
-                waa: amount,
-                ..Default::default()
-            },
-        )
-        .unwrap();
-        outbe_emission::api::record_day_allocation(
-            handle.clone(),
-            day.value(),
-            outbe_emission::api::DayAllocationAmounts {
-                emission_limit: amount,
-                metadosis_limit: U256::ZERO,
-                validators: U256::ZERO,
-                waa: amount,
-                sra: U256::ZERO,
-                cca: U256::ZERO,
-                promis_limit: U256::ZERO,
-            },
-        )
-        .unwrap();
-        run_cycle_tick(&ctx).unwrap();
-        assert_eq!(claimable(slice - 1), U256::from(1_000u64));
-        assert_eq!(claimable(slice), U256::ZERO);
-        let (failed, returned) = outbe_emission::api::record_metadosis_failed(
-            handle.clone(),
-            day.value(),
-            alloy_primitives::U256::ZERO,
-        )
-        .unwrap();
-        assert_eq!(returned, U256::ZERO);
-        assert_eq!(
-            failed.state,
-            outbe_emission::schema::emission_day_state::PROCESSING
-        );
-
-        let ctx = runtime_context(block_ctx(3, ANCHOR_TS + 20), handle.clone());
-        run_cycle_tick(&ctx).unwrap();
-        assert_eq!(claimable(recipients - 1), U256::from(1_000u64));
-        let settled = outbe_emission::api::get_emission_day(handle.clone(), day.value())
+        let pool = day_zero_shares().waa;
+        let each = pool / U256::from(recipients);
+        for n in [0, recipients / 2, recipients - 1] {
+            assert_eq!(day_reward(&ctx, RewardPool::Waa, day, recipient(n)), each);
+        }
+        let record = outbe_emission::api::get_emission_day(ctx.storage.clone(), day)
             .unwrap()
             .unwrap();
-        assert_eq!(
-            settled.state,
-            outbe_emission::schema::emission_day_state::COMPLETED
-        );
-        assert_eq!(U256::from(settled.waa), amount);
-        assert_eq!(settled.promis_limit, 0);
+        assert_eq!(U256::from(record.waa), each * U256::from(recipients));
+        let (_, _, unclaimed) = agent_reward
+            .agent_reward_rate(RewardPool::Waa, day)
+            .unwrap();
+        assert_eq!(unclaimed, U256::from(record.waa));
         assert_eq!(
             agent_reward.waa_address_count.read(&day).unwrap(),
             recipients as u32
-        );
-        let ctx = runtime_context(block_ctx(4, ANCHOR_TS + 30), handle.clone());
-        run_cycle_tick(&ctx).unwrap();
-        assert_eq!(agent_reward.waa_address_count.read(&day).unwrap(), 0);
-        assert_eq!(
-            last_executed_at(&ctx),
-            ANCHOR_TS,
-            "the hourly cycle did not fire"
         );
     });
 }
 
 #[test]
-fn next_day_cycle_settlement_pays_previous_utc_day_agent_activity() {
-    const REWARD_UTC_DAY: u32 = 20_240_101;
+fn the_offering_end_pays_the_previous_emission_day_agent_activity() {
+    const EMISSION_DAY: u32 = 20_240_101;
 
     with_anchored_cycle(|handle| {
         let wallet = Address::repeat_byte(0x71);
         let sra = Address::repeat_byte(0x72);
-        let reward_day = outbe_system_common::time::WorldwideDay::new(REWARD_UTC_DAY);
         let mut agent_reward = outbe_agentreward::AgentRewardContract::new(handle.clone());
         agent_reward
-            .increment_waa_offer(reward_day, wallet)
+            .increment_waa_offer(EMISSION_DAY, wallet)
             .unwrap();
-        agent_reward.increment_sra_offer(reward_day, sra).unwrap();
+        agent_reward.increment_sra_offer(EMISSION_DAY, sra).unwrap();
 
-        let fire_ts = GENESIS_TS + SECONDS_PER_DAY + 60;
-        let ctx_fire = dispatch_at(handle, 2, fire_ts);
-        crate::handler::process_agent_rewards(&ctx_fire).unwrap();
+        let ctx = runtime_context(block_ctx(2, GENESIS_TS + SECONDS_PER_DAY + 60), handle);
+        run_emission_limit_daily(&ctx).unwrap();
 
-        let agent_reward = outbe_agentreward::AgentRewardContract::new(ctx_fire.storage.clone());
-        let wallet_claimable = agent_reward.agent_reward_total(wallet).unwrap();
-        let sra_claimable = agent_reward.agent_reward_total(sra).unwrap();
-        let waa_pool = day_zero_allocation(EmissionSinkId::Waa);
-        let sra_pool = day_zero_allocation(EmissionSinkId::Sra);
-        assert_eq!(wallet_claimable, waa_pool);
-        assert_eq!(sra_claimable, sra_pool);
-        assert!(
-            agent_reward
-                .get_all_waa_counts(reward_day)
-                .unwrap()
-                .is_empty(),
-            "settled WAA counters must be cleared"
-        );
-        assert!(
-            agent_reward
-                .get_all_sra_counts(reward_day)
-                .unwrap()
-                .is_empty(),
-            "settled SRA counters must be cleared"
+        let shares = day_zero_shares();
+        assert_eq!(
+            day_reward(&ctx, RewardPool::Waa, EMISSION_DAY, wallet),
+            shares.waa
         );
         assert_eq!(
-            ctx_fire
-                .storage
+            day_reward(&ctx, RewardPool::Sra, EMISSION_DAY, sra),
+            shares.sra
+        );
+        assert_eq!(
+            agent_reward
+                .weight(RewardPool::Waa, EMISSION_DAY, wallet)
+                .unwrap(),
+            U256::from(1),
+            "the weight stays until the claim"
+        );
+        assert_eq!(
+            ctx.storage
                 .balance(outbe_system_common::addresses::AGENT_REWARD_ADDRESS)
                 .unwrap(),
             U256::ZERO,
@@ -357,7 +286,7 @@ fn next_day_cycle_settlement_pays_previous_utc_day_agent_activity() {
 }
 
 #[test]
-fn prepared_validator_topup_and_terminal_residue_conserve_the_allocation() {
+fn validators_get_the_full_share_by_their_votes() {
     let mut storage = cycle_storage();
     storage.enter(|handle| {
         genesis_block(handle.clone(), GENESIS_TS + 60);
@@ -374,42 +303,34 @@ fn prepared_validator_topup_and_terminal_residue_conserve_the_allocation() {
             Address::repeat_byte(0x33),
         ];
         seed_daily_voters(&ctx, 20_240_101, &voters.map(|voter| (voter, 1)));
+        ctx.storage
+            .contract::<outbe_rewards::schema::Rewards<'_>>()
+            .day_fee_sum_native
+            .write(&20_240_101, U256::MAX)
+            .unwrap();
 
         run_emission_limit_daily(&ctx).unwrap();
-        crate::handler::process_agent_rewards(&ctx).unwrap();
 
-        let validator_amount = day_zero_allocation(EmissionSinkId::Validator);
-        let agent_reward = outbe_agentreward::AgentRewardContract::new(ctx.storage.clone());
-        let planned = voters.iter().fold(U256::ZERO, |total, voter| {
-            total
-                + agent_reward
-                    .get_agent_reward(outbe_agentreward::schema::RewardPool::Validator, *voter)
-                    .unwrap()
-        });
+        let each = day_zero_shares().validators / U256::from(voters.len());
         for voter in voters {
             assert_eq!(
-                outbe_gem::api::balance_of(&ctx.storage, voter).unwrap(),
-                0,
-                "Cycle credits claims but does not mint Gems"
+                day_reward(&ctx, RewardPool::Validator, 20_240_101, voter),
+                each,
+                "the fees of the day are not subtracted from the share"
             );
+            assert_eq!(outbe_gem::api::balance_of(&ctx.storage, voter).unwrap(), 0);
         }
-        let expected_each = validator_amount / U256::from(voters.len());
-        assert_eq!(
-            planned,
-            expected_each * U256::from(voters.len()),
-            "credited claims must equal distributed validator pool"
-        );
     });
     assert!(
         storage
             .get_events(outbe_system_common::addresses::GEM_ADDRESS)
             .is_empty(),
-        "Cycle credits claims but does not mint Gems"
+        "setting the rate mints no Gem"
     );
 }
 
 #[test]
-fn zero_total_validator_participation_routes_the_pool_without_halting() {
+fn a_pool_with_no_weight_sends_its_limit_to_the_promis_limit() {
     let mut storage = cycle_storage();
     storage.enter(|handle| {
         genesis_block(handle.clone(), GENESIS_TS + 60);
@@ -424,7 +345,6 @@ fn zero_total_validator_participation_routes_the_pool_without_halting() {
         run_emission_limit_daily(&ctx).unwrap();
 
         assert!(is_day_allocated(&ctx, 20_240_101));
-        // No pool has a weight on the day, so each one goes to Metadosis.
         let record = outbe_emission::api::get_emission_day(ctx.storage.clone(), 20_240_101)
             .unwrap()
             .unwrap();
@@ -432,20 +352,22 @@ fn zero_total_validator_participation_routes_the_pool_without_halting() {
             (record.validators, record.waa, record.sra, record.cca),
             (0, 0, 0, 0)
         );
-        assert_eq!(record.metadosis_limit, record.emission_limit);
-        let agent_reward = outbe_agentreward::AgentRewardContract::new(ctx.storage.clone());
+        let shares = day_zero_shares();
+        assert_eq!(U256::from(record.metadosis_limit), shares.metadosis);
+        assert_eq!(
+            U256::from(record.promis_limit as u128),
+            shares.validators + shares.waa + shares.sra + shares.cca
+        );
         for voter in voters {
             assert_eq!(
-                agent_reward
-                    .get_agent_reward(outbe_agentreward::schema::RewardPool::Validator, voter)
-                    .unwrap(),
+                day_reward(&ctx, RewardPool::Validator, 20_240_101, voter),
                 U256::ZERO
             );
         }
     });
 }
 
-/// Day-1 voters of the failed-terminal-dispatch scenario.
+/// Day-1 voters of the dispatch scenario.
 const TOPUP_VOTERS: [Address; 3] = [
     Address::repeat_byte(0x61),
     Address::repeat_byte(0x62),
@@ -455,31 +377,8 @@ const TOPUP_VOTERS: [Address; 3] = [
 /// Block time of the first settlement dispatch on day 2.
 const TOPUP_FIRE_TS: u64 = GENESIS_TS + SECONDS_PER_DAY + 60;
 
-/// Returns the slot that task `id` records at `TOPUP_FIRE_TS`: the day boundary.
-fn topup_slot(id: TaskId) -> u64 {
-    let spec = ACTIVE_TASKS
-        .iter()
-        .find(|spec| spec.id == id.as_u32())
-        .expect("active task");
-    assert!(spec.coalesces_backlog, "the task records its latest slot");
-    last_fire_at(
-        spec.period_seconds(),
-        spec.start_offset_seconds,
-        TOPUP_FIRE_TS,
-    )
-    .unwrap()
-}
-
-/// Anchors with a bonded CCA, then runs the first settlement dispatch without
-/// Metadosis mutation frames, so the terminal sink reverts. The slot is consumed.
-fn failed_terminal_dispatch() -> HashMapStorageProvider {
-    let (storage, dispatched) = terminal_dispatch_after(|_| {});
-    dispatched.unwrap();
-    storage
-}
-
-/// Runs the dispatch of [`failed_terminal_dispatch`] with `before_dispatch` run after the
-/// fixture writes, and returns its result.
+/// Anchors with a bonded CCA and runs the first settlement dispatch, with `before_dispatch` run
+/// after the fixture writes, and returns its result.
 fn terminal_dispatch_after(
     before_dispatch: impl FnOnce(&BlockRuntimeContext<'_>),
 ) -> (HashMapStorageProvider, outbe_primitives::error::Result<()>) {
@@ -503,15 +402,17 @@ fn terminal_dispatch_after(
     (storage, dispatched)
 }
 
-/// Writes an unknown state into the record of `day`, so the allocation fallback fails too.
+/// Writes an unknown state into the record of `day`.
 fn corrupt_emission_day(ctx: &BlockRuntimeContext<'_>, day: u32) {
     let mut record = outbe_emission::api::get_emission_day(ctx.storage.clone(), day)
         .unwrap()
         .unwrap_or_else(|| {
-            outbe_emission::schema::EmissionDay::new_pending(
+            outbe_emission::schema::EmissionDay::new(
                 day,
                 outbe_system_common::time::WorldwideDay::new(0),
                 1,
+                0,
+                [0; 5],
             )
         });
     record.state = 7;
@@ -525,125 +426,17 @@ fn cycle_completed(storage: &HashMapStorageProvider, id: u32) -> bool {
     })
 }
 
-fn topup_voters_claimable(ctx: &BlockRuntimeContext<'_>) -> U256 {
-    let agent_reward = outbe_agentreward::AgentRewardContract::new(ctx.storage.clone());
-    TOPUP_VOTERS.iter().fold(U256::ZERO, |total, voter| {
-        total
-            + agent_reward
-                .get_agent_reward(outbe_agentreward::schema::RewardPool::Validator, *voter)
-                .unwrap()
-    })
-}
-
 #[test]
-fn failed_terminal_dispatch_takes_the_allocation_fallback() {
-    let mut storage = failed_terminal_dispatch();
-    let recorded_at = topup_slot(TaskId::ProcessEmissionDay);
-    for id in [
-        EMISSION_LIMIT_1_ID,
-        TaskId::AdvanceAuctions.as_u32(),
-        TaskId::CompleteAuctions.as_u32(),
-        TaskId::ScheduleIntexCallPass.as_u32(),
-    ] {
-        assert!(cycle_completed(&storage, id));
-    }
-    let failed = storage
-        .get_events(CYCLE_ADDRESS)
-        .iter()
-        .find_map(|log| crate::ICycle::DayEmissionLimitAllocationFailed::decode_log_data(log).ok())
-        .expect("allocation failure event");
-    assert_eq!(failed.emissionDay, 20_240_101);
-    storage.enter(|handle| {
-        let fire = runtime_context(block_ctx(2, TOPUP_FIRE_TS), handle);
-        assert!(is_day_allocated(&fire, 20_240_101));
-        let record = outbe_emission::api::get_emission_day(fire.storage.clone(), 20_240_101)
-            .unwrap()
-            .unwrap();
-        assert_eq!(
-            record.state,
-            outbe_emission::schema::emission_day_state::PROCESSING
-        );
-        assert_eq!(
-            record.metadosis_state,
-            outbe_emission::schema::metadosis_state::PENDING
-        );
-        assert_eq!(U256::from(record.promis_limit), failed.emissionLimitMinor);
-        assert_eq!(
-            topup_voters_claimable(&fire),
-            U256::ZERO,
-            "validator credit must roll back"
-        );
-        assert_eq!(
-            fire.storage
-                .balance(outbe_system_common::addresses::CCA_REGISTRY_ADDRESS)
-                .unwrap(),
-            outbe_ccaregistry::constants::BOND_REQUIREMENT,
-            "CCA reward credit must roll back, preserving the bond"
-        );
-        assert_eq!(
-            fire.storage
-                .balance(outbe_system_common::addresses::AGENT_REWARD_ADDRESS)
-                .unwrap(),
-            U256::ZERO
-        );
-        let cycle: Cycle<'_> = fire.storage.contract::<Cycle<'_>>();
-        assert_eq!(
-            cycle.last_executed_at.read(&EMISSION_LIMIT_1_ID).unwrap(),
-            recorded_at
-        );
-        for id in [
-            TaskId::AdvanceAuctions,
-            TaskId::CompleteAuctions,
-            TaskId::ScheduleIntexCallPass,
-        ] {
-            assert_eq!(
-                cycle.last_executed_at.read(&id.as_u32()).unwrap(),
-                topup_slot(id)
-            );
-        }
-    });
-}
-
-#[test]
-fn failed_terminal_dispatch_is_not_retried() {
-    let mut storage = failed_terminal_dispatch();
-    let settled = storage.enter(|handle| {
-        outbe_emission::api::get_emission_day(handle, 20_240_101)
-            .unwrap()
-            .unwrap()
-    });
-    storage.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 4);
-    let next_window = GENESIS_TS
-        + SECONDS_PER_DAY
-        + crate::tasks::PROCESS_EMISSION_DAY_PERIOD_SECONDS
-        + PROCESS_EMISSION_DAY_START_OFFSET_SECONDS;
-    storage.set_block_number(3);
-    storage.enter(|handle| {
-        let retry = runtime_context(block_ctx(3, next_window), handle);
-        account_parent(&retry, 3);
-        run_due_tasks(&retry).unwrap();
-        assert_eq!(
-            outbe_emission::api::get_emission_day(retry.storage.clone(), 20_240_101)
-                .unwrap()
-                .unwrap(),
-            settled
-        );
-        assert_eq!(topup_voters_claimable(&retry), U256::ZERO);
-        assert_eq!(last_executed_at(&retry), next_window);
-    });
-    let failures = storage
-        .get_events(CYCLE_ADDRESS)
-        .iter()
-        .filter(|log| crate::ICycle::DayEmissionLimitAllocationFailed::decode_log_data(log).is_ok())
-        .count();
-    assert_eq!(failures, 1);
-}
-
-#[test]
-fn a_failing_allocation_fallback_fails_the_block() {
+fn a_corrupt_day_record_fails_the_block() {
     let (_, dispatched) = terminal_dispatch_after(|fire| corrupt_emission_day(fire, 20_240_101));
-    let err = dispatched.expect_err("the failed fallback must fail the block");
-    assert!(matches!(err, PrecompileError::FatalWithCause(_)), "{err:?}");
+    let err = dispatched.expect_err("a corrupt record must fail the block");
+    assert!(
+        matches!(
+            err,
+            PrecompileError::Fatal(_) | PrecompileError::FatalWithCause(_)
+        ),
+        "{err:?}"
+    );
 }
 
 #[test]
@@ -721,20 +514,19 @@ fn emission_dispatch_is_idempotent_per_prev_day() {
         let ctx = runtime_context(block_ctx(2, GENESIS_TS + SECONDS_PER_DAY + 60), handle);
         account_parent(&ctx, 2);
 
-        // First settlement of prev_day = 20240101: credits the pools + seals.
+        // First settlement of prev_day = 20240101: sets the rates and starts the day.
         run_emission_limit_daily(&ctx).unwrap();
-        crate::handler::process_agent_rewards(&ctx).unwrap();
         assert!(
             is_day_allocated(&ctx, 20_240_101),
             "first fire must seal prev_day"
         );
         let cca_claimable = || {
-            outbe_agentreward::AgentRewardContract::new(ctx.storage.clone())
-                .get_agent_reward(
-                    outbe_agentreward::schema::RewardPool::Cca,
-                    Address::repeat_byte(0xc1),
-                )
-                .unwrap()
+            day_reward(
+                &ctx,
+                RewardPool::Cca,
+                20_240_101,
+                Address::repeat_byte(0xc1),
+            )
         };
         let cca_after_first = cca_claimable();
         let metadosis_after_first = ctx
@@ -743,8 +535,8 @@ fn emission_dispatch_is_idempotent_per_prev_day() {
             .unwrap();
         assert!(!cca_after_first.is_zero(), "first fire credited CCA");
 
-        // Second invocation for the SAME prev_day: the idempotency guard sees
-        // `daily_settled[20240101] == true` and returns early. No double credit occurs.
+        // Second invocation for the SAME prev_day: the day already started, so no rate is set
+        // again.
         run_emission_limit_daily(&ctx).unwrap();
         assert_eq!(
             cca_claimable(),
@@ -781,7 +573,7 @@ fn repeated_settled_cycle_slot_replays_without_any_storage_or_event_write() {
 }
 
 #[test]
-fn the_day_allocation_schedules_its_auction_at_the_next_midnight() {
+fn desis_takes_the_day_after_it_started() {
     let day = outbe_system_common::time::EmissionDate::new(20_240_101);
     let mut storage = cycle_storage();
     storage.enter(|handle| {
@@ -790,12 +582,11 @@ fn the_day_allocation_schedules_its_auction_at_the_next_midnight() {
     storage.set_block_number(2);
     storage.enter(|handle| {
         let ctx = runtime_context(block_ctx(2, GENESIS_TS + SECONDS_PER_DAY + 60), handle);
-        run_emission_limit_daily(&ctx).unwrap();
         let desis = outbe_desis::DesisContract::new(ctx.storage.clone());
-        assert_ne!(desis.sched_active_slot.read(&day).unwrap(), 0);
-        assert_eq!(
-            u64::from(desis.auction_at.read(&day).unwrap()),
-            outbe_system_common::time::date_key_to_utc_timestamp(20_240_102).unwrap()
-        );
+        outbe_desis::advance_intex_auctions(&ctx).unwrap();
+        assert_eq!(desis.sched_active_slot.read(&day).unwrap(), 0);
+        run_emission_limit_daily(&ctx).unwrap();
+        outbe_desis::advance_intex_auctions(&ctx).unwrap();
+        assert_eq!(desis.next_auction_day.read().unwrap(), 20_240_102);
     });
 }

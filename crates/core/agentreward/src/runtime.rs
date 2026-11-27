@@ -244,7 +244,8 @@ impl AgentRewardContract<'_> {
         })
     }
 
-    /// The whole pool limit goes to the Promis Limit. The weights stay until they expire.
+    /// The whole pool limit goes to the Promis Limit. The weights stay until they expire; when
+    /// they cannot be read, the pool keeps no rate record.
     fn fail_rate(&mut self, pool: RewardPool, day: u32, limit: U256) -> Result<()> {
         PromisLimitContract::new(self.storage.clone()).add(LimitSource::RewardLimit, limit)?;
         outbe_emission::api::record_reward_pool(
@@ -253,11 +254,12 @@ impl AgentRewardContract<'_> {
             pool.emission_pool(),
             U256::ZERO,
         )?;
-        let (receivers, _) = self.day_inputs(pool, day)?;
+        let receivers = match self.day_inputs(pool, day) {
+            Ok((receivers, _)) => receivers,
+            Err(err) if err.record_pass_failure() == PassFailure::Skip => 0,
+            Err(err) => return Err(err),
+        };
         self.store_pool_day(pool, day, (U256::ZERO, U256::ZERO), receivers)?;
-        if pool == RewardPool::Validator {
-            outbe_rewards::api::clear_day_seal(&self.storage, day)?;
-        }
         self.emit(IAgentReward::AgentRewardRateFailed {
             emissionDay: day,
             pool: pool as u8,

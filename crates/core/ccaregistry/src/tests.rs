@@ -178,7 +178,7 @@ fn active_set_accepts_more_than_128_and_preserves_topup_exit_and_reentry() {
 }
 
 #[test]
-fn day_index_is_stable_through_zero_weights_deficits_exit_and_sealing() {
+fn day_count_tracks_nonzero_weights_through_deficits_exit_and_sealing() {
     run(|storage| {
         bond(&storage, ALICE, BOND_REQUIREMENT);
         bond(&storage, BOB, BOND_REQUIREMENT);
@@ -192,17 +192,13 @@ fn day_index_is_stable_through_zero_weights_deficits_exit_and_sealing() {
         seal(&storage, DAY);
         assert_eq!(
             api::reward_day_inputs(&storage, DAY).unwrap(),
-            (2, U256::from(4))
+            (1, U256::from(4))
         );
         assert_eq!(
-            api::reward_day_entry(&storage, DAY, 0).unwrap(),
-            (ALICE, U256::from(4))
+            api::reward_weight(&storage, ALICE, DAY).unwrap(),
+            U256::from(4)
         );
-        assert_eq!(
-            api::reward_day_entry(&storage, DAY, 1).unwrap(),
-            (BOB, U256::ZERO)
-        );
-        assert!(api::reward_day_entry(&storage, DAY, 2).is_err());
+        assert_eq!(api::reward_weight(&storage, BOB, DAY).unwrap(), U256::ZERO);
         assert!(runtime::credis_forfeited(&storage, BOB, DAY, U256::ONE).is_err());
         assert!(runtime::credis_issued(&storage, BOB, DAY - 1, U256::ONE).is_err());
         assert_eq!(
@@ -213,18 +209,15 @@ fn day_index_is_stable_through_zero_weights_deficits_exit_and_sealing() {
 }
 
 #[test]
-fn day_count_total_and_cleanup_queue_overflow_roll_back() {
+fn day_count_and_total_overflow_roll_back() {
     run(|storage| {
         bond(&storage, ALICE, BOND_REQUIREMENT);
         bond(&storage, BOB, BOND_REQUIREMENT);
         let contract = CcaContract::new(storage.clone());
         contract.reward_day_count.write(&DAY, u32::MAX).unwrap();
-        assert!(runtime::credis_forfeited(&storage, ALICE, DAY, U256::ONE).is_err());
+        assert!(runtime::credis_issued(&storage, ALICE, DAY, U256::ONE).is_err());
         assert_eq!(
-            contract
-                .gratis_deficit_minor_per_utc_day
-                .read(&address_day_key(ALICE, DAY))
-                .unwrap(),
+            api::reward_weight(&storage, ALICE, DAY).unwrap(),
             U256::ZERO
         );
         contract.reward_day_count.clear(&DAY).unwrap();
@@ -232,24 +225,44 @@ fn day_count_total_and_cleanup_queue_overflow_roll_back() {
         assert!(runtime::credis_issued(&storage, BOB, DAY, U256::ONE).is_err());
         assert_eq!(contract.reward_day_count.read(&DAY).unwrap(), 1);
         assert_eq!(api::reward_weight(&storage, BOB, DAY).unwrap(), U256::ZERO);
+    });
+}
+
+#[test]
+fn a_claim_takes_the_weight_and_the_last_one_clears_the_day() {
+    run(|storage| {
+        bond(&storage, ALICE, BOND_REQUIREMENT);
+        bond(&storage, BOB, BOND_REQUIREMENT);
+        runtime::credis_issued(&storage, ALICE, DAY, U256::from(10)).unwrap();
+        runtime::credis_forfeited(&storage, BOB, DAY, U256::from(3)).unwrap();
+        assert!(api::take_reward_weight(&storage, ALICE, DAY).is_err());
         seal(&storage, DAY);
-        contract.day_cleanup_tail.write(u64::MAX).unwrap();
-        let ctx = outbe_primitives::block::BlockRuntimeContext::new(
-            outbe_primitives::block::BlockContext {
-                block_gas_limit: 0,
-                user_gas_used: 0,
-                block_number: 0,
-                timestamp: 0,
-                chain_id: 0,
-                genesis_hash: alloy_primitives::B256::ZERO,
-                genesis_timestamp: 0,
-                proposer: Address::ZERO,
-                validators: Vec::new(),
-            },
-            storage.clone(),
+        assert_eq!(
+            api::take_reward_weight(&storage, ALICE, DAY).unwrap(),
+            U256::from(10)
         );
-        assert!(api::enqueue_day_cleanup(&ctx, DAY).is_err());
-        assert!(!contract.day_cleanup_scheduled.read(&DAY).unwrap());
+        assert_eq!(
+            api::take_reward_weight(&storage, ALICE, DAY).unwrap(),
+            U256::ZERO
+        );
+        assert_eq!(
+            api::take_reward_weight(&storage, BOB, DAY).unwrap(),
+            U256::ZERO
+        );
+        let contract = CcaContract::new(storage.clone());
+        assert_eq!(
+            contract
+                .gratis_deficit_minor_per_utc_day
+                .read(&address_day_key(BOB, DAY))
+                .unwrap(),
+            U256::ZERO
+        );
+        api::clear_reward_day(&storage, DAY).unwrap();
+        assert_eq!(
+            api::reward_day_inputs(&storage, DAY).unwrap(),
+            (0, U256::ZERO)
+        );
+        assert!(runtime::credis_issued(&storage, ALICE, DAY, U256::ONE).is_err());
     });
 }
 
@@ -697,142 +710,5 @@ fn typed_states_preserve_storage_encoding_and_reject_invalid_words() {
                 word
             );
         }
-    });
-}
-
-#[test]
-fn cleanup_is_bounded_resumable_and_atomic_including_deficit_only_entries() {
-    use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
-    run(|storage| {
-        for id in 1..=300 {
-            let address = cca_at(id);
-            bond(&storage, address, BOND_REQUIREMENT);
-            if id % 2 == 0 {
-                runtime::credis_forfeited(&storage, address, DAY, U256::ONE).unwrap();
-            } else {
-                runtime::credis_issued(&storage, address, DAY, U256::ONE).unwrap();
-            }
-        }
-        let contract = CcaContract::new(storage.clone());
-        let mut ctx = BlockRuntimeContext::new(
-            BlockContext {
-                block_gas_limit: 0,
-                user_gas_used: 0,
-                block_number: 0,
-                timestamp: NOW,
-                chain_id: 1,
-                genesis_hash: alloy_primitives::B256::ZERO,
-                genesis_timestamp: u64::max(NOW, 1),
-                proposer: alloy_primitives::Address::ZERO,
-                validators: Vec::new(),
-            },
-            storage.clone(),
-        );
-        assert!(api::enqueue_day_cleanup(&ctx, DAY).is_err());
-        seal(&storage, DAY);
-        api::enqueue_day_cleanup(&ctx, DAY).unwrap();
-        api::enqueue_day_cleanup(&ctx, DAY).unwrap();
-        assert_eq!(contract.day_cleanup_tail.read().unwrap(), 1);
-        // No source is deleted merely by scheduling.
-        assert_eq!(
-            api::reward_day_inputs(&storage, DAY).unwrap(),
-            (300, U256::from(150))
-        );
-        api::cleanup(&ctx).unwrap();
-        assert_eq!(contract.day_cleanup_cursor.read(&DAY).unwrap(), 256);
-        assert!(!contract
-            .reward_day_members
-            .read(&address_day_key(cca_at(256), DAY))
-            .unwrap());
-        assert_eq!(
-            contract
-                .gratis_deficit_minor_per_utc_day
-                .read(&address_day_key(cca_at(256), DAY))
-                .unwrap(),
-            U256::ZERO
-        );
-        assert_eq!(
-            api::reward_day_entry(&storage, DAY, 256).unwrap(),
-            (cca_at(257), U256::ONE)
-        );
-        api::cleanup(&ctx).unwrap();
-        assert_eq!(contract.day_cleanup_cursor.read(&DAY).unwrap(), 256);
-        // Fail after some successful deletions, then retry the same height.
-        let key = crate::schema::day_index_key(DAY, 280);
-        contract.reward_day_addresses.clear(&key).unwrap();
-        ctx.block.block_number = 1;
-        assert!(api::cleanup(&ctx).is_err());
-        assert_eq!(contract.cleanup_processed_block.read().unwrap(), 0);
-        assert_eq!(contract.day_cleanup_cursor.read(&DAY).unwrap(), 256);
-        assert_eq!(
-            api::reward_day_entry(&storage, DAY, 256).unwrap().0,
-            cca_at(257)
-        );
-        contract
-            .reward_day_addresses
-            .write(&key, cca_at(281))
-            .unwrap();
-        api::cleanup(&ctx).unwrap();
-        assert_eq!(contract.day_cleanup_head.read().unwrap(), 1);
-        assert_eq!(
-            api::reward_day_inputs(&storage, DAY).unwrap(),
-            (0, U256::ZERO)
-        );
-        for id in 1..=300 {
-            let key = address_day_key(cca_at(id), DAY);
-            assert!(!contract.reward_day_members.read(&key).unwrap());
-            assert_eq!(
-                contract.gratis_minor_per_utc_day.read(&key).unwrap(),
-                U256::ZERO
-            );
-            assert_eq!(
-                contract
-                    .gratis_deficit_minor_per_utc_day
-                    .read(&key)
-                    .unwrap(),
-                U256::ZERO
-            );
-        }
-        api::enqueue_day_cleanup(&ctx, DAY).unwrap();
-        assert_eq!(contract.day_cleanup_tail.read().unwrap(), 1);
-        assert!(runtime::credis_issued(&storage, cca_at(1), DAY, U256::ONE).is_err());
-        assert!(runtime::credis_forfeited(&storage, cca_at(2), DAY, U256::ONE).is_err());
-    });
-}
-
-#[test]
-fn cleanup_empty_headers_are_bounded_and_sealing_can_skip_days() {
-    use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
-    run(|storage| {
-        let mut ctx = BlockRuntimeContext::new(
-            BlockContext {
-                block_gas_limit: 0,
-                user_gas_used: 0,
-                block_number: 0,
-                timestamp: NOW,
-                chain_id: 1,
-                genesis_hash: alloy_primitives::B256::ZERO,
-                genesis_timestamp: u64::max(NOW, 1),
-                proposer: alloy_primitives::Address::ZERO,
-                validators: Vec::new(),
-            },
-            storage.clone(),
-        );
-        seal(&storage, DAY + 10);
-        for day in DAY..DAY + 6 {
-            api::enqueue_day_cleanup(&ctx, day).unwrap();
-        }
-        let contract = CcaContract::new(storage.clone());
-        api::cleanup(&ctx).unwrap();
-        assert_eq!(contract.day_cleanup_head.read().unwrap(), 4);
-        api::cleanup(&ctx).unwrap();
-        assert_eq!(contract.day_cleanup_head.read().unwrap(), 4);
-        ctx.block.block_number = 1;
-        api::cleanup(&ctx).unwrap();
-        assert_eq!(contract.day_cleanup_head.read().unwrap(), 6);
-        contract.day_cleanup_head.write(7).unwrap();
-        ctx.block.block_number = 2;
-        assert!(api::cleanup(&ctx).is_err());
-        assert_eq!(contract.cleanup_processed_block.read().unwrap(), 1);
     });
 }

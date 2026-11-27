@@ -94,13 +94,8 @@ fn fixture_of(limit: u128, nominals: &[U256]) -> HashMapStorageProvider {
                 binding,
                 || {
                     let mut factory = WorldwideDayContract::new(storage.clone());
-                    let mut ed = outbe_emission::EmissionDay::new_with_limit(
-                        DAY,
-                        WWD,
-                        50,
-                        limit,
-                        metadosis_state::PENDING,
-                    );
+                    let mut ed =
+                        outbe_emission::EmissionDay::new(DAY, WWD, 50, limit, [0, 0, 0, 0, limit]);
                     ed.state = outbe_emission::schema::emission_day_state::PROCESSING;
                     outbe_emission::api::put_emission_day(storage.clone(), &ed)?;
                     outbe_worldwideday::open_worldwide_day(
@@ -145,7 +140,7 @@ fn block_at(storage: StorageHandle<'_>) -> BlockRuntimeContext<'_> {
 
 fn run(provider: &mut HashMapStorageProvider) -> outbe_primitives::error::Result<()> {
     StorageHandle::enter(provider, |storage| {
-        crate::commands::process_emission_day(&block_at(storage), DAY)
+        crate::commands::start_metadosis(&block_at(storage), DAY)
     })
 }
 
@@ -280,7 +275,7 @@ fn completion_briefs_the_emission_day() {
     let day = outbe_system_common::time::EmissionDate::new(DAY);
     let mut provider = fixture(LIMIT, &[NOMINAL]);
     StorageHandle::enter(&mut provider, |storage| {
-        outbe_desis::api::schedule_auction(storage, day).unwrap();
+        outbe_desis::test_support::take_day(storage, day).unwrap();
     });
     run(&mut provider).unwrap();
     StorageHandle::enter(&mut provider, |storage| {
@@ -316,7 +311,7 @@ fn loads_above_the_limit_carry_the_excess() {
     let limit = load_of(NOMINAL) - 1;
     let mut provider = fixture(limit, &[NOMINAL]);
     StorageHandle::enter(&mut provider, |storage| {
-        outbe_desis::api::schedule_auction(storage, day).unwrap();
+        outbe_desis::test_support::take_day(storage, day).unwrap();
     });
     let before = promis_limit(&mut provider);
 
@@ -352,7 +347,7 @@ fn a_desis_limit_above_the_auction_domain_completes_the_metadosis() {
     let loads = outbe_nod::offer::issue::nod_load_of(nominal);
     let mut provider = fixture_of(u128::MAX, &[nominal]);
     StorageHandle::enter(&mut provider, |storage| {
-        outbe_desis::api::schedule_auction(storage.clone(), day).unwrap();
+        outbe_desis::test_support::take_day(storage.clone(), day).unwrap();
         outbe_promislimit::PromisLimitContract::new(storage)
             .add(outbe_promislimit::LimitSource::Nod, limit)
             .unwrap();
@@ -415,11 +410,10 @@ fn excess_above_the_next_limit_carries_on() {
     assert_eq!(pending_desis_limit(&mut provider), U256::ZERO);
     let record = record(&mut provider);
     assert_eq!(record.nods, u128::from(LIMIT));
-    assert_eq!(record.state, emission_day_state::COMPLETED);
+    assert_eq!(record.state, emission_day_state::PROCESSING);
 }
 
-/// A day with no limit, as a failed allocation leaves it, cancels its Metadosis and carries
-/// all its loads.
+/// A day with no limit completes its Metadosis and carries all its loads.
 #[test]
 fn a_day_with_no_limit_carries_its_loads() {
     let mut provider = fixture(0, &[NOMINAL]);
@@ -430,16 +424,11 @@ fn a_day_with_no_limit_carries_its_loads() {
     let left = U256::from(load_of(NOMINAL) + 3);
     assert_eq!(excess(&mut provider), left);
     assert_eq!(exceeded(&provider)[0].excessMinor, left);
-    let canceled: Vec<_> = provider
-        .get_ordered_events()
-        .iter()
-        .filter_map(|event| IMetadosis::MetadosisCanceled::decode_log(event).ok())
-        .collect();
-    assert_eq!(canceled.len(), 1);
     let record = record(&mut provider);
-    assert_eq!(record.metadosis_state, metadosis_state::CANCELED);
-    assert_eq!(record.state, emission_day_state::COMPLETED);
+    assert_eq!(record.metadosis_state, metadosis_state::COMPLETED);
     assert_eq!(record.nods, 0);
+    assert_eq!(record.lysis_limit, 0);
+    assert_eq!(record.nominal_amount, u128::from(NOMINAL));
 }
 
 fn fail(provider: &mut HashMapStorageProvider) {
@@ -468,17 +457,15 @@ fn failed_metadosis_returns_the_limit_less_the_loads() {
         assert!(outbe_emission::api::record_metadosis_completed(
             storage.clone(),
             DAY,
-            outbe_emission::api::MetadosisCompletedAmounts {
-                desis_limit: U256::ZERO,
-                nods: U256::ZERO,
-                promis_limit_added: U256::ZERO,
-            }
+            outbe_emission::api::MetadosisAmounts::default()
         )
         .is_err());
-        assert!(
-            outbe_emission::api::record_metadosis_failed(storage.clone(), DAY, U256::ZERO).is_err()
-        );
-        assert!(outbe_emission::api::record_metadosis_canceled(storage, DAY).is_err());
+        assert!(outbe_emission::api::record_metadosis_failed(
+            storage,
+            DAY,
+            outbe_emission::api::MetadosisAmounts::default()
+        )
+        .is_err());
     });
     assert_eq!(record(&mut provider), closed);
 

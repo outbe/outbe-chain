@@ -13,6 +13,8 @@ pub mod precompile;
 pub(crate) mod runtime;
 pub mod schema;
 pub(crate) mod state;
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_support;
 
 #[cfg(test)]
 mod tests;

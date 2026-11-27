@@ -29,3 +29,4 @@ outbe-emission = { workspace = true, features = ["test-utils"] }
 workspace = true
 
 [features]
+test-utils = []

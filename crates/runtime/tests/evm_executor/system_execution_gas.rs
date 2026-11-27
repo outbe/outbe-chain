@@ -623,11 +623,6 @@ fn stale_oracle_cycle_credits_validator_reward_and_allows_later_feeder_vote() {
                     .write(&PREVIOUS_DAY, U256::from(1))
                     .unwrap();
                 rewards
-                    .day_voter_at
-                    .get_nested(&PREVIOUS_DAY)
-                    .write(&0, voter)
-                    .unwrap();
-                rewards
                     .day_votes
                     .get_nested(&PREVIOUS_DAY)
                     .write(&voter, 1)
@@ -726,8 +721,13 @@ fn stale_oracle_cycle_credits_validator_reward_and_allows_later_feeder_vote() {
                             || r.state == outbe_emission::schema::emission_day_state::COMPLETED
                     }),
                 voter_claimable: outbe_agentreward::AgentRewardContract::new(storage.clone())
-                    .get_agent_reward(outbe_agentreward::schema::RewardPool::Validator, voter)
-                    .unwrap(),
+                    .agent_reward(
+                        outbe_agentreward::schema::RewardPool::Validator,
+                        PREVIOUS_DAY,
+                        voter,
+                    )
+                    .unwrap()
+                    .1,
                 voter_gems: outbe_gem::api::balance_of(&storage, voter).unwrap(),
                 feeder_vote_exists: oracle.vote_exists.read(&proposer).unwrap(),
                 formation_exists: outbe_emission::api::get_emission_day(storage, PREVIOUS_DAY)
