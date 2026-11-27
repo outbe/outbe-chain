@@ -651,7 +651,7 @@ fn credis_series_opened_once_per_sub_series() {
         opened[0].seriesId,
         alloy_primitives::FixedBytes::from(series)
     );
-    assert_eq!(opened[0].subSeries, 4);
+    assert_eq!(opened[0].subSeriesId, 4);
     assert_eq!(opened[0].entryPriceMinor, oracle_rate());
     assert_eq!(
         opened[0].callPriceMinor,
@@ -669,13 +669,18 @@ fn credis_series_opened_once_per_sub_series() {
         opened[1].seriesId,
         alloy_primitives::FixedBytes::from(series)
     );
-    assert_eq!(opened[1].subSeries, 7);
+    assert_eq!(opened[1].subSeriesId, 7);
     assert_eq!(opened[1].entryPriceMinor, other_entry);
-    let issued = provider
+    let issued: Vec<u16> = provider
         .get_events(outbe_system_common::addresses::CREDIS_ADDRESS)
         .iter()
-        .filter(|log| CredisIssued::decode_log_data(log).is_ok())
-        .count();
-    assert_eq!(issued, 3);
+        .filter_map(|log| CredisIssued::decode_log_data(log).ok())
+        .map(|event| event.subSeriesId)
+        .collect();
+    assert_eq!(
+        issued,
+        [4, 4, 7],
+        "each Credis carries the hour of its reservation"
+    );
     teardown();
 }

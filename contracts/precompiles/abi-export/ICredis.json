@@ -614,6 +614,12 @@
         "internalType": "bytes14"
       },
       {
+        "name": "subSeriesId",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
         "name": "issuanceCurrency",
         "type": "uint16",
         "indexed": false,

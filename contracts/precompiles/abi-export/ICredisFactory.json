@@ -201,10 +201,10 @@
         "internalType": "bytes14"
       },
       {
-        "name": "subSeries",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "uint8"
+        "name": "subSeriesId",
+        "type": "uint16",
+        "indexed": true,
+        "internalType": "uint16"
       },
       {
         "name": "issuanceCurrency",
@@ -244,10 +244,10 @@
         "internalType": "bytes14"
       },
       {
-        "name": "subSeries",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "uint8"
+        "name": "subSeriesId",
+        "type": "uint16",
+        "indexed": true,
+        "internalType": "uint16"
       },
       {
         "name": "issuanceCurrency",
@@ -287,10 +287,10 @@
         "internalType": "bytes14"
       },
       {
-        "name": "subSeries",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "uint8"
+        "name": "subSeriesId",
+        "type": "uint16",
+        "indexed": true,
+        "internalType": "uint16"
       },
       {
         "name": "issuanceCurrency",

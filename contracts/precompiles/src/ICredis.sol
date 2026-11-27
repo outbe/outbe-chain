@@ -28,6 +28,7 @@ interface ICredis {
         uint256 indexed credisId,
         address indexed owner,
         bytes14 indexed seriesId,
+        uint16 subSeriesId,
         uint16 issuanceCurrency,
         uint16 referenceCurrency,
         address cca,

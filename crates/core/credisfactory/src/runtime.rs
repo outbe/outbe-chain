@@ -103,7 +103,7 @@ pub fn issue_credis(
                 CREDIS_FACTORY_ADDRESS,
                 alloy_sol_types::SolEvent::encode_log_data(&ICredisFactory::CredisSeriesOpened {
                     seriesId: opened.series_id.into(),
-                    subSeries: opened.sub_series,
+                    subSeriesId: u16::from(opened.sub_series),
                     issuanceCurrency: opened.issuance_currency,
                     referenceCurrency: opened.reference_currency,
                     entryPriceMinor: opened.entry_price_minor,
@@ -120,6 +120,7 @@ pub fn issue_credis(
                 credisId: id,
                 owner: r.credis_owner,
                 seriesId: opened.series_id.into(),
+                subSeriesId: u16::from(opened.sub_series),
                 issuanceCurrency: opened.issuance_currency,
                 referenceCurrency: opened.reference_currency,
                 cca: r.cca,

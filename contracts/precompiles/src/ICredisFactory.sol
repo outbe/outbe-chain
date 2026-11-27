@@ -34,7 +34,7 @@ interface ICredisFactory {
 
     event CredisSeriesOpened(
         bytes14 indexed seriesId,
-        uint8 subSeries,
+        uint16 indexed subSeriesId,
         uint16 issuanceCurrency,
         uint16 referenceCurrency,
         uint256 entryPriceMinor,
@@ -46,7 +46,7 @@ interface ICredisFactory {
     /// Every unsettled Credis of the sub-series is called with its call group.
     event CredisSeriesCalled(
         bytes14 indexed seriesId,
-        uint8 subSeries,
+        uint16 indexed subSeriesId,
         uint16 issuanceCurrency,
         uint16 referenceCurrency,
         uint64 calledAt,
@@ -55,7 +55,7 @@ interface ICredisFactory {
     /// The deadline of the call group passed: the unsettled Credis of the sub-series are forfeited.
     event CredisSeriesClosed(
         bytes14 indexed seriesId,
-        uint8 subSeries,
+        uint16 indexed subSeriesId,
         uint16 issuanceCurrency,
         uint16 referenceCurrency,
         uint32 forfeitedCount,

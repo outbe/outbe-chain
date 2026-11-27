@@ -182,7 +182,7 @@ fn call_series_if_breached(
             &credis.storage,
             &ICredisFactory::CredisSeriesCalled {
                 seriesId: sub.series_id.into(),
-                subSeries: sub.sub_series,
+                subSeriesId: u16::from(sub.sub_series),
                 issuanceCurrency: sub.issuance_currency,
                 referenceCurrency: reference_currency,
                 calledAt: now,
