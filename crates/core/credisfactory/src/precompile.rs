@@ -60,7 +60,13 @@ pub fn dispatch(
                         settledFeeMinor: fee,
                     })
                 }),
-                quoteSettlement(c) => view(c, |c| runtime::quote_settlement(&storage, c.credisId)),
+                quoteSettlement(c) => view(c, |c| {
+                    let quote = runtime::quote_settlement(&storage, c.credisId)?;
+                    Ok(ICredisFactory::quoteSettlementReturn {
+                        payoffMinor: quote.payoff_minor,
+                        feeMinor: quote.fee_minor,
+                    })
+                }),
                 getCallState(c) => view(c, |c| crate::call_state::call_state(&storage, c.credisId)),
                 forfeitCredis(c) => mutate(&storage, c, caller, |sender, c| {
                     let forfeit = runtime::forfeit_by_owner(storage.clone(), sender, c.credisId)?;

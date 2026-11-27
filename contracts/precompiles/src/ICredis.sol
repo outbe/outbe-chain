@@ -136,8 +136,8 @@ interface ICredis {
         /// See {State}. Read-time: a Called Credis past its settlement deadline reads
         /// Forfeited, with its outcome, until the cleanup deletes it.
         uint8 state;
-        /// Sum of the fees settled on this Credis, in asset minor units. Current-period accrual is
-        /// {accruedFeeMinor}.
+        /// Sum of the fees settled on this Credis, in asset minor units. The fee accrued since
+        /// the last settlement is `feeMinor` of `ICredisFactory.quoteSettlement`.
         uint256 settledFeeMinor;
         CallTerms call;
         Outcome outcome;
@@ -165,30 +165,8 @@ interface ICredis {
     function getApproved(uint256 credisId) external view returns (address);
     function isApprovedForAll(address owner, address operator) external view returns (bool);
 
-    function credisExists(uint256 credisId) external view returns (bool);
-
     function balanceOf(address owner) external view returns (uint256 balance);
     function tokensByOwner(address owner) external view returns (uint256[] memory tokenIds);
-
-    /// @notice Fee accrued on the outstanding amount since the last
-    ///         settlement (simple, ACT/365), evaluated at the current block
-    ///         timestamp. While the Credis is settleable, this is the next payment's
-    ///         fee delta and the minimum acceptable payment; 0 once it reads
-    ///         Settled or Forfeited. Sum of the fees settled is
-    ///         {settledFeeMinor}.
-    function accruedFeeMinor(uint256 credisId) external view returns (uint256);
-
-    /// @notice Sum of the fees settled on this Credis, in asset minor units.
-    ///         Forfeiture does not add unpaid fee.
-    function settledFeeMinor(uint256 credisId) external view returns (uint256);
-
-    /// @notice Sum of `amountMinor` and `outstandingAmountMinor` across the account's
-    ///         live Credis. A Credis past its settlement deadline counts until the cleanup
-    ///         deletes it.
-    function credisAmountAndOutstandingOf(address owner)
-        external
-        view
-        returns (uint256 amountMinor, uint256 outstandingAmountMinor);
 
     function supportsInterface(bytes4 interfaceId) external view returns (bool);
 }

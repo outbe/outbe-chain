@@ -11,7 +11,7 @@ interface ICredisFactory {
     error InvalidOwner();
     error CredisAlreadyExists();
     error CredisClosed();
-    error PaymentBelowAccruedFee();
+    error PaymentBelowFee();
     error NotCalled();
     error CredisNotFound();
     error CredisNotIssued();
@@ -78,12 +78,13 @@ interface ICredisFactory {
     function settleCredis(uint256 credisId, address asset, uint256 amountCapMinor)
         external
         returns (uint256 settledAmountMinor, uint256 settledFeeMinor);
-    /// What paying the Credis off now takes: its outstanding amount plus the fee
-    /// accrued since the last settlement. Zero once it is Forfeited by its deadline; a full
+    /// What paying the Credis off now takes: `payoffMinor` is its outstanding amount plus
+    /// `feeMinor`, the fee accrued since the last settlement. `feeMinor` is also the smallest
+    /// amount `settleCredis` takes. Both are zero once it is Forfeited by its deadline; a full
     /// settlement or a forfeit deletes the Credis, and then the read reverts. Fee
     /// grows by whole days, so a payment landing a day later needs that day more;
     /// `settleCredis` takes only what is owed, so paying more is safe.
-    function quoteSettlement(uint256 credisId) external view returns (uint256 payoffMinor);
+    function quoteSettlement(uint256 credisId) external view returns (uint256 payoffMinor, uint256 feeMinor);
 
     /// @notice How close a right is to its group's call. The window ends at the last
     ///         finalized UTC day. Prices are COEN in `referenceCurrency` at scale 1e6.

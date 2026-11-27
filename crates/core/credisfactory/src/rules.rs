@@ -232,7 +232,7 @@ pub fn settle(
     let days = CredisContract::elapsed_days(&record, now);
     let fee = CredisContract::accrued_fee(&record, now)?;
     if amount < fee {
-        return Err(CredisFactoryError::PaymentBelowAccruedFee.into());
+        return Err(CredisFactoryError::PaymentBelowFee.into());
     }
     let amount_paid = (amount - fee).min(record.outstanding_amount_minor);
 
@@ -273,7 +273,6 @@ pub fn settle(
 
     let closed = record.is_settled();
     credis.update_credis_record(&record)?;
-    credis.take_owner_outstanding(record.owner, amount_paid)?;
     credis.take_outstanding_amount(&record, amount_paid)?;
 
     let total_paid = fee

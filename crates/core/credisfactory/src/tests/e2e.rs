@@ -519,7 +519,9 @@ fn reservation_snapshots_call_profile_terms_and_a_called_full_settlement_deletes
             prod_terms.call_window_seconds
         );
         (
-            runtime::quote_settlement(&storage, id_called_settled).unwrap(),
+            runtime::quote_settlement(&storage, id_called_settled)
+                .unwrap()
+                .payoff_minor,
             credis.group_of(&record).unwrap(),
         )
     });
@@ -567,7 +569,9 @@ fn a_called_series_settled_before_its_deadline_closes_with_zero_forfeit() {
         let credis = CredisContract::new(storage.clone());
         let record = credis.get_credis(id).unwrap();
         (
-            runtime::quote_settlement(&storage, id).unwrap(),
+            runtime::quote_settlement(&storage, id)
+                .unwrap()
+                .payoff_minor,
             credis.group_of(&record).unwrap(),
             outbe_credis::settlement_deadline(&record),
         )

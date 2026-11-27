@@ -258,9 +258,10 @@ fn quote_settlement_is_the_payoff_that_closes_the_credis() {
     let payoff = StorageHandle::enter(&mut provider, |storage| {
         let interest =
             CredisContract::accrued_fee(&record(&storage, id), now_of(&storage)).unwrap();
-        let payoff = quote(&storage);
-        assert_eq!(payoff, pledge_stables() + interest);
-        payoff
+        let quote = quote(&storage);
+        assert_eq!(quote.payoffMinor, pledge_stables() + interest);
+        assert_eq!(quote.feeMinor, interest);
+        quote.payoffMinor
     });
 
     paying(&mut provider, id, payoff, |storage| {
@@ -287,10 +288,13 @@ fn a_called_credis_quotes_its_payoff_until_the_deadline_and_nothing_after() {
         advance_to(&storage, deadline);
         let interest =
             CredisContract::accrued_fee(&record(&storage, id), now_of(&storage)).unwrap();
-        assert_eq!(quote(&storage), pledge_stables() + interest);
+        let called = quote(&storage);
+        assert_eq!(called.payoffMinor, pledge_stables() + interest);
+        assert_eq!(called.feeMinor, interest);
 
         advance_to(&storage, deadline + 1);
-        assert!(quote(&storage).is_zero());
+        let lapsed = quote(&storage);
+        assert!(lapsed.payoffMinor.is_zero() && lapsed.feeMinor.is_zero());
     });
     teardown();
 }
@@ -842,10 +846,6 @@ fn full_settlement_deletes_the_credis() {
         let credis = CredisContract::new(storage.clone());
         assert!(deleted(&storage, id));
         assert_eq!(credis.credis_count_of(alice()).unwrap(), 0);
-        assert_eq!(
-            credis.amount_and_outstanding_of(alice()).unwrap(),
-            (U256::ZERO, U256::ZERO)
-        );
         assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
         assert_eq!(view_balance(&storage, alice()), pledge_cost());
     });
@@ -1012,7 +1012,9 @@ fn credis_settles_in_another_asset_when_its_vault_is_gone() {
         let err = runtime::settle_credis(storage.clone(), bob(), id, foreign, pledge_stables())
             .unwrap_err();
         assert_eq!(err.to_string(), not_allowed());
-        runtime::quote_settlement(&storage, id).unwrap()
+        runtime::quote_settlement(&storage, id)
+            .unwrap()
+            .payoff_minor
     });
     StorageHandle::enter(&mut provider, |storage| {
         runtime::settle_credis(storage.clone(), bob(), id, other, owed).unwrap();
