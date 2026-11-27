@@ -14,7 +14,10 @@ use outbe_zk::protocol::zk::{Circuit, ProofGenerator};
 use outbe_zk::FieldElement as _;
 use outbe_zk_backend::barretenberg::{Barretenberg, BarretenbergHandler};
 
-use crate::hash::{change_key, empty_subtrees, note_commitment, note_nullifier, note_sn};
+use crate::hash::{
+    change_key, empty_subtrees, note_commitment, note_nullifier, note_sn, transfer_commitment,
+    transfer_lock,
+};
 use crate::runtime;
 use crate::schema::{PayNoteContract, PAYNOTE_ROOT_WINDOW, PAYNOTE_TREE_DEPTH};
 use crate::Field;
@@ -159,6 +162,127 @@ pub fn merge_proof(chain_id: u64, tree: &PayNoteTree, inputs: &[&Note], output: 
     let proof =
         ProofGenerator::<PaynoteMerge>::generate(&prover(), &witness.try_into().unwrap(), &public)
             .unwrap();
+    encode_combined_proof(public, proof.proof).unwrap()
+}
+
+/// A locked transfer note, with everything its two parties know about it.
+pub struct LockedNote {
+    pub recipient_pk: Field,
+    pub sender_serial: Field,
+    pub rho: Field,
+    pub lock: Field,
+    pub deadline: u64,
+    pub asset: Address,
+    pub amount: U256,
+    pub commitment: Field,
+    pub nullifier: Field,
+}
+
+/// The locked note of `amount` that the holder of `sender_key` sends to
+/// `recipient_pk`, the [`note_sn`] of the recipient's key.
+pub fn locked_note(
+    chain_id: u64,
+    (recipient_pk, sender_key, rho): (Field, u64, u64),
+    deadline: u64,
+    asset: Address,
+    amount: U256,
+) -> LockedNote {
+    let sender_serial = note_sn(Field::from(sender_key)).unwrap();
+    let rho = Field::from(rho);
+    let lock = transfer_lock(recipient_pk, sender_serial, rho).unwrap();
+    let commitment = transfer_commitment(chain_id, lock, deadline, asset, amount).unwrap();
+    LockedNote {
+        recipient_pk,
+        sender_serial,
+        rho,
+        lock,
+        deadline,
+        asset,
+        amount,
+        commitment,
+        nullifier: note_nullifier(commitment, rho).unwrap(),
+    }
+}
+
+fn auth_path(tree: &PayNoteTree, leaf_index: u32) -> [B256; PAYNOTE_TREE_DEPTH] {
+    let siblings = tree.inclusion_path(u64::from(leaf_index)).unwrap().siblings;
+    core::array::from_fn(|level| field_to_b256(&siblings[level]).unwrap())
+}
+
+/// A real transfer proof: `note`, at `leaf_index` of `tree`, pays `locked` and
+/// keeps the rest as its change note.
+pub fn transfer_proof(
+    chain_id: u64,
+    tree: &PayNoteTree,
+    leaf_index: u32,
+    note: &Note,
+    locked: &LockedNote,
+) -> Vec<u8> {
+    use outbe_zk::paynote_transfer::{alloy, encode_combined_proof, PaynoteTransfer};
+    let word = |field: &Field| field_to_b256(field).unwrap();
+    let public = alloy::PublicInputs {
+        chain_id,
+        root: word(&tree.root()),
+        nullifier: word(&note.nullifier),
+        asset: note.asset,
+        deadline: locked.deadline,
+        locked_commitment: word(&locked.commitment),
+        change_commitment: change_note(chain_id, note, locked.amount)
+            .map_or(B256::ZERO, |change| word(&change.commitment)),
+    };
+    let witness = alloy::Witness {
+        note_amount: note.amount,
+        note_spend_key: word(&note.key),
+        leaf_index,
+        auth_path: auth_path(tree, leaf_index),
+        transfer_amount: locked.amount,
+        lock: word(&locked.lock),
+    };
+    let public = public.try_into().unwrap();
+    let proof = ProofGenerator::<PaynoteTransfer>::generate(
+        &prover(),
+        &witness.try_into().unwrap(),
+        &public,
+    )
+    .expect("paynote transfer proof generation");
+    encode_combined_proof(public, proof.proof).unwrap()
+}
+
+/// A real claim proof: the holder of `auth_key` resolves `locked`, at
+/// `leaf_index` of `tree`, into the ordinary note `output`.
+pub fn claim_proof(
+    chain_id: u64,
+    tree: &PayNoteTree,
+    leaf_index: u32,
+    locked: &LockedNote,
+    (auth_key, not_before): (u64, u64),
+    output: &Note,
+) -> Vec<u8> {
+    use outbe_zk::paynote_claim::{alloy, encode_combined_proof, PaynoteClaim};
+    let word = |field: &Field| field_to_b256(field).unwrap();
+    let public = alloy::PublicInputs {
+        chain_id,
+        root: word(&tree.root()),
+        nullifier: word(&locked.nullifier),
+        asset: locked.asset,
+        not_before,
+        output_commitment: word(&output.commitment),
+    };
+    let witness = alloy::Witness {
+        amount: locked.amount,
+        deadline: locked.deadline,
+        recipient_pk: word(&locked.recipient_pk),
+        sender_serial: word(&locked.sender_serial),
+        rho: word(&locked.rho),
+        auth_key: word(&Field::from(auth_key)),
+        output_serial: word(&output.serial),
+        leaf_index,
+        auth_path: auth_path(tree, leaf_index),
+    };
+    let public = public.try_into().unwrap();
+    let proof =
+        ProofGenerator::<PaynoteClaim>::generate(&prover(), &witness.try_into().unwrap(), &public)
+            .expect("paynote claim proof generation");
     encode_combined_proof(public, proof.proof).unwrap()
 }
 

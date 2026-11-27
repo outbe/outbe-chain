@@ -19,7 +19,11 @@ use outbe_zk::paynote::{
     alloy::PublicInputs as PayNotePublicInputs,
     decode_public_inputs as decode_paynote_public_inputs,
 };
+use outbe_zk::paynote_claim::{self, PaynoteClaim};
 use outbe_zk::paynote_merge::{self, PaynoteMerge, MAX_MERGE_INPUTS};
+use outbe_zk::paynote_transfer::{self, PaynoteTransfer};
+use outbe_zk::protocol::zk::Circuit;
+use outbe_zk::CircuitId;
 use outbe_zk_backend::barretenberg::verify_circuit;
 
 use crate::context::withdraw_context;
@@ -149,6 +153,152 @@ pub(crate) fn merge_pay_notes(storage: &StorageHandle<'_>, proof: &[u8]) -> Resu
                 noteAmount: U256::ZERO,
             }),
         )?;
+        Ok(())
+    })
+}
+
+/// How long the recipient of a transfer has before the sender may reclaim it.
+pub const PAYNOTE_TRANSFER_TIMELOCK_SECS: u64 = 30 * 24 * 60 * 60;
+
+/// `transfer(proof)` — spend an ordinary note into a locked transfer note and
+/// an optional change note. The recipient can claim or decline the locked note
+/// at once. The sender can reclaim it from `deadline` on, which must leave the
+/// recipient at least [`PAYNOTE_TRANSFER_TIMELOCK_SECS`]. No funds move.
+pub(crate) fn transfer(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<()> {
+    let claim: paynote_transfer::alloy::PublicInputs =
+        paynote_transfer::decode_public_inputs(proof)
+            .and_then(TryInto::try_into)
+            .map_err(|error| {
+                PayNoteError::InvalidInput(format!("transfer proof is malformed: {error}"))
+            })?;
+    let earliest = storage
+        .now_secs()?
+        .checked_add(PAYNOTE_TRANSFER_TIMELOCK_SECS)
+        .ok_or_else(|| PayNoteError::InvalidInput("transfer deadline overflows".into()))?;
+    if claim.deadline < earliest {
+        return Err(PayNoteError::InvalidInput(
+            "transfer deadline is earlier than the 30-day timelock".into(),
+        )
+        .into());
+    }
+    let mut outputs = vec![claim.locked_commitment];
+    // A full transfer carries the zero change sentinel.
+    if !claim.change_commitment.is_zero() {
+        outputs.push(claim.change_commitment);
+    }
+    replace_note::<PaynoteTransfer>(
+        storage,
+        proof,
+        (claim.chain_id, claim.root, claim.nullifier, claim.asset),
+        &outputs,
+        IPayNote::NoteTransferred::encode_log_data(&IPayNote::NoteTransferred {
+            asset: claim.asset,
+            lockedCommitment: claim.locked_commitment,
+            nullifier: claim.nullifier,
+            deadline: claim.deadline,
+        }),
+    )
+}
+
+/// `resolveTransfer(proof)` — turn a locked transfer note into an ordinary
+/// note. The circuit lets the recipient do it at any time, and the sender only
+/// when the deadline is not after `not_before`. Thus the runtime only requires
+/// that `not_before` is not in the future.
+pub(crate) fn resolve_transfer(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<()> {
+    let claim: paynote_claim::alloy::PublicInputs = paynote_claim::decode_public_inputs(proof)
+        .and_then(TryInto::try_into)
+        .map_err(|error| {
+            PayNoteError::InvalidInput(format!("claim proof is malformed: {error}"))
+        })?;
+    if claim.not_before > storage.now_secs()? {
+        return Err(PayNoteError::InvalidInput("claim not_before is in the future".into()).into());
+    }
+    replace_note::<PaynoteClaim>(
+        storage,
+        proof,
+        (claim.chain_id, claim.root, claim.nullifier, claim.asset),
+        &[claim.output_commitment],
+        IPayNote::TransferResolved::encode_log_data(&IPayNote::TransferResolved {
+            asset: claim.asset,
+            outputCommitment: claim.output_commitment,
+            nullifier: claim.nullifier,
+        }),
+    )
+}
+
+/// The transition `transfer` and `resolve_transfer` share: verify a `C` proof,
+/// nullify one note and append `outputs`, whose values are private. All guards
+/// run before the proof is verified, and all effects are one rollback unit.
+fn replace_note<C: Circuit + CircuitId>(
+    storage: &StorageHandle<'_>,
+    proof: &[u8],
+    (chain_id, root, nullifier, asset): (u64, B256, B256, Address),
+    outputs: &[B256],
+    event: alloy_primitives::LogData,
+) -> Result<()> {
+    let (runtime_chain_id, zeros) = chain_state(storage)?;
+    if chain_id != runtime_chain_id {
+        return Err(PayNoteError::InvalidInput("chain ID does not match runtime".into()).into());
+    }
+    if nullifier.is_zero() {
+        return Err(PayNoteError::InvalidInput("nullifier must be non-zero".into()).into());
+    }
+    let paynote: PayNoteContract<'_> = storage.contract();
+    let leaf_count = paynote.leaf_count.read()?;
+    if leaf_count == 0 {
+        return Err(PayNoteError::NotInitialized.into());
+    }
+    // At most two outputs, so the cast and the sum cannot overflow.
+    if leaf_count + outputs.len() as u64 > PAYNOTE_TREE_CAPACITY {
+        return Err(PayNoteError::TreeFull.into());
+    }
+    if !paynote.recent_roots.read_all()?.contains(&root) {
+        return Err(PayNoteError::RootNotRecent.into());
+    }
+    if paynote.spent_nullifiers.read(&nullifier)? {
+        return Err(PayNoteError::NullifierSpent.into());
+    }
+    let mut leaves = Vec::with_capacity(outputs.len());
+    for word in outputs {
+        let leaf = field_from_b256(word).map_err(|_| {
+            PayNoteError::InvalidInput("commitment is not a canonical BN254 field".into())
+        })?;
+        if leaf.is_zero() {
+            return Err(PayNoteError::InvalidInput("commitment must be non-zero".into()).into());
+        }
+        if paynote.commitments.read(word)? {
+            return Err(PayNoteError::CommitmentExists.into());
+        }
+        leaves.push((leaf, *word));
+    }
+    match verify_circuit::<C>(proof) {
+        Ok(true) => {}
+        Ok(false) => return Err(PayNoteError::InvalidInput("proof is invalid".into()).into()),
+        Err(error) => {
+            return Err(
+                PayNoteError::InvalidInput(format!("proof verification failed: {error}")).into(),
+            )
+        }
+    }
+    storage.with_checkpoint(|| {
+        paynote.spent_nullifiers.write(&nullifier, true)?;
+        storage.emit_event(PAYNOTE_ADDRESS, event)?;
+        for (leaf, word) in leaves {
+            let (index, root_after) = append(&paynote, &zeros, leaf)?;
+            paynote.commitments.write(&word, true)?;
+            storage.emit_event(
+                PAYNOTE_ADDRESS,
+                IPayNote::NewNote::encode_log_data(&IPayNote::NewNote {
+                    commitment: word,
+                    leafIndex: index,
+                    rootAfter: field_to_b256(&root_after)
+                        .map_err(|error| PrecompileError::Fatal(error.to_string()))?,
+                    asset,
+                    // Sentinel: the value of the note is private.
+                    noteAmount: U256::ZERO,
+                }),
+            )?;
+        }
         Ok(())
     })
 }

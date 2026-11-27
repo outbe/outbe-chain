@@ -78,6 +78,46 @@ pub fn change_key(note_spend_key: Field, spent_nullifier: Field) -> Field {
     )
 }
 
+/// Purpose tags of a locked transfer note. Distinct from `TAG_COMMITMENT`, so
+/// a locked note never opens as an ordinary note, nor the reverse.
+pub global TAG_TRANSFER: Field = ascii_field("TRANSFER");
+pub global TAG_TRANSFER_LOCK: Field = ascii_field("TRANSFER_LOCK");
+
+/// Who may resolve a locked note: the recipient at any time, the sender after
+/// the deadline. Both are `note_sn` of a key the party holds. `rho` is a random
+/// nonce of the sender. It blinds the lock and keys the nullifier.
+pub fn transfer_lock(recipient_pk: Field, sender_serial: Field, rho: Field) -> Field {
+    hash_multi(
+        paynote_tag(TAG_TRANSFER_LOCK),
+        [recipient_pk, sender_serial, rho],
+    )
+}
+
+/// Locked transfer note -- a Merkle leaf beside the ordinary commitments. Its
+/// nullifier is `note_nullifier(commitment, rho)`, so the leaf has one
+/// nullifier whichever party resolves it.
+pub fn transfer_commitment(
+    chain_id: u64,
+    lock: Field,
+    deadline: u64,
+    asset: EthAddress,
+    amount: U256,
+) -> Field {
+    let limbs = amount.get_limbs();
+    hash_multi(
+        paynote_tag(TAG_TRANSFER),
+        [
+            chain_id as Field,
+            lock,
+            deadline as Field,
+            asset.to_field(),
+            limbs[0] as Field,
+            limbs[1] as Field,
+            limbs[2] as Field,
+        ],
+    )
+}
+
 /// Empty-leaf value for a Paynote tree on `chain_id`.
 pub fn empty_leaf(chain_id: u64) -> Field {
     hash_multi(paynote_tag(TAG_EMPTY), [chain_id as Field])
