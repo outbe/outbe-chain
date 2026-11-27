@@ -47,7 +47,7 @@ done
 description = "Print the CREATE3 address of every Intex proxy for the current salt"
 run = '''
 set -a; f="${ENV_FILE:-.env}"; [ -f "$f" ] && . "$f"; set +a
-forge script script/PredictAddresses.s.sol:PredictAddresses -vvv
+forge script script/PredictAddresses.s.sol:PredictAddresses --rpc-url "$NETWORK" -vvv
 '''
 
 [tasks.deploy-all]
