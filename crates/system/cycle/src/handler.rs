@@ -269,11 +269,27 @@ fn is_day_started(ctx: &BlockRuntimeContext, day: u32) -> Result<bool> {
 
 /// The step at 12:00 after emission day `day`, when its offering ended: the rewards of the WAA
 /// and of the SRA, then Metadosis. Each reward rate has its own fallback, so both pools have a
-/// result before Metadosis ends.
+/// result before Metadosis ends. A revert that a fallback does not absorb changes nothing, and a
+/// later run tries the step again.
 fn run_offering_end_step(ctx: &BlockRuntimeContext, day: u32) -> Result<()> {
-    outbe_agentreward::api::set_agent_reward_rate(ctx, day, RewardPool::Waa)?;
-    outbe_agentreward::api::set_agent_reward_rate(ctx, day, RewardPool::Sra)?;
-    run_metadosis_step(ctx, day)
+    match ctx.storage.with_checkpoint(|| {
+        outbe_agentreward::api::set_agent_reward_rate(ctx, day, RewardPool::Waa)?;
+        outbe_agentreward::api::set_agent_reward_rate(ctx, day, RewardPool::Sra)?;
+        run_metadosis_step(ctx, day)
+    }) {
+        Err(err) if is_recoverable_step_error(&err) => {
+            tracing::warn!(
+                target: "outbe::cycle",
+                block_number = ctx.block.block_number,
+                block_timestamp = ctx.block.timestamp,
+                error = ?err,
+                day,
+                "offering end step reverted; the step runs in a later run"
+            );
+            Ok(())
+        }
+        result => result,
+    }
 }
 
 fn is_recoverable_step_error(err: &PrecompileError) -> bool {
