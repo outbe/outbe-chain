@@ -102,9 +102,8 @@ pub fn record_votes_and_fees(
         return Ok(());
     }
 
-    // The per-day raw fee accumulation still feeds the daily-emission cap.
-    // But the hook now ESCROWS the fees per finalized block (it does not pay them
-    // eagerly), and they settle at N+K. Idempotent via `block_metadata_counted`.
+    // The hook escrows the fees per finalized block, and they settle at N+K.
+    // Idempotent via `block_metadata_counted`.
     if first_seen {
         if fb_day != 0 && fb_day <= rewards.last_sealed_day.read()? {
             return Err(RewardsError::ParticipationAfterDaySealed.into());

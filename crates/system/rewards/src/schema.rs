@@ -38,16 +38,12 @@ use outbe_primitives::storage::types::{Mapping, Slot};
 #[contract(addr = REWARDS_ADDRESS)]
 pub struct Rewards {
     /// Per-(finalized_block_hash, voter) guard: voter participation has
-    /// already been counted for this finalized block in the day's
-    /// emission top-up share. This guard is separate from the fee guard for
-    /// audit clarity.
+    /// already been counted for this finalized block in the votes of the day.
+    /// This guard is separate from the fee guard for audit clarity.
     pub participation_counted_for_block: Mapping<B256, Mapping<Address, bool>>,
 
-    /// Per-day raw fee sum from finalized metadata (`fees_raw`). Source
-    /// of truth for the cap-vs-fees formula at settle time. The emission cap is
-    /// six-decimal protocol value while this sum stays in native COEN minor units
-    /// (wei; 10^18 per COEN). One protocol unit equals 10^12 native units:
-    ///   `topup = floor((cap * 1e12).saturating_sub(day_fee_sum_native) / 1e12)`
+    /// Per-day raw fee sum from finalized metadata (`fees_raw`), in native COEN minor units
+    /// (wei; 10^18 per COEN). Cleared when the Validator rate of the day is set.
     pub day_fee_sum_native: Mapping<u32, U256>,
 
     /// Per-(utc_day, voter) participation count for the day: the weight of the voter in the
