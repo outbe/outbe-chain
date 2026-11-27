@@ -249,13 +249,14 @@ fn a_claim_takes_the_weight_and_the_last_one_clears_the_day() {
             api::take_reward_weight(&storage, BOB, DAY).unwrap(),
             U256::ZERO
         );
+        // A deficit is no weight: a day with one has weight 0, and no claim takes it.
         let contract = CcaContract::new(storage.clone());
         assert_eq!(
             contract
                 .gratis_deficit_minor_per_utc_day
                 .read(&address_day_key(BOB, DAY))
                 .unwrap(),
-            U256::ZERO
+            U256::from(3)
         );
         api::clear_reward_day(&storage, DAY).unwrap();
         assert_eq!(

@@ -82,7 +82,6 @@ pub fn take_reward_weight(storage: &StorageHandle<'_>, cca: Address, day: u32) -
     let key = address_day_key(cca, day);
     let weight = contract.gratis_minor_per_utc_day.read(&key)?;
     contract.gratis_minor_per_utc_day.clear(&key)?;
-    contract.gratis_deficit_minor_per_utc_day.clear(&key)?;
     Ok(weight)
 }
 

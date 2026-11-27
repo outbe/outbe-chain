@@ -32,18 +32,6 @@ fn a_claim_transaction_issues_the_gem_of_the_day_and_takes_its_weight() {
 }
 
 #[test]
-fn a_cca_claim_transaction_needs_registration() {
-    let mut db = reward_world();
-    let unregistered = claim_tx(&mut db, RewardPool::Cca);
-    assert!(unregistered.is_revert(), "{unregistered:?}");
-    assert!(unregistered.logs.is_empty());
-
-    bond_cca(&mut db);
-    credit(&mut db, RewardPool::Cca, REWARD);
-    claim_by_tx(&mut db, RewardPool::Cca, REWARD);
-}
-
-#[test]
 fn a_cca_that_unbonds_still_claims_its_day() {
     let mut db = reward_world();
     bond_cca(&mut db);

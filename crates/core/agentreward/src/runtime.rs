@@ -347,10 +347,6 @@ impl AgentRewardContract<'_> {
         require_days(days)?;
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
-            if pool == RewardPool::Cca {
-                // Registration history is sufficient: earned rewards survive deregistration.
-                outbe_ccaregistry::api::cca_state(&storage, address)?;
-            }
             let mut total = U256::ZERO;
             for &day in days {
                 let amount = self.settle_day(pool, day, address, false)?;
