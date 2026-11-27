@@ -335,7 +335,7 @@ contract AuctionGasBudgetTest is CrossChainTest {
     uint32 internal constant BNB_CHAIN_ID = 1;
     uint32 internal constant OUTBE_CHAIN_ID = 2;
     uint32 internal constant EMISSION_DAY = 20250101;
-    uint32 internal constant ISSUED_UNITS = 10_000;
+    uint32 internal constant TOTAL_UNITS = 10_000;
     uint64 internal constant ENTRY_PRICE = 100e6;
 
     IntexAuctionTargetRouter internal router;
@@ -445,7 +445,7 @@ contract AuctionGasBudgetTest is CrossChainTest {
         auction.startAuctionClearing(EMISSION_DAY);
 
         uint256 spent = _deliver(
-            BridgeMsgCodec.encodeIntexAuctionResult(EMISSION_DAY, AuctionResultLib.day(ISSUED_UNITS, ENTRY_PRICE, 0))
+            BridgeMsgCodec.encodeIntexAuctionResult(EMISSION_DAY, AuctionResultLib.day(TOTAL_UNITS, ENTRY_PRICE, 0))
         );
 
         emit log_named_uint("auction_result", spent);

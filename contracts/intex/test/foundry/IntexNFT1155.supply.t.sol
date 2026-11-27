@@ -70,7 +70,7 @@ contract IntexNFT1155SupplyTest is Test {
         assertEq(nft.getIntexSeries(SERIES_ID).issuedAt, params.issuedAt);
     }
 
-    function test_Issue_BeyondIssuedUnits_Succeeds() public {
+    function test_Issue_BeyondTotalUnits_Succeeds() public {
         uint32 totalUnits = 100;
         _openSeries(totalUnits);
 
@@ -145,7 +145,7 @@ contract IntexNFT1155SupplyTest is Test {
 
     // --- Live supply ---
 
-    function test_CrosschainMint_BeyondIssuedUnits_Succeeds() public {
+    function test_CrosschainMint_BeyondTotalUnits_Succeeds() public {
         uint32 totalUnits = 10;
         _openSeries(totalUnits);
 

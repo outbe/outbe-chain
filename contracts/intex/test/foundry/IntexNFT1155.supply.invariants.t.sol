@@ -46,11 +46,11 @@ contract IntexNFT1155SupplyInvariantTest is StdInvariant, Test {
 
     uint32 internal constant SERIES_ID_DAY = 20250101;
     bytes14 internal constant SERIES_ID = "20250101-USD-U";
-    uint32 internal constant ISSUED_UNITS = 10_000;
+    uint32 internal constant TOTAL_UNITS = 10_000;
 
     function setUp() public {
         intex = DeployProxy.intexNFT1155(admin, admin);
-        intex.openSeries(OpenSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));
+        intex.openSeries(OpenSeriesLib.params(SERIES_ID_DAY, TOTAL_UNITS, 0));
 
         bidders.push(address(0xB1));
         bidders.push(address(0xB2));
@@ -69,10 +69,10 @@ contract IntexNFT1155SupplyInvariantTest is StdInvariant, Test {
     }
 
     /// @dev `totalUnits` never moves, and parity (sum balanceOf == totalSupply) holds.
-    function invariant_issuedUnitsAndParity() public view {
+    function invariant_totalUnitsAndParity() public view {
         uint256 intexId = uint256(keccak256(abi.encodePacked(SERIES_ID)));
         IIntexNFT1155.SeriesData memory d = intex.getIntexSeries(SERIES_ID);
-        assertEq(d.totalUnits, ISSUED_UNITS, "totalUnits is immutable");
+        assertEq(d.totalUnits, TOTAL_UNITS, "totalUnits is immutable");
         uint256 sum;
         for (uint256 i = 0; i < bidders.length; i++) {
             sum += intex.balanceOf(bidders[i], intexId);
