@@ -117,9 +117,9 @@ fn call_state(
     s: &StorageHandle<'_>,
     intex_id: U256,
 ) -> Result<IIntexFactory::CallState, alloy_primitives::Bytes> {
-    let call = IIntexFactory::callStateCall { intexId: intex_id };
+    let call = IIntexFactory::getCallStateCall { intexId: intex_id };
     match crate::precompile::dispatch(s.clone(), &call.abi_encode(), owner(), U256::ZERO) {
-        Ok(out) => Ok(IIntexFactory::callStateCall::abi_decode_returns(&out).unwrap()),
+        Ok(out) => Ok(IIntexFactory::getCallStateCall::abi_decode_returns(&out).unwrap()),
         Err(PrecompileError::RevertBytes(reason)) => Err(reason),
         Err(other) => panic!("unexpected error: {other:?}"),
     }

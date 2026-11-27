@@ -1,7 +1,14 @@
 [
   {
     "type": "function",
-    "name": "callState",
+    "name": "flush",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "getCallState",
     "inputs": [
       {
         "name": "intexId",
@@ -59,13 +66,6 @@
       }
     ],
     "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "flush",
-    "inputs": [],
-    "outputs": [],
-    "stateMutability": "nonpayable"
   },
   {
     "type": "function",

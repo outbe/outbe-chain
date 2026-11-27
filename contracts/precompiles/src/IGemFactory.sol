@@ -112,7 +112,7 @@ interface IGemFactory {
 
     /// @notice Read the call progress of `gemId`. Reverts `GemNotFound`, or
     ///         `GemNotIssued` once it is Called, Settled or Forfeited.
-    function callState(uint256 gemId) external view returns (CallState memory);
+    function getCallState(uint256 gemId) external view returns (CallState memory);
 
     /// @notice A merchant's Intex in the Gem Factory: the pool Merchant gems are drawn from.
     struct GemFactoryPositionData {

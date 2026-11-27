@@ -105,7 +105,7 @@ interface ICredisFactory {
 
     /// @notice Read the call progress of `credisId`. Reverts `CredisNotFound`, or
     ///         `CredisNotIssued` once it is Called, Settled or Forfeited.
-    function callState(uint256 credisId) external view returns (CallState memory);
+    function getCallState(uint256 credisId) external view returns (CallState memory);
     /// The owner gives up an Issued or Called Credis before its settlement deadline: its remaining
     /// Gratis burns, the amount is forfeited and the Credis is deleted.
     function forfeitCredis(uint256 credisId)
