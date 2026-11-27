@@ -271,6 +271,7 @@ fn build_active_payload_case(
         .build();
     chain_spec.chain = NO_ATTESTATION_DEV_CHAIN_ID.into();
     chain_spec.genesis.config.chain_id = NO_ATTESTATION_DEV_CHAIN_ID;
+    chain_spec.genesis.timestamp = ACTIVE_PAYLOAD_BLOCK_TIMESTAMP - 1;
     let policy = no_attestation_dev_policy_v1(chain_spec.chain().id(), chain_spec.genesis_hash())
         .expect("test NoAttestationDev policy is canonical");
     chain_spec.genesis.config.extra_fields.insert(
