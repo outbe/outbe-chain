@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
-import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import {EIP712Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/cryptography/EIP712Upgradeable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
@@ -15,21 +15,25 @@ import {Iso4217} from "../shared/libs/Iso4217.sol";
 /// @title IntexAuction
 /// @author Outbe
 /// @notice Commit-reveal auction keyed by `emissionDay` (uint32, yyyymmdd).
-/// @dev UUPS upgradeable: deployed behind an ERC1967 proxy, configured via `initialize`.
+/// @dev UUPS upgradeable behind an ERC1967 proxy. The router, the escrow and the collection are
+///      implementation immutables, fixed at deploy.
 ///      The Outbe side computes the schedule and passes it into `startAuction`.
 ///      Reveal signatures are EIP-712 typed data under the `IntexAuction` v1 domain,
 ///      binding both `chainId` and `verifyingContract` (the proxy) and so preventing
 ///      cross-chain and cross-instance replay.
 contract IntexAuction is
-    AccessControlUpgradeable,
+    OwnableUpgradeable,
     ReentrancyGuardTransient,
     EIP712Upgradeable,
     UUPSUpgradeable,
     IIntexAuction
 {
-    // Roles
-    /// @notice Role identifier for bridge operations (stage ops driven by the relayer).
-    bytes32 public constant RELAYER_ROLE = keccak256("RELAYER_ROLE");
+    /// @dev Drives the stages of each day: IntexAuctionTargetRouter.
+    address private immutable INTEX_AUCTION_TARGET_ROUTER;
+    /// @dev Holds the locks and bonds of the bidders: EscrowAdapter.
+    IEscrowAdapter private immutable ESCROW_ADAPTER;
+    /// @dev The collection winners' units are issued on: IntexNFT1155.
+    IIntexNFT1155 private immutable INTEX_NFT1155;
 
     /// @notice Lock on the commit bond of a bidder who never revealed, anchored at `revealEnd`.
     ///         The bond stays locked until `revealEnd + UNREVEALED_BOND_LOCK_PERIOD` and is then
@@ -48,8 +52,6 @@ contract IntexAuction is
 
     /// @custom:storage-location erc7201:outbe.intex.IntexAuction
     struct IntexAuctionStorage {
-        /// @dev Escrow contract for bid processing.
-        IEscrowAdapter escrow;
         /// @dev Auction parameters and state, indexed by series id.
         mapping(uint32 emissionDay => IIntexAuction.AuctionData) auctions;
         /// @dev Live bid counters tracked while the auction runs.
@@ -64,8 +66,6 @@ contract IntexAuction is
         ///      `Completed`-stage signal, so a no-sale clearing (issuedUnits == 0,
         ///      clearingRate may be 0) also reads as Completed, not just a positive-rate sale.
         mapping(uint32 emissionDay => bool) cleared;
-        /// @dev Intex collection winners' units are issued on.
-        IIntexNFT1155 intexContract;
         /// @dev Set by the first clearing start of the day.
         mapping(uint32 emissionDay => bool) clearingStarted;
     }
@@ -80,30 +80,44 @@ contract IntexAuction is
     }
 
     /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor() {
+    constructor(address intexAuctionTargetRouter_, address escrowAdapter_, address intexNFT1155_) {
+        if (intexAuctionTargetRouter_ == address(0)) revert ZeroAddress("intexAuctionTargetRouter");
+        if (escrowAdapter_ == address(0)) revert ZeroAddress("escrowAdapter");
+        if (intexNFT1155_ == address(0)) revert ZeroAddress("intexNFT1155");
+        INTEX_AUCTION_TARGET_ROUTER = intexAuctionTargetRouter_;
+        ESCROW_ADAPTER = IEscrowAdapter(escrowAdapter_);
+        INTEX_NFT1155 = IIntexNFT1155(intexNFT1155_);
         _disableInitializers();
     }
 
-    /// @notice Initializes the proxy with its role holders and the EIP-712 domain.
-    /// @param defaultAdmin Receiver of `DEFAULT_ADMIN_ROLE`.
-    function initialize(address defaultAdmin) external initializer {
-        if (defaultAdmin == address(0)) revert ZeroAddress("defaultAdmin");
+    /// @notice Initializes the proxy with its owner and the EIP-712 domain.
+    /// @param owner_ The owner, who upgrades the contract.
+    function initialize(address owner_) external initializer {
+        if (owner_ == address(0)) revert ZeroAddress("owner");
 
-        __AccessControl_init();
+        __Ownable_init(owner_);
         __EIP712_init("IntexAuction", "1");
-
-        _grantRole(DEFAULT_ADMIN_ROLE, defaultAdmin);
     }
 
-    /// @dev Upgrades are gated by the admin role.
+    /// @dev The owner gates upgrades.
     /// @param newImplementation Address of the implementation the proxy switches to.
-    function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
+    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
+
+    modifier onlyTargetRouter() {
+        if (msg.sender != INTEX_AUCTION_TARGET_ROUTER) revert UnauthorizedCaller(msg.sender);
+        _;
+    }
+
+    /// @inheritdoc IIntexAuction
+    function intexAuctionTargetRouter() external view returns (address) {
+        return INTEX_AUCTION_TARGET_ROUTER;
+    }
 
     // --- Storage getters ---
     /// @notice Escrow contract for bid processing.
     /// @return The wired escrow adapter.
-    function escrow() external view returns (IEscrowAdapter) {
-        return _s().escrow;
+    function escrowAdapter() external view returns (IEscrowAdapter) {
+        return ESCROW_ADAPTER;
     }
 
     /// @notice Live bid counters tracked while the auction runs.
@@ -148,38 +162,8 @@ contract IntexAuction is
 
     /// @notice Intex collection winners' units are issued on.
     /// @return The wired collection.
-    function intexContract() external view returns (IIntexNFT1155) {
-        return _s().intexContract;
-    }
-
-    /// @inheritdoc IIntexAuction
-    function setEscrow(address _escrow) external override onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (_escrow == address(0)) revert ZeroAddress("escrow");
-
-        IntexAuctionStorage storage $ = _s();
-        IEscrowAdapter current = $.escrow;
-        // A day's claims go to the escrow that took its locks, so that escrow stays until nothing is left.
-        if (address(current) != address(0) && _escrow != address(current) && current.hasOutstandingLocks()) {
-            revert EscrowHasLiveLocks();
-        }
-        $.escrow = IEscrowAdapter(_escrow);
-        emit EscrowSet(_escrow);
-    }
-
-    /// @inheritdoc IIntexAuction
-    function setIntexContract(address _intexContract) external override onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (_intexContract == address(0)) revert ZeroAddress("intexContract");
-
-        IntexAuctionStorage storage $ = _s();
-        IIntexNFT1155 current = $.intexContract;
-        // Open WinNotes issue on the collection their series live on.
-        IEscrowAdapter venue = $.escrow;
-        bool changing = address(current) != address(0) && _intexContract != address(current);
-        if (changing && address(venue) != address(0) && venue.hasOutstandingLocks()) {
-            revert EscrowHasLiveLocks();
-        }
-        $.intexContract = IIntexNFT1155(_intexContract);
-        emit IntexContractSet(_intexContract);
+    function intexNFT1155() external view returns (IIntexNFT1155) {
+        return INTEX_NFT1155;
     }
 
     // --- Lifecycle ---
@@ -188,7 +172,7 @@ contract IntexAuction is
         uint32 emissionDay,
         IIntexAuction.AuctionSchedule calldata schedule,
         IIntexAuction.AuctionParams calldata params
-    ) external override onlyRole(RELAYER_ROLE) {
+    ) external override onlyTargetRouter {
         IntexAuctionStorage storage $ = _s();
         IIntexAuction.AuctionData storage a = $.auctions[emissionDay];
         // `commitEnd == 0` is the canonical existence sentinel for an auction entry.
@@ -225,7 +209,7 @@ contract IntexAuction is
     }
 
     /// @inheritdoc IIntexAuction
-    function cancelAuction(uint32 emissionDay, uint8 reason) external override onlyRole(RELAYER_ROLE) {
+    function cancelAuction(uint32 emissionDay, uint8 reason) external override onlyTargetRouter {
         IIntexAuction.AuctionData storage a = _s().auctions[emissionDay];
         if (a.dayState == IIntexAuction.DayState.Canceled) revert AuctionCanceled();
         if (a.schedule.commitEnd != 0) {
@@ -242,7 +226,7 @@ contract IntexAuction is
     }
 
     /// @inheritdoc IIntexAuction
-    function startAuctionClearing(uint32 emissionDay) external override onlyRole(RELAYER_ROLE) {
+    function startAuctionClearing(uint32 emissionDay) external override onlyTargetRouter {
         IIntexAuction.AuctionData storage a = _s().auctions[emissionDay];
         if (a.schedule.commitEnd == 0) revert AuctionNotFound();
         IIntexAuction.AuctionStage currentStage = _getAuctionStage(emissionDay);
@@ -272,7 +256,7 @@ contract IntexAuction is
         uint32 quantity,
         uint64 clearingRate,
         uint64 totalDemand
-    ) external override onlyRole(RELAYER_ROLE) nonReentrant {
+    ) external override onlyTargetRouter nonReentrant {
         IntexAuctionStorage storage $ = _s();
         IIntexAuction.AuctionData storage a = $.auctions[emissionDay];
         if (a.schedule.commitEnd == 0) revert AuctionNotFound();
@@ -334,7 +318,7 @@ contract IntexAuction is
         // lock revert reverts the whole tx. Requires prior payment-token approval on the escrow.
         uint128 bond = a.params.bidBondMinor;
         if (bond > 0) {
-            $.escrow.lockIntexAuctionBidBond(emissionDay, msg.sender, bond);
+            ESCROW_ADAPTER.lockIntexAuctionBidBond(emissionDay, msg.sender, bond);
         }
     }
 
@@ -356,7 +340,7 @@ contract IntexAuction is
 
         // Interactions: an un-committed bid owes no bond. Return it immediately.
         if (a.params.bidBondMinor > 0) {
-            $.escrow.unlockIntexAuctionBidBond(emissionDay, msg.sender, BOND_UNLOCK_REVEAL_OR_CANCEL);
+            ESCROW_ADAPTER.unlockIntexAuctionBidBond(emissionDay, msg.sender, BOND_UNLOCK_REVEAL_OR_CANCEL);
         }
     }
 
@@ -421,9 +405,9 @@ contract IntexAuction is
         // Interactions
         // Return the commit bond first so it can fund the bid escrow in the same transaction.
         if (a.params.bidBondMinor > 0) {
-            $.escrow.unlockIntexAuctionBidBond(emissionDay, msg.sender, BOND_UNLOCK_REVEAL_OR_CANCEL);
+            ESCROW_ADAPTER.unlockIntexAuctionBidBond(emissionDay, msg.sender, BOND_UNLOCK_REVEAL_OR_CANCEL);
         }
-        $.escrow.lockIntexAuctionAsset(emissionDay, msg.sender, a.params.promisLoadMinor, bidRate, quantity);
+        ESCROW_ADAPTER.lockIntexAuctionAsset(emissionDay, msg.sender, a.params.promisLoadMinor, bidRate, quantity);
     }
 
     /// @inheritdoc IIntexAuction
@@ -431,7 +415,7 @@ contract IntexAuction is
         IntexAuctionStorage storage $ = _s();
         uint256 position = $.revealedBidIndex[emissionDay][bidder];
         if (position == 0) revert IntexAuctionBidNotFound();
-        (bool closed, bool finalized) = $.escrow.returnIntexAuctionAsset(emissionDay, bidder);
+        (bool closed, bool finalized) = ESCROW_ADAPTER.returnIntexAuctionAsset(emissionDay, bidder);
         if (closed && finalized) {
             delete $.revealedBids[emissionDay][position - 1];
             delete $.revealedBidIndex[emissionDay][bidder];
@@ -446,7 +430,7 @@ contract IntexAuction is
         IIntexAuction.SubmittedIntexAuctionBidData storage bid = $.revealedBids[emissionDay][position - 1];
         uint16 issuanceCurrency = bid.issuanceCurrency;
         uint16 referenceCurrency = bid.referenceCurrency;
-        IIntexNFT1155 intex = $.intexContract;
+        IIntexNFT1155 intex = INTEX_NFT1155;
         bytes14 seriesId = intex.seriesIdOf(emissionDay, issuanceCurrency, referenceCurrency);
         if (seriesId == bytes14(0)) revert SeriesNotCreated(emissionDay, issuanceCurrency, referenceCurrency);
 
@@ -454,7 +438,7 @@ contract IntexAuction is
         delete $.revealedBids[emissionDay][position - 1];
         delete $.revealedBidIndex[emissionDay][bidder];
 
-        uint16 units = $.escrow.redeemWinNote(emissionDay, bidder);
+        uint16 units = ESCROW_ADAPTER.redeemWinNote(emissionDay, bidder);
         // A forfeited series took the units with it.
         if (intex.getIntexSeries(seriesId).state == IIntexNFT1155.IntexState.Forfeited) {
             emit IntexAuctionWinNoteExpired(emissionDay, bidder, seriesId);
@@ -479,10 +463,10 @@ contract IntexAuction is
                 revert IntexAuctionBidBondNotYetUnlockable(unlockableAt, uint32(block.timestamp));
             }
             // Pays the stored bidder. Reverts IntexAuctionBidBondNotFound in the escrow when no bond is live.
-            $.escrow.unlockIntexAuctionBidBond(emissionDay, bidder, BOND_UNLOCK_NO_REVEAL);
+            ESCROW_ADAPTER.unlockIntexAuctionBidBond(emissionDay, bidder, BOND_UNLOCK_NO_REVEAL);
             return;
         }
-        $.escrow.unlockIntexAuctionBidBond(emissionDay, bidder, BOND_UNLOCK_REVEAL_OR_CANCEL);
+        ESCROW_ADAPTER.unlockIntexAuctionBidBond(emissionDay, bidder, BOND_UNLOCK_REVEAL_OR_CANCEL);
     }
 
     /// @dev Reverts unless the day carries a price for `isoCode`.
@@ -613,13 +597,5 @@ contract IntexAuction is
             return IIntexAuction.AuctionStage.Failed;
         }
         return IIntexAuction.AuctionStage.AwaitingResult;
-    }
-
-    /// @notice Check whether the contract supports a given interface.
-    /// @dev Delegates to `AccessControl.supportsInterface` (ERC-165).
-    /// @param id The interface ID to check.
-    /// @return True if the interface is supported, false otherwise.
-    function supportsInterface(bytes4 id) public view override(AccessControlUpgradeable) returns (bool) {
-        return super.supportsInterface(id);
     }
 }
