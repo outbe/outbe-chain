@@ -40,7 +40,7 @@ pub(super) fn ensure_dir_nofollow(
             bail!("invalid relative directory path: {}", relative.display());
         };
         current_path.push(name);
-        match mkdirat(&current_fd, name, Mode::from_raw_mode(mode)) {
+        match mkdirat(&current_fd, name, Mode::from_raw_mode(mode as _)) {
             Ok(()) | Err(Errno::EXIST) => {}
             Err(error) => {
                 return Err(io::Error::from(error)).wrap_err_with(|| {
@@ -144,7 +144,7 @@ fn apply_fd_attrs(
     mode: u32,
     ownership: Option<(u32, u32)>,
 ) -> Result<()> {
-    fchmod(fd, Mode::from_raw_mode(mode))
+    fchmod(fd, Mode::from_raw_mode(mode as _))
         .map_err(io::Error::from)
         .wrap_err_with(|| format!("failed to chmod {}", path.display()))?;
     if let Some((uid, gid)) = ownership {
