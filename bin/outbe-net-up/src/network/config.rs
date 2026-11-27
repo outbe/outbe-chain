@@ -985,15 +985,15 @@ fn default_vm_bridge() -> String {
 }
 
 const fn default_vm_vcpu() -> u32 {
-    3
+    8
 }
 
 const fn default_vm_memory_gib() -> u32 {
-    5
+    16
 }
 
 const fn default_vm_disk_gib() -> u32 {
-    40
+    100
 }
 
 #[cfg(test)]
@@ -1401,9 +1401,9 @@ genesis:
 
         let f0 = config.resolve_founder_vm(&config.founders[0]).unwrap();
         assert_eq!(f0.vmm_host.host, "192.0.2.50");
-        assert_eq!(f0.vcpu, 3);
-        assert_eq!(f0.memory_gib, 5);
-        assert_eq!(f0.disk_gib, 40);
+        assert_eq!(f0.vcpu, 8);
+        assert_eq!(f0.memory_gib, 16);
+        assert_eq!(f0.disk_gib, 100);
         assert_eq!(f0.flavor, VmFlavor::Dev);
         assert_eq!(f0.vm_ip, Ipv4Addr::new(10, 77, 0, 10));
         assert_eq!(f0.authorized_keys, Some(PathBuf::from("./dev.pub")));
@@ -1411,7 +1411,7 @@ genesis:
         let f1 = config.resolve_founder_vm(&config.founders[1]).unwrap();
         assert_eq!(f1.vcpu, 4);
         assert_eq!(f1.memory_gib, 8);
-        assert_eq!(f1.disk_gib, 40);
+        assert_eq!(f1.disk_gib, 100);
 
         let f2 = config.resolve_founder_vm(&config.founders[2]).unwrap();
         assert_eq!(f2.vmm_host.host, "192.0.2.51");

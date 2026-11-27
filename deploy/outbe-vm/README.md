@@ -102,7 +102,7 @@ Guests do not depend on DHCP or `dnsmasq` reservations for their service IPs. Pi
 
 - **Hyperlane on VM roles:** `outbe-hyperlane-validator.service` is not started by `outbe-vm-agent` on VM roles yet.
 - **Forced stop during pending DKG:** force-stopping or power-cutting a validator can lose its pending DKG snapshot. Always use graceful `outbe-up vm stop`, `outbe-up vm update`, or `outbe-net-up network update` (never `--force`).
-- **Guest memory:** allocate at least `8` GiB of RAM per validator VM (`memory_gib: 8`) to avoid guest OOM kills.
+- **Guest resources:** default VM sizing is `8` vCPU, `16` GiB RAM, and `100` GiB disk (`vcpu: 8`, `memory_gib: 16`, `disk_gib: 100`); keep at least `16` GiB of RAM per validator VM to avoid guest OOM kills.
 - **TEE resident key:** in devnet/testnet VMs without sealed storage, the resident TEE key lives in memory and re-registers on reboot. DKG shares persist under `/opt/outbe-chain`.
 - **`/dstack/persistent` mount flags:** `/opt/outbe-chain` is bind-mounted `noexec,nosuid,nodev`, while `/dstack/persistent` remains mounted `exec`.
 - **`prod` flavor validation:** the `prod` flavor image builds reproducibly, but has not booted on hardware with production attestation policy or encrypted storage.

@@ -186,10 +186,13 @@ enum NetworkCommand {
         /// Expected 64-hex SHA-256 of the guest OS image `.tar.zst` archive.
         #[arg(long)]
         image_sha256: Option<String>,
+        /// Number of vCPUs [default: network vm.vcpu, or 8].
         #[arg(long)]
         vcpu: Option<u32>,
+        /// Memory in GiB [default: network vm.memory_gib, or 16].
         #[arg(long)]
         memory_gib: Option<u32>,
+        /// Virtual disk size in GiB [default: network vm.disk_gib, or 100].
         #[arg(long)]
         disk_gib: Option<u32>,
         /// Pass `--no-tee` to `outbe-up vm create` (for non-TEE development hosts only).
@@ -258,10 +261,13 @@ enum NetworkCommand {
         /// Expected 64-hex SHA-256 of the guest OS image `.tar.zst` archive.
         #[arg(long)]
         image_sha256: Option<String>,
+        /// Number of vCPUs [default: network vm.vcpu, or 8].
         #[arg(long)]
         vcpu: Option<u32>,
+        /// Memory in GiB [default: network vm.memory_gib, or 16].
         #[arg(long)]
         memory_gib: Option<u32>,
+        /// Virtual disk size in GiB [default: network vm.disk_gib, or 100].
         #[arg(long)]
         disk_gib: Option<u32>,
         /// Pass `--no-tee` to `outbe-up vm create` (for non-TEE development hosts only).

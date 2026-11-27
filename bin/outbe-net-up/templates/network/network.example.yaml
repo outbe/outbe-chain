@@ -114,8 +114,8 @@ genesis:
 #   prefix: 24
 #   gateway: 10.77.0.1
 #   dns: [1.1.1.1, 8.8.8.8]
-#   vcpu: 3
-#   memory_gib: 5
-#   disk_gib: 40
+#   vcpu: 8
+#   memory_gib: 16
+#   disk_gib: 100
 #   flavor: dev
 #   authorized_keys: ./dev-authorized-keys

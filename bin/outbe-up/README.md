@@ -94,7 +94,7 @@ outbe-up disk prepare \
   --source ./network-artifacts/vm/validator-0 \
   --bundle ./network-artifacts/joining/outbe-validator-operator-bundle.tar.zst \
   --staging-name my-validator-0 \
-  --size-gib 40
+  --size-gib 100
 ```
 
 Prepare a `joining-validator` disk from an operator bundle and config:
@@ -105,7 +105,7 @@ outbe-up disk prepare \
   --bundle ./outbe-validator-operator-bundle.tar.zst \
   --config ./operator-config.yaml \
   --staging-name my-joiner-0 \
-  --size-gib 40
+  --size-gib 100
 ```
 
 Pass `--keys-from <dir>` to reuse an existing joining-validator key directory.
@@ -118,7 +118,7 @@ outbe-up disk prepare \
   --bundle ./outbe-validator-operator-bundle.tar.zst \
   --config ./full-node-config.yaml \
   --staging-name my-full-node-0 \
-  --size-gib 40
+  --size-gib 100
 ```
 
 List or clean staged disks:
@@ -141,12 +141,12 @@ outbe-up vm create \
   --consume-staging \
   --bridge obr0 \
   --ip 10.77.0.11 \
-  --vcpu 3 \
-  --memory-gib 8 \
-  --disk-gib 40
+  --vcpu 8 \
+  --memory-gib 16 \
+  --disk-gib 100
 ```
 
-Pass `--disk <path>` instead of `--disk-staging` when using a standalone raw disk file. Allocate at least `8` GiB of memory per validator VM to avoid guest OOM kills.
+Pass `--disk <path>` instead of `--disk-staging` when using a standalone raw disk file. Defaults are `8` vCPU, `16` GiB of memory, and `100` GiB of disk; allocate at least `16` GiB of memory per validator VM to avoid guest OOM kills.
 
 Start, inspect, read serial logs, and stop one VM:
 

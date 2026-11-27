@@ -50,9 +50,9 @@ vm:
   prefix: 24
   gateway: 10.77.0.1
   dns: [1.1.1.1, 8.8.8.8]
-  vcpu: 3
-  memory_gib: 8
-  disk_gib: 40
+  vcpu: 8
+  memory_gib: 16
+  disk_gib: 100
   flavor: dev
 founders:
   - name: validator-0
@@ -109,7 +109,7 @@ Configuration rules:
   - `vm.vm_ip` (`OUTBE_VM_IP`): static private IPv4 configured on the guest VM's `eth0` bridge interface (VM mode only). `outbe-net-up` and `outbe-up` (`vm status service_ip`, `host check --ip`, readiness, join driver) reach the VM at `<vm_ip>:<rpc_port>`.
   - `rpc_bind_ip` (`OUTBE_RPC_BIND_IP`, optional): HTTP JSON-RPC listen address (`--http.addr`). Defaults to `vm.vm_ip` in VM mode and `127.0.0.1` on bare hosts. In VM mode, `outbe-net-up` (`network build`, `deploy`, `start`, `update`, `add-validator`, `add-full-node`) refuses `rpc_bind_ip != vm.vm_ip` because host-side RPC readiness checks require reaching `OUTBE_VM_IP:OUTBE_RPC_PORT` (use standalone `outbe-up` if you need loopback-only RPC without `outbe-net-up` orchestration).
   - `advertise_ip` (`OUTBE_EXTERNAL_IP`): external/public IPv4 advertised for P2P, Radicle, and on-chain consensus registration.
-- Set `vm.memory_gib` to at least `8` on active validator VMs to avoid OOM kills.
+- VM defaults are `8` vCPU, `16` GiB memory, and `100` GiB disk (`vcpu: 8`, `memory_gib: 16`, `disk_gib: 100`); keep `vm.memory_gib` at `16` or higher on active validator VMs to avoid OOM kills.
 - Optionally set per-founder `rpc_port` (default `8545`, written to `OUTBE_RPC_PORT`) or pass `--rpc-port` to `add-validator` / `add-full-node`; RPC ports must be in `1..=65535` and distinct from all other configurable ports and fixed service ports (`8551`, `8876`, `9000`, `9002`, `9003`, `9101`).
 - Set `topology.use_local_defaults: false` when founders advertise public IPs across hosts.
 - For non-devnet VM networks (such as `testnet`), configure `feeder.rpc_endpoints` in `network.yaml` for every external chain ID required by the active feeder profile (`1`, `97`, and `11155111` for `testnet/pairs.toml`), plus `feeder.api_keys.<provider>` if a profile uses an API-key provider. `network build` embeds these endpoints into every validator `feeder-public.toml` (both founders and `joining/operator-config.example.yaml` for `add-validator`) and refuses to build if any required chain ID is missing or any `REPLACE_WITH_` placeholder remains. Devnet (`network: devnet`) uses the self-contained `mock` provider and requires no external feeder RPCs.
@@ -171,7 +171,7 @@ outbe-net-up network add-validator \
   --vm-ip 10.77.0.13 \
   --advertise-ip 203.0.113.20 \
   --port-offset 2 \
-  --memory-gib 8 \
+  --memory-gib 16 \
   --ssh-key ~/.ssh/id_ed25519 \
   --timeout 900
 ```
@@ -184,7 +184,7 @@ outbe-net-up network add-full-node \
   --name full-node-0 \
   --host 198.51.100.10 \
   --vm-ip 10.77.0.13 \
-  --memory-gib 8 \
+  --memory-gib 16 \
   --ssh-key ~/.ssh/id_ed25519 \
   --timeout 600
 ```
