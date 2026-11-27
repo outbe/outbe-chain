@@ -3,12 +3,10 @@
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
 use outbe_system_common::metadosis_bindings::MetadosisStorageExt;
-use outbe_system_common::time::WorldwideDay;
 
 #[derive(Clone, Copy)]
 enum DayLease {
     InitGenesis,
-    CycleAllocation(WorldwideDay),
     MetadosisReady,
     AdvanceDue,
 }
@@ -16,10 +14,6 @@ enum DayLease {
 fn require_day_lease(storage: &StorageHandle<'_>, lease: DayLease) -> Result<()> {
     match lease {
         DayLease::InitGenesis => storage.require_metadosis_init_genesis(),
-        DayLease::CycleAllocation(day) => storage.require_metadosis_cycle_allocation(
-            day.to_timestamp_utc()
-                .map_err(crate::errors::date_step_error)?,
-        ),
         DayLease::MetadosisReady => storage.require_metadosis_process_ready(),
         DayLease::AdvanceDue => storage.require_metadosis_advance_due(),
     }
@@ -47,13 +41,12 @@ fn lease_identity_mismatch(error: &PrecompileError) -> bool {
         || message == "scoped mutation frame identity mismatch"
 }
 
-/// Init-genesis, cycle allocation, Metadosis-ready and advance-due open and seal worldwide days.
-pub fn require_worldwide_day_lease(storage: &StorageHandle<'_>, day: WorldwideDay) -> Result<()> {
+/// Init-genesis, Metadosis-ready and advance-due open and seal worldwide days.
+pub fn require_worldwide_day_lease(storage: &StorageHandle<'_>) -> Result<()> {
     accept_day_lease(
         storage,
         &[
             DayLease::InitGenesis,
-            DayLease::CycleAllocation(day),
             DayLease::MetadosisReady,
             DayLease::AdvanceDue,
         ],

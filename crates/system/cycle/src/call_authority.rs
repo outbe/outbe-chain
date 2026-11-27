@@ -3,10 +3,9 @@
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::{MutationEntitlements, MutationPurposeTag};
 use outbe_system_common::metadosis_bindings::{
-    metadosis_advance_due_binding, metadosis_cycle_allocation_binding,
-    metadosis_init_genesis_binding, metadosis_process_ready_binding,
+    metadosis_advance_due_binding, metadosis_init_genesis_binding, metadosis_process_ready_binding,
 };
-use outbe_system_common::time::{date_key_to_utc_timestamp, timestamp_to_date_key};
+use outbe_system_common::time::timestamp_to_date_key;
 
 use crate::handler;
 
@@ -28,17 +27,8 @@ pub fn cycle_tick_entitlements(
     let Some(active_utc_day) = cycle_active_utc_day else {
         return entitlements;
     };
-    let block_utc_day = timestamp_to_date_key(timestamp);
-    let Ok(day_to_allocate) = handler::day_to_allocate(active_utc_day, block_utc_day) else {
+    if handler::day_to_allocate(active_utc_day, timestamp_to_date_key(timestamp)).is_err() {
         return entitlements;
-    };
-    if let Some(day) = day_to_allocate {
-        if let Ok(day_ts) = date_key_to_utc_timestamp(day) {
-            entitlements = entitlements.union(MutationEntitlements::exact(
-                Purpose::CycleLifecycle,
-                metadosis_cycle_allocation_binding(chain_id, block_number, day_ts),
-            ));
-        }
     }
     entitlements
         .union(MutationEntitlements::exact(
