@@ -349,17 +349,26 @@ fn process_emission_day_steps(ctx: &BlockRuntimeContext) -> Result<Readiness> {
         ctx.block.timestamp,
     )?;
     let day = day_to_start(active_utc_day, block_utc_day)?;
-    let due_metadosis = match previous_date_key(active_utc_day) {
-        Ok(latest_started) => metadosis_due(ctx, latest_started)?,
-        Err(_) => None,
+    let latest_started = previous_date_key(active_utc_day).ok();
+    let (due_metadosis, stalled_metadosis) = match latest_started {
+        Some(latest) => (
+            metadosis_due(ctx, latest)?,
+            stalled_metadosis_day(ctx, latest)?,
+        ),
+        None => (None, None),
     };
     let start = match day {
         Some(day) if outbe_rewards::api::is_voting_complete(ctx, day)? => Some(day),
-        Some(_) if due_metadosis.is_none() => return Ok(Readiness::NotReady),
+        Some(_) if due_metadosis.is_none() && stalled_metadosis.is_none() => {
+            return Ok(Readiness::NotReady)
+        }
         _ => None,
     };
 
     run_advance_worldwide_days_step(ctx, block_utc_day)?;
+    if let Some(day) = stalled_metadosis {
+        run_offering_end_step(ctx, day)?;
+    }
 
     let started = match start {
         Some(day) => run_start_day_step(ctx, day)?,
@@ -385,6 +394,22 @@ fn process_emission_day_steps(ctx: &BlockRuntimeContext) -> Result<Readiness> {
         "process_emission_day completed"
     );
     Ok(Readiness::Done)
+}
+
+/// The oldest started day before `latest` whose step at 12:00 reverted and is still due, within
+/// the catch-up window. Its next runs try it again while the later days go on.
+fn stalled_metadosis_day(ctx: &BlockRuntimeContext, latest: u32) -> Result<Option<u32>> {
+    let start_date = timestamp_to_date_key(ctx.block.genesis_timestamp);
+    let latest_ts = date_key_to_utc_timestamp(latest).map_err(calendar_step_error)?;
+    let window = u64::from(MAX_CATCH_UP_DAYS - 1) * outbe_system_common::time::SECONDS_PER_DAY;
+    let mut day = start_date.max(timestamp_to_date_key(latest_ts.saturating_sub(window)));
+    while day < latest {
+        if metadosis_due(ctx, day)?.is_some() {
+            return Ok(Some(day));
+        }
+        day = next_date_key(day).map_err(calendar_step_error)?;
+    }
+    Ok(None)
 }
 
 /// Returns `day` when it started, its Metadosis is pending and its start time has come.

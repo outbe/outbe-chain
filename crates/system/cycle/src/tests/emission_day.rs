@@ -631,3 +631,44 @@ fn a_record_takes_only_a_valid_day_and_wwd_and_only_once() {
         );
     });
 }
+
+#[test]
+fn a_step_at_12_00_that_reverts_is_tried_again_after_the_next_day_starts() {
+    use outbe_emission::schema::metadosis_state::{COMPLETED, PENDING};
+    let day = 20_240_101;
+    let mut storage = started_cycle();
+    run_blocks(&mut storage, &[(2, jan(2, 0), &[(day, Some(PENDING))])]);
+    // A record whose next write overflows reverts the rates and their fallbacks.
+    let set_promis_limit = |storage: &mut HashMapStorageProvider, value: i128| {
+        storage.enter(|handle| {
+            let mut record = outbe_emission::api::get_emission_day(handle.clone(), day)
+                .unwrap()
+                .unwrap();
+            let saved = record.promis_limit;
+            record.promis_limit = value;
+            outbe_emission::api::put_emission_day(handle, &record).unwrap();
+            saved
+        })
+    };
+    let saved = set_promis_limit(&mut storage, i128::MAX);
+    run_blocks(
+        &mut storage,
+        &[
+            (3, jan(2, 12), &[(day, Some(PENDING))]),
+            (
+                4,
+                jan(3, 0),
+                &[(day, Some(PENDING)), (20_240_102, Some(PENDING))],
+            ),
+        ],
+    );
+    set_promis_limit(&mut storage, saved);
+    run_blocks(
+        &mut storage,
+        &[(
+            5,
+            jan(3, 12),
+            &[(day, Some(COMPLETED)), (20_240_102, Some(COMPLETED))],
+        )],
+    );
+}
