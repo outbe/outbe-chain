@@ -33,7 +33,7 @@ fn world() -> (HashMapStorageProvider, SeriesId) {
             CreateSeriesParams {
                 series_id: id,
                 emission_day: EmissionDate::new(SERIES_DAY),
-                issued_units: 10,
+                total_units: 10,
                 promis_load_minor: LOAD,
                 entry_price_minor: U256::from(1_000_000),
                 call_price_minor: U256::from(2_280_000),
@@ -114,11 +114,11 @@ fn ledger(p: &mut HashMapStorageProvider, id: SeriesId, terminal: bool) {
     StorageHandle::enter(p, |s| {
         let units = api::unit_counts(&s, id).unwrap();
         assert_eq!(
-            (units.issued, units.settled, units.mined, units.gem_factory),
+            (units.total, units.settled, units.mined, units.gem_factory),
             (10, 2, 1, 2)
         );
         assert_eq!(
-            units.active + units.settled + units.mined + units.gem_factory + units.forfeited,
+            units.issued + units.settled + units.mined + units.gem_factory + units.forfeited,
             10
         );
         let factory = IntexContract::new(s.clone());
@@ -129,7 +129,7 @@ fn ledger(p: &mut HashMapStorageProvider, id: SeriesId, terminal: bool) {
         let pending = u32::from(factory.called_group_slot.read(&key).unwrap() != 0);
         let returned = PromisLimitContract::new(s).promis_limit().unwrap();
         if terminal {
-            assert_eq!((units.active, units.forfeited, pending), (0, 5, 0));
+            assert_eq!((units.issued, units.forfeited, pending), (0, 5, 0));
             assert_eq!(returned, U256::from(5 * LOAD));
             assert_eq!(factory.close_tree_root.read().unwrap(), U256::ZERO);
             assert!(factory.first_forfeit_day().unwrap().is_some());
@@ -154,7 +154,7 @@ fn partial_intex_expiry_returns_only_five_unpaid_units_and_never_paid_or_convert
     ledger(&mut p, id, false);
     StorageHandle::enter(&mut p, |s| {
         let units = api::unit_counts(&s, id).unwrap();
-        assert_eq!((units.active, units.forfeited), (5, 0));
+        assert_eq!((units.issued, units.forfeited), (5, 0));
     });
     let due = IntexContract::day_end(IntexContract::deadline_day(DEADLINE));
     sweep(&mut p, due).unwrap();

@@ -247,7 +247,7 @@ fn sample(emission_day: u32) -> IssuanceParams {
     IssuanceParams {
         series_id: sid(emission_day),
         emission_day: emission_day.into(),
-        issued_units: 100,
+        total_units: 100,
         promis_load_minor: PROMIS_LOAD_MINOR,
         entry_price_minor: U256::from(ENTRY_PRICE),
         call_price_minor: U256::from(EXPECTED_TRIGGER),

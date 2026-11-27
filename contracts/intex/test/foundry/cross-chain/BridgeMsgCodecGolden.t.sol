@@ -252,7 +252,7 @@ contract BridgeMsgCodecGoldenTest is Test {
         p.seriesId = "20260212-TRY-U";
         p.emissionDay = 0x55555555; // distinct from seriesId so a field swap can't pass
         p.issuedAt = 0x66778899;
-        p.issuedUnits = 0x55667788;
+        p.totalUnits = 0x55667788;
         p.promisLoadMinor = 0x0102030405060708090A0B0C0D0E0F10;
         p.entryPriceMinor = 0x0A0B0C0D0E0F1011;
         p.callNoticePeriod = 0xCAFEBABE;
@@ -269,7 +269,7 @@ contract BridgeMsgCodecGoldenTest is Test {
         assertEq(d.seriesId, bytes14("20260212-TRY-U"), "seriesId");
         assertEq(d.emissionDay, 0x55555555, "emissionDay");
         assertEq(d.issuedAt, 0x66778899, "issuedAt");
-        assertEq(d.issuedUnits, 0x55667788, "issuedUnits");
+        assertEq(d.totalUnits, 0x55667788, "totalUnits");
         assertEq(d.promisLoadMinor, 0x0102030405060708090A0B0C0D0E0F10, "promisLoadMinor");
         assertEq(d.entryPriceMinor, 0x0A0B0C0D0E0F1011, "entryPriceMinor");
         assertEq(d.callNoticePeriod, 0xCAFEBABE, "callNoticePeriod");

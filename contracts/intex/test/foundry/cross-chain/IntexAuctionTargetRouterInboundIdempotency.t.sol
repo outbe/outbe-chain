@@ -204,7 +204,7 @@ contract IntexAuctionTargetRouterInboundIdempotencyTest is CrossChainTest {
 
         _expectIgnored(BridgeMsgCodec.MSG_INTEX_AUCTION_RESULT, InboundReason.CONFLICT);
         _deliver(BridgeMsgCodec.encodeIntexAuctionResult(DAY, AuctionResultLib.day(5, 60e6, 0)));
-        assertEq(auction.getAuctionInfo(DAY).result.issuedUnits, 0, "the first RESULT stands");
+        assertEq(auction.getAuctionInfo(DAY).result.totalUnits, 0, "the first RESULT stands");
     }
 
     function test_AResultWithOtherDemandIsAConflict() public {

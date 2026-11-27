@@ -42,7 +42,7 @@ contract IntexAuctionTargetRouterIssuanceChunksTest is CrossChainTest {
         payload.seriesId = seriesId;
         payload.emissionDay = DAY;
         payload.issuedAt = uint32(block.timestamp);
-        payload.issuedUnits = 100;
+        payload.totalUnits = 100;
         payload.promisLoadMinor = 1_000;
         payload.entryPriceMinor = 100e6;
         payload.issuanceCurrency = 840;
@@ -125,7 +125,7 @@ contract IntexAuctionTargetRouterIssuanceChunksTest is CrossChainTest {
 
     function test_ASeriesWithNoSupplyIsInvalidNotALoop() public {
         BridgeMsgCodec.IntexSeriesPayload memory p = _series(USD);
-        p.issuedUnits = 0;
+        p.totalUnits = 0;
         vm.expectEmit(true, true, false, true, address(router));
         emit IIntexAuctionTargetRouter.IntexAuctionMessageIgnored(
             BridgeMsgCodec.MSG_INTEX_SERIES, DAY, InboundReason.INVALID

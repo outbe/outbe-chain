@@ -31,7 +31,7 @@ contract IntexAuctionTargetRouterIssuanceBatchTest is CrossChainTest {
         payload.seriesId = seriesId;
         payload.emissionDay = DAY;
         payload.issuedAt = uint32(block.timestamp);
-        payload.issuedUnits = 1_000;
+        payload.totalUnits = 1_000;
         payload.promisLoadMinor = 1_000;
         payload.entryPriceMinor = 100e6;
         payload.issuanceCurrency = 840;

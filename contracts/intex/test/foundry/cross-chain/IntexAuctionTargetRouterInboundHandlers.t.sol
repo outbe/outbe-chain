@@ -100,7 +100,7 @@ contract IntexAuctionTargetRouterInboundHandlersTest is CrossChainTest {
         _deliver(packet);
 
         IIntexAuction.IntexAuctionResult memory result = auction.getAuctionInfo(EMISSION_DAY).result;
-        assertEq(result.issuedUnits, ISSUED_UNITS, "issuedUnits persisted");
+        assertEq(result.totalUnits, ISSUED_UNITS, "totalUnits persisted");
         assertEq(result.clearingRate, clearingPrice, "clearingPrice persisted");
     }
 
@@ -169,7 +169,7 @@ contract IntexAuctionTargetRouterInboundHandlersTest is CrossChainTest {
             seriesId: SERIES_ID,
             emissionDay: EMISSION_DAY,
             issuedAt: uint32(block.timestamp),
-            issuedUnits: ISSUED_UNITS,
+            totalUnits: ISSUED_UNITS,
             promisLoadMinor: PROMIS_LOAD_MINOR,
             entryPriceMinor: ENTRY_PRICE,
             callNoticePeriod: 0,
@@ -197,7 +197,7 @@ contract IntexAuctionTargetRouterInboundHandlersTest is CrossChainTest {
                     seriesId: SERIES_ID,
                     emissionDay: EMISSION_DAY,
                     issuedAt: uint32(block.timestamp),
-                    issuedUnits: ISSUED_UNITS,
+                    totalUnits: ISSUED_UNITS,
                     promisLoadMinor: PROMIS_LOAD_MINOR,
                     entryPriceMinor: ENTRY_PRICE,
                     callNoticePeriod: 0,

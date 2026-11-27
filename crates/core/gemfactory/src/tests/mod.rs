@@ -299,7 +299,7 @@ fn seed_source_series(
         outbe_intex::CreateSeriesParams {
             series_id: source_series_id(),
             emission_day: EmissionDate::new(0),
-            issued_units: SENT_UNITS as u32,
+            total_units: SENT_UNITS as u32,
             promis_load_minor: promis_load,
             entry_price_minor: entry,
             call_price_minor: U256::ZERO,

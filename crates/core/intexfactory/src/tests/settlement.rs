@@ -788,8 +788,8 @@ fn the_unit_counts_view_reports_the_disjoint_classes() {
         .unwrap();
         let counts =
             outbe_intex::precompile::IIntex::intexUnitCountsCall::abi_decode_returns(&out).unwrap();
-        assert_eq!(counts.issuedUnits, 100);
-        assert_eq!(counts.activeUnits, 50);
+        assert_eq!(counts.totalUnits, 100);
+        assert_eq!(counts.issuedUnits, 50);
         assert_eq!(counts.settledUnits, 25);
         assert_eq!(counts.minedUnits, 15);
         assert_eq!(counts.gemFactoryUnits, 10);

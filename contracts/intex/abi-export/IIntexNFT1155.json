@@ -197,7 +197,7 @@
             "internalType": "uint16"
           },
           {
-            "name": "issuedUnits",
+            "name": "totalUnits",
             "type": "uint32",
             "internalType": "uint32"
           },
@@ -305,7 +305,7 @@
             "internalType": "uint16"
           },
           {
-            "name": "issuedUnits",
+            "name": "totalUnits",
             "type": "uint32",
             "internalType": "uint32"
           },
@@ -500,7 +500,7 @@
             "internalType": "uint16"
           },
           {
-            "name": "issuedUnits",
+            "name": "totalUnits",
             "type": "uint32",
             "internalType": "uint32"
           },
@@ -1303,7 +1303,7 @@
   },
   {
     "type": "error",
-    "name": "ZeroIssuedUnits",
+    "name": "ZeroTotalUnits",
     "inputs": []
   },
   {

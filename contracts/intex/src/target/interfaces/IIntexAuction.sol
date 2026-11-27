@@ -99,11 +99,11 @@ interface IIntexAuction {
         uint64 clearingRate;
         /// @notice Number of winning bids (provided by Outbe).
         uint32 wonBidsCount;
-        /// @notice Number of Intex units issued.
-        uint32 issuedUnits;
-        /// @notice Total Promis loaded into the issued Intex (`issuedUnits * promisLoadMinor`).
+        /// @notice All the Intex units of the auction day.
+        uint32 totalUnits;
+        /// @notice Total Promis load of these units (`totalUnits * promisLoadMinor`).
         ///         Derived on-chain at clearing.
-        uint128 issuedPromisLoadMinor;
+        uint128 totalPromisLoadMinor;
     }
 
     /// @notice Live bid counters tracked while the auction runs.
@@ -204,8 +204,8 @@ interface IIntexAuction {
     error IntexAuctionBidRateAboveMax(uint32 bidRate);
     /// @notice Bid quantity is below `minBidQuantity`.
     error IntexAuctionBidBelowMinBidQuantity();
-    /// @notice `issuedUnits * promisLoadMinor` exceeds the uint128 loaded-Promis range.
-    error IssuedPromisOverflow(uint32 issuedUnits, uint128 promisLoadMinor);
+    /// @notice `totalUnits * promisLoadMinor` exceeds the uint128 loaded-Promis range.
+    error TotalPromisLoadOverflow(uint32 totalUnits, uint128 promisLoadMinor);
     /// @notice Auction does not exist.
     error AuctionNotFound();
     /// @notice Auction already exists.
@@ -274,7 +274,7 @@ interface IIntexAuction {
     function startAuctionClearing(uint32 emissionDay) external;
 
     /// @notice Complete the auction with the result of Outbe.
-    /// @dev `issuedPromisLoadMinor` is derived on-chain (`quantity * promisLoadMinor`).
+    /// @dev `totalPromisLoadMinor` is derived on-chain (`quantity * promisLoadMinor`).
     /// @param emissionDay Emission day (yyyymmdd).
     /// @param wonQuantity Intex quantity this chain's winners won.
     /// @param wonBidsCount Winning bids of this chain.

@@ -96,7 +96,7 @@ impl World {
                 CreateSeriesParams {
                     series_id: SeriesId::from(FixedBytes(SERIES)),
                     emission_day: EmissionDate::new(20_241_220),
-                    issued_units: ISSUED_UNITS as u32,
+                    total_units: ISSUED_UNITS as u32,
                     promis_load_minor: 1_500_000,
                     entry_price_minor: U256::from(2_000_000),
                     call_price_minor: U256::from(4_560_000),
@@ -182,7 +182,7 @@ impl World {
                     issuedAt: TIMESTAMP,
                     issuanceCurrency: 840,
                     referenceCurrency: 840,
-                    issuedUnits: ISSUED_UNITS as u32,
+                    totalUnits: ISSUED_UNITS as u32,
                     promisLoadMinor: 1_500_000,
                     entryPriceMinor: 2_000_000,
                     callPriceMinor: 4_560_000,

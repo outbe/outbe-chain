@@ -2797,8 +2797,8 @@ fn clearing_issues_one_series_per_winning_currency_pair() {
         // Each series holds only its own winners and its own reference price.
         let usd_series = outbe_intex::api::get_series(&s, usd).unwrap();
         let lira_series = outbe_intex::api::get_series(&s, lira).unwrap();
-        assert_eq!(usd_series.issued_units, 2);
-        assert_eq!(lira_series.issued_units, 1);
+        assert_eq!(usd_series.total_units, 2);
+        assert_eq!(lira_series.total_units, 1);
         assert_eq!(
             usd_series.entry_price_minor,
             U256::from(ENTRY_PRICE) * U256::from(840u16)

@@ -193,7 +193,7 @@ fn seed_series(s: &StorageHandle<'_>, issued_at: u64, trigger: U256) -> SeriesId
         outbe_intex::CreateSeriesParams {
             series_id,
             emission_day: EmissionDate::new(LAST_DAY),
-            issued_units: 100,
+            total_units: 100,
             promis_load_minor: 1_000_000_000_000_000_000,
             entry_price_minor: trigger,
             call_price_minor: trigger,

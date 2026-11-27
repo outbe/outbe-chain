@@ -32,7 +32,7 @@ pub fn open_intex_series(
     storage: &StorageHandle<'_>,
     params: IssuanceParams,
 ) -> Result<Vec<IssuanceLeg>> {
-    if params.issued_units == 0 {
+    if params.total_units == 0 {
         return Ok(Vec::new());
     }
 
@@ -48,7 +48,7 @@ pub fn open_intex_series(
     let record = outbe_intex::CreateSeriesParams {
         series_id: params.series_id,
         emission_day: params.emission_day,
-        issued_units: params.issued_units,
+        total_units: params.total_units,
         promis_load_minor: params.promis_load_minor,
         entry_price_minor: params.entry_price_minor,
         call_price_minor,
@@ -75,7 +75,7 @@ pub fn open_intex_series(
                 seriesId: params.series_id.into(),
                 emissionDay: params.emission_day.into(),
                 issuedAt: issued_at,
-                issuedUnits: params.issued_units,
+                totalUnits: params.total_units,
                 promisLoadMinor: params.promis_load_minor,
                 entryPriceMinor: entry_price_minor_u64,
                 callNoticePeriod: trigger.call_notice_period_seconds,
@@ -101,7 +101,7 @@ pub fn open_intex_series(
             callThreshold: u64::from(trigger.call_threshold_seconds),
             callNoticePeriod: u64::from(trigger.call_notice_period_seconds),
             transitMargin: u64::from(trigger.transit_margin_seconds),
-            units: params.issued_units,
+            units: params.total_units,
             unitPromisLoadMinor: U256::from(params.promis_load_minor),
         },
     )?;

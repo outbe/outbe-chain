@@ -239,7 +239,7 @@ fn seed_issued_at(s: &StorageHandle<'_>, id: u32, issued_at: u64) {
         outbe_intex::CreateSeriesParams {
             series_id: sid(id),
             emission_day: id.into(),
-            issued_units: 100,
+            total_units: 100,
             promis_load_minor: PROMIS_LOAD_MINOR,
             entry_price_minor: U256::from(ENTRY_PRICE),
             call_price_minor: U256::from(EXPECTED_TRIGGER),
@@ -418,7 +418,7 @@ fn series_in(s: &StorageHandle<'_>, emission_day: u32, group_day: u32) -> Series
         outbe_intex::schema::CreateSeriesParams {
             series_id,
             emission_day: EmissionDate::new(emission_day),
-            issued_units: 1,
+            total_units: 1,
             promis_load_minor: PROMIS_LOAD_MINOR,
             entry_price_minor: U256::from(ENTRY_PRICE),
             call_price_minor: U256::from(ENTRY_PRICE),

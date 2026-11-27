@@ -59,7 +59,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
         uint16 referenceCurrency;
         /// @notice Auction-cleared units the series was issued with. Set once at `openSeries`,
         ///         never mutated.
-        uint32 issuedUnits;
+        uint32 totalUnits;
         /// @notice PROMIS-units per Intex unit (1e6).
         uint128 promisLoadMinor;
         /// @notice Per-unit entry price in ISO stable-units (1e6).
@@ -161,7 +161,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @notice Series already exists for this token id.
     error IntexAlreadyExists(uint256 intexId);
     /// @notice `openSeries` was called with a zero issued-intex count.
-    error ZeroIssuedUnits();
+    error ZeroTotalUnits();
     /// @notice `issuedAt` is zero (the existence sentinel) or dated after this chain's clock.
     error InvalidIssuedAt(uint64 issuedAt);
     /// @notice A burn of zero units.
@@ -195,7 +195,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
         uint64 issuedAt;
         uint16 issuanceCurrency;
         uint16 referenceCurrency;
-        uint32 issuedUnits;
+        uint32 totalUnits;
         uint128 promisLoadMinor;
         uint64 entryPriceMinor;
         uint64 callPriceMinor;

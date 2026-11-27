@@ -70,7 +70,7 @@ fn the_view_carries_the_whole_split() {
 
         // Every class the series record can answer for, without a second call.
         let data = dispatch_series_data(&s, id);
-        assert_eq!(data.issuedUnits, 100);
+        assert_eq!(data.totalUnits, 100);
         assert_eq!(data.settledUnits, 25);
         assert_eq!(data.minedUnits, 5);
         assert_eq!(data.gemFactoryUnits, 25);
@@ -167,15 +167,15 @@ fn the_unit_classes_are_disjoint_and_sum_to_the_issued_count() {
         api::record_mined_units(&s, id, owner(), 15).unwrap();
 
         let counts = api::unit_counts(&s, id).unwrap();
-        assert_eq!(counts.issued, 100);
-        assert_eq!(counts.active, 45);
+        assert_eq!(counts.total, 100);
+        assert_eq!(counts.issued, 45);
         assert_eq!(counts.settled, 15);
         assert_eq!(counts.mined, 15);
         assert_eq!(counts.gem_factory, 25);
         assert_eq!(counts.forfeited, 0);
         assert_eq!(
-            counts.active + counts.settled + counts.mined + counts.gem_factory + counts.forfeited,
-            counts.issued
+            counts.issued + counts.settled + counts.mined + counts.gem_factory + counts.forfeited,
+            counts.total
         );
     });
 }
@@ -189,13 +189,13 @@ fn expiry_moves_the_active_units_into_forfeited() {
         api::record_mined_units(&s, id, owner(), 30).unwrap();
 
         let counts = api::unit_counts(&s, id).unwrap();
-        assert_eq!(counts.active, 0);
+        assert_eq!(counts.issued, 0);
         assert_eq!(counts.forfeited, 45);
         assert_eq!(counts.settled, 0);
         assert_eq!(counts.mined, 30);
         assert_eq!(
-            counts.active + counts.settled + counts.mined + counts.gem_factory + counts.forfeited,
-            counts.issued
+            counts.issued + counts.settled + counts.mined + counts.gem_factory + counts.forfeited,
+            counts.total
         );
     });
 }
@@ -209,7 +209,7 @@ fn settled_units_alone_count_nothing_as_mined() {
         let counts = api::unit_counts(&s, id).unwrap();
         assert_eq!(counts.mined, 0);
         assert_eq!(counts.settled, 40);
-        assert_eq!(counts.active, 60);
+        assert_eq!(counts.issued, 60);
     });
 }
 
@@ -270,7 +270,7 @@ fn the_unpaid_remainder_excludes_settled_mined_and_gem_factory_units() {
         assert_eq!(counts.settled, 20);
         assert_eq!(counts.mined, 10);
         assert_eq!(counts.gem_factory, 15);
-        assert_eq!(counts.active, 55);
+        assert_eq!(counts.issued, 55);
 
         assert_eq!(
             api::forfeitable_units(&s, &api::get_series(&s, id).unwrap())

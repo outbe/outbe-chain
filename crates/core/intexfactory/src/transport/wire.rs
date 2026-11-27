@@ -28,7 +28,7 @@ sol! {
         bytes14 seriesId;
         uint32 emissionDay;
         uint64 issuedAt;
-        uint32 issuedUnits;
+        uint32 totalUnits;
         uint128 promisLoadMinor;
         uint64 entryPriceMinor;
         uint32 callNoticePeriod;

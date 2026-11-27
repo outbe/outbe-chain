@@ -38,7 +38,7 @@ impl Rail for Intex {
             CreateSeriesParams {
                 series_id: SeriesId::from(FixedBytes(SERIES)),
                 emission_day: EmissionDate::new(20_241_220),
-                issued_units: 10,
+                total_units: 10,
                 promis_load_minor: 1_500_000,
                 entry_price_minor: U256::from(2_000_000),
                 call_price_minor: U256::from(4_560_000),

@@ -54,7 +54,7 @@ fn sample_params(emission_day: u32) -> CreateSeriesParams {
     CreateSeriesParams {
         series_id: sid(emission_day),
         emission_day: EmissionDate::new(emission_day),
-        issued_units: 100,
+        total_units: 100,
         promis_load_minor: PROMIS_LOAD_MINOR,
         entry_price_minor: U256::from(ENTRY_PRICE_MINOR),
         call_price_minor: U256::from(CALL_PRICE_MINOR),

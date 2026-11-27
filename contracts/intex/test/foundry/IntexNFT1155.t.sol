@@ -94,7 +94,7 @@ contract IntexNFT1155Test is Test {
         assertEq(data.issuedAt, block.timestamp);
         assertEq(data.calledAt, 0);
         assertEq(data.totalSupply, 0);
-        assertEq(data.issuedUnits, ISSUED_UNITS);
+        assertEq(data.totalUnits, ISSUED_UNITS);
         // The contract stores callPeriod verbatim. Defaulting/bounding is the caller's
         // (intexfactory) responsibility.
         assertEq(data.callTrigger.callNoticePeriod, callPeriod);
@@ -429,7 +429,7 @@ contract IntexNFT1155Test is Test {
         vm.recordLogs();
         nft.issueIntex(user, quantity, SERIES_ID_1);
         Vm.Log[] memory logs = vm.getRecordedLogs();
-        uint256 issuedUnits;
+        uint256 totalUnits;
         uint256 transferSingleValue;
         bool sawIssued;
         bool sawTransfer;
@@ -437,7 +437,7 @@ contract IntexNFT1155Test is Test {
             if (logs[i].topics.length == 0) continue;
             if (logs[i].topics[0] == IIntexNFT1155.IntexIssued.selector) {
                 (,, uint32 units,) = abi.decode(logs[i].data, (uint16, uint16, uint32, bytes));
-                issuedUnits = uint256(units);
+                totalUnits = uint256(units);
                 sawIssued = true;
             }
             if (logs[i].topics[0] == IERC1155.TransferSingle.selector) {
@@ -448,7 +448,7 @@ contract IntexNFT1155Test is Test {
         }
         assertTrue(sawIssued);
         assertTrue(sawTransfer);
-        assertEq(issuedUnits, transferSingleValue);
+        assertEq(totalUnits, transferSingleValue);
 
         vm.expectEmit(true, false, false, true);
         emit IIntexNFT1155.IntexSeriesCalled(SERIES_ID_1, 840, 840, uint64(block.timestamp), settlementDeadline);

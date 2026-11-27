@@ -20,7 +20,7 @@ fn precompile_series_data_round_trip() {
         assert_eq!(data.seriesId, alloy_primitives::FixedBytes::from(sid(7)));
         assert_eq!(data.promisLoadMinor, U256::from(PROMIS_LOAD_MINOR));
         assert_eq!(data.entryPriceMinor, U256::from(ENTRY_PRICE_MINOR));
-        assert_eq!(data.issuedUnits, 100);
+        assert_eq!(data.totalUnits, 100);
         assert_eq!(data.callWindow, 30 * SECONDS_PER_DAY_U32);
         assert_eq!(data.callThreshold, 5 * SECONDS_PER_DAY_U32);
         assert_eq!(data.callPriceMinor, U256::from(CALL_PRICE_MINOR));

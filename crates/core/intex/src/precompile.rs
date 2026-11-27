@@ -57,8 +57,8 @@ pub fn dispatch(
                 let series_id = load_by_id(&registry, c.intexId)?.series_id;
                 let counts = crate::api::unit_counts(&storage, series_id)?;
                 Ok(IIntex::UnitCounts {
+                    totalUnits: counts.total,
                     issuedUnits: counts.issued,
-                    activeUnits: counts.active,
                     settledUnits: counts.settled,
                     minedUnits: counts.mined,
                     gemFactoryUnits: counts.gem_factory,
@@ -142,7 +142,7 @@ fn to_abi_data(
         seriesId: r.series_id.into(),
         promisLoadMinor: r.promis_load_minor,
         entryPriceMinor: r.entry_price_minor,
-        issuedUnits: r.issued_units,
+        totalUnits: r.total_units,
         callWindow: r.call_window_seconds,
         callThreshold: r.call_threshold_seconds,
         callPriceMinor: r.call_price_minor,

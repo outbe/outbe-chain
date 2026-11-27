@@ -120,7 +120,7 @@ fn series(day: u32) -> IntexSeriesPayload {
         seriesId: FixedBytes::from_slice(b"20260212-TRY-U"),
         emissionDay: day,
         issuedAt: 3,
-        issuedUnits: 4,
+        totalUnits: 4,
         promisLoadMinor: 5,
         entryPriceMinor: 6,
         callNoticePeriod: 7,

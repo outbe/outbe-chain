@@ -315,7 +315,7 @@ fn called_two_member_group(s: &StorageHandle<'_>, scan_ts: u64) -> (Vec<SeriesId
         let params = outbe_intex::CreateSeriesParams {
             series_id,
             emission_day: day,
-            issued_units: count,
+            total_units: count,
             promis_load_minor: LOAD,
             entry_price_minor: trigger,
             call_price_minor: trigger,
@@ -355,7 +355,7 @@ fn called_wide_group(s: &StorageHandle<'_>, scan_ts: u64, width: u16) -> (Vec<Se
         let params = outbe_intex::CreateSeriesParams {
             series_id,
             emission_day: day,
-            issued_units: 1,
+            total_units: 1,
             promis_load_minor: LOAD,
             entry_price_minor: trigger,
             call_price_minor: trigger,

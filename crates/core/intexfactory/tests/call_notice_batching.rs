@@ -41,7 +41,7 @@ fn record(handle: &StorageHandle<'_>, series_id: SeriesId) {
         outbe_intex::CreateSeriesParams {
             series_id,
             emission_day,
-            issued_units: 1,
+            total_units: 1,
             promis_load_minor: 1,
             entry_price_minor: U256::from(1u64),
             call_price_minor: U256::from(2u64),

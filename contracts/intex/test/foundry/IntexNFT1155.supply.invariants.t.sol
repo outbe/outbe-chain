@@ -68,11 +68,11 @@ contract IntexNFT1155SupplyInvariantTest is StdInvariant, Test {
         targetContract(address(handler));
     }
 
-    /// @dev `issuedUnits` never moves, and parity (sum balanceOf == totalSupply) holds.
+    /// @dev `totalUnits` never moves, and parity (sum balanceOf == totalSupply) holds.
     function invariant_issuedUnitsAndParity() public view {
         uint256 intexId = intex.issuedIntexId(SERIES_ID);
         IIntexNFT1155.SeriesData memory d = intex.getIntexSeries(SERIES_ID);
-        assertEq(d.issuedUnits, ISSUED_UNITS, "issuedUnits is immutable");
+        assertEq(d.totalUnits, ISSUED_UNITS, "totalUnits is immutable");
         uint256 sum;
         for (uint256 i = 0; i < bidders.length; i++) {
             sum += intex.balanceOf(bidders[i], intexId);

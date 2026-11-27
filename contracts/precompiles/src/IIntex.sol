@@ -28,7 +28,7 @@ interface IIntex {
         bytes14 seriesId;
         uint256 promisLoadMinor;
         uint256 entryPriceMinor;
-        uint32 issuedUnits;
+        uint32 totalUnits;
         uint32 callWindow;
         uint32 callThreshold;
         uint256 callPriceMinor;
@@ -61,14 +61,14 @@ interface IIntex {
     /// @notice The record of `getIntex`, found by the series id. Reverts `IntexNotFound` for an unknown series.
     function getIntexSeries(bytes14 seriesId) external view returns (SeriesData memory);
 
-    /// @notice The classes an issued unit can be in. Disjoint: they sum to
-    ///         `issuedUnits`. `activeUnits` is what is still unpaid while the series
+    /// @notice The classes a unit of the series can be in. Disjoint: they sum to
+    ///         `totalUnits`. `issuedUnits` is what is still unpaid while the series
     ///         lives, and `forfeitedUnits` is the same remainder once it is Forfeited.
     ///         `settledUnits` is what is paid and not yet mined, the same
     ///         measure `getIntex` reports.
     struct UnitCounts {
+        uint32 totalUnits;
         uint32 issuedUnits;
-        uint32 activeUnits;
         uint32 settledUnits;
         uint32 minedUnits;
         uint32 gemFactoryUnits;

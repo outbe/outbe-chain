@@ -15,7 +15,7 @@ fn create_then_read_round_trip() {
         // u128 -> U256 widening preserved.
         assert_eq!(r.promis_load_minor, U256::from(PROMIS_LOAD_MINOR));
         assert_eq!(r.entry_price_minor, U256::from(ENTRY_PRICE_MINOR));
-        assert_eq!(r.issued_units, 100);
+        assert_eq!(r.total_units, 100);
         assert_eq!(
             r.call_trigger(),
             IntexCallTrigger {

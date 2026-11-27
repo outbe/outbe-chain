@@ -36,7 +36,7 @@ pub fn create_series(storage: &StorageHandle<'_>, params: CreateSeriesParams) ->
         // u128 -> U256 widening is always lossless (see schema docs).
         promis_load_minor: U256::from(params.promis_load_minor),
         entry_price_minor: params.entry_price_minor,
-        issued_units: params.issued_units,
+        total_units: params.total_units,
         call_window_seconds: params.call_trigger.call_window_seconds,
         call_threshold_seconds: params.call_trigger.call_threshold_seconds,
         call_price_minor: params.call_price_minor,
@@ -102,7 +102,7 @@ pub fn forfeitable_units(storage: &StorageHandle<'_>, record: &SeriesRecord) -> 
     let gem_factory = registry.gem_factory_units.read(&id)?;
     // Checked: an underflow is corrupt state, not "nothing owed".
     let forfeited = record
-        .issued_units
+        .total_units
         .checked_sub(settled)
         .and_then(|left| left.checked_sub(mined))
         .and_then(|left| left.checked_sub(gem_factory))
@@ -238,10 +238,10 @@ pub fn owner_settled_units(
         .read(&IntexContract::owner_units_key(intex_id(series_id), owner))
 }
 
-/// The disjoint classes an issued unit can be in. They sum to `issued`.
+/// The disjoint classes a unit of the series can be in. They sum to `total`.
 pub struct UnitCounts {
+    pub total: u32,
     pub issued: u32,
-    pub active: u32,
     pub settled: u32,
     pub mined: u32,
     pub gem_factory: u32,
@@ -249,7 +249,7 @@ pub struct UnitCounts {
 }
 
 /// Read the disjoint counts. The ledgers hold `settled_units`, `mined_units` and
-/// `gem_factory_units` directly. The unpaid remainder is active until expiry
+/// `gem_factory_units` directly. The unpaid remainder is Issued until expiry
 /// decides it is forfeited.
 pub fn unit_counts(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<UnitCounts> {
     let registry = IntexContract::new(storage.clone());
@@ -260,15 +260,15 @@ pub fn unit_counts(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<U
     let mined = registry.mined_units.read(&id)?;
     // Checked: an underflow is corrupt state, not an empty class.
     let unpaid = record
-        .issued_units
+        .total_units
         .checked_sub(settled)
         .and_then(|left| left.checked_sub(mined))
         .and_then(|left| left.checked_sub(gem_factory))
         .ok_or(IntexError::RealizedUnitsOverflow)?;
     let is_forfeited = state(storage, &record)? == IntexState::Forfeited;
     Ok(UnitCounts {
-        issued: record.issued_units,
-        active: if is_forfeited { 0 } else { unpaid },
+        total: record.total_units,
+        issued: if is_forfeited { 0 } else { unpaid },
         settled,
         mined,
         gem_factory,
@@ -293,7 +293,7 @@ fn add_realized_units(
     let registry = IntexContract::new(storage.clone());
     let id = intex_id(series_id);
     // One slot, not the whole record: this runs on every settle.
-    let issued = registry.series.entry(id).issued_units().read()?;
+    let issued = registry.series.entry(id).total_units().read()?;
     let settled = registry.settled_units.read(&id)?;
     let mined = registry.mined_units.read(&id)?;
     let gem_factory = registry.gem_factory_units.read(&id)?;
