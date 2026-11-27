@@ -24,18 +24,18 @@ pub mod precompile;
 pub mod schema;
 pub mod sol_ext;
 
+mod complaints;
 mod gas;
 mod ism;
 mod liveness;
 mod runtime;
 mod signer;
+mod targets;
 mod vote_target;
 
 pub use gas::{GAS_MARKUP_BPS, TOKEN_EXCHANGE_RATE_SCALE};
 pub use lifecycle::HyperlaneModule;
-pub use liveness::{
-    checkpoint_digest, SignedCheckpoint, GRACE_BLOCKS, LIVENESS_WINDOW_BLOCKS, MAX_MISSES,
-};
+pub use liveness::{miss_reason, Report, MAX_MISSES, MAX_REPORT_ADDRESSES};
 pub use runtime::{consensus_threshold, validate_validators, ControllerBootstrap};
 pub use schema::HyperlaneControllerContract;
 pub use vote_target::{apply_due_approved_actions, HyperlaneVoteTarget};

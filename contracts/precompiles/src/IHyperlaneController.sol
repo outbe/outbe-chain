@@ -31,10 +31,9 @@ interface IHyperlaneController {
     error UnknownHook(uint32 domain);
     error NotActiveValidator(address caller);
     error NotSystemTransaction(address caller);
-    error SignerMismatch(address validator, address expected, address recovered);
     error SignerTaken(address signer, address validator);
     error StaleIndex(uint32 index, uint32 submitted);
-    error InvalidSignatureLength(uint64 length);
+    error ReportTooLong(uint64 length);
     error UnknownDomain(uint32 domain);
     error NoGasPrice(uint32 domain);
     error GasPriceOverflow(uint32 domain);
@@ -56,7 +55,12 @@ interface IHyperlaneController {
     event CheckpointSubmitted(address indexed validator, uint32 indexed domain, uint32 index);
     event TargetCheckpointSubmitted(address indexed validator, uint32 indexed domain, uint32 index, bytes32 root);
     event TargetIndexSet(uint32 indexed domain, uint32 index);
-    event LivenessMiss(address indexed validator, uint32 misses);
+    event DeliveryIndexSet(uint32 indexed domain, uint32 index);
+    /// `reasons` is the sum of: 1 = no vote at the target index or a root
+    /// that is not the quorum root, 2 = a quorum named the validator in
+    /// `notServing`, 4 = a quorum named it in `notDelivered`, 8 = its report
+    /// did not name a validator that a quorum named in `notServing`.
+    event LivenessMiss(address indexed validator, uint32 misses, uint8 reasons);
     event LivenessJailed(address indexed validator);
     event ApprovedActionApplied(uint256 indexed proposalId);
     event ApprovedActionExpired(uint256 indexed proposalId);
@@ -92,18 +96,38 @@ interface IHyperlaneController {
     /// `CROSSCHAIN_BRIDGE` balance.
     function applyApproved(uint256 proposalId, bytes calldata payload) external;
 
-    /// Liveness proof: an active validator or its Hyperlane delegate submits
-    /// a signed checkpoint for `domain`. The signature is recovered over the
-    /// Hyperlane digest and must match the validator's Hyperlane signer.
+    /// The report of a validator for `domain` in the current liveness round.
+    /// The sender is an active validator or its Hyperlane delegate. The
+    /// controller does not verify the values. It uses a value only when a
+    /// quorum of the active validators gives it.
     /// The call does one or both of these:
     /// - `index` equals `targetIndex(domain)`: `root` becomes the vote of the
-    ///   validator for this liveness window. A new vote replaces the old one.
-    /// - `index` is higher than `submittedIndex(validator, domain)`: `index`
-    ///   becomes the latest index of the validator. The next target comes
-    ///   from these indexes.
+    ///   validator for this liveness round. A new vote replaces the old one.
+    /// - `index` or `latestIndex` is higher than
+    ///   `submittedIndex(validator, domain)`: the higher value becomes the
+    ///   latest index of the validator. The next target comes from these
+    ///   indexes.
     /// When neither applies, it reverts with `StaleIndex`.
-    function submitCheckpoint(uint32 domain, bytes32 root, uint32 index, bytes32 messageId, bytes calldata signature)
-        external;
+    /// The first accepted call of the validator for `domain` in a round also
+    /// gives its two lists: each name is one complaint about that validator.
+    /// The lists of a later call in the same round have no effect. The two
+    /// lists can hold 32 addresses together: more reverts with
+    /// `ReportTooLong`.
+    /// @param root The root of the validator at `index`.
+    /// @param latestIndex The latest checkpoint index that the validator
+    /// signed. Zero when the validator gives none.
+    /// @param notServing Validators that do not serve their signed checkpoint
+    /// at `targetIndex(domain)`.
+    /// @param notDelivered Validators that did not deliver their message of
+    /// this domain in their turn.
+    function submitReport(
+        uint32 domain,
+        uint32 index,
+        bytes32 root,
+        uint32 latestIndex,
+        address[] calldata notServing,
+        address[] calldata notDelivered
+    ) external;
 
     /// Mirrors the active Outbe validator set into every ISM: validators =
     /// active validators, threshold = ceil(2/3 * n). No-op when the local ISM
@@ -134,14 +158,28 @@ interface IHyperlaneController {
     function submittedIndex(address validator, uint32 domain) external view returns (uint32);
 
     /// Checkpoint index that every validator must sign for `domain` in the
-    /// current liveness window. Zero when there is no target.
+    /// current liveness round. Zero when there is no target.
     function targetIndex(uint32 domain) external view returns (uint32);
+
+    /// The message index of `domain` at which the delivery check of the
+    /// current liveness round starts. The controller selects it at the
+    /// liveness verdict from the indexes that the target moved over. Zero
+    /// when the target did not move: there is no delivery check.
+    function deliveryIndex(uint32 domain) external view returns (uint32);
 
     /// Last vote of `validator` for `domain`: the root it signed at `index`.
     /// The vote counts only while `index` equals `targetIndex(domain)`.
     function targetVote(address validator, uint32 domain) external view returns (uint32 index, bytes32 root);
 
-    /// Consecutive liveness-window misses of `validator`.
+    /// The current liveness round. It starts at 1. The liveness verdict runs
+    /// in the first block of each epoch and adds 1.
+    function livenessRound() external view returns (uint64);
+
+    /// The liveness round of the last report of `validator` for `domain`.
+    /// Zero when there is none.
+    function reportedRound(address validator, uint32 domain) external view returns (uint64);
+
+    /// Consecutive liveness misses of `validator`.
     function missCount(address validator) external view returns (uint32);
 
     /// The `IGasOracle` view of the Outbe IGP. The Oracle gas price is in

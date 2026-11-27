@@ -48,7 +48,8 @@ fn validator_consensus_ready(status: &VmMemberStatus, required_peers: usize) -> 
         && consensus.has_threshold_shares
         && consensus.connected_peers >= required_peers as u64;
     let tee_ok = status.no_tee || consensus.resident_ready();
-    exec_ok && core_ready && tee_ok
+    let hyperlane_ok = status.hyperlane_healthy == Some(true);
+    exec_ok && core_ready && tee_ok && hyperlane_ok
 }
 
 /// Compute readiness baseline `B = max(finalized)` from the first sample where every member
@@ -159,8 +160,8 @@ pub(crate) fn render_vm_status(
         build.config.name, build.config.chain_id
     ));
     lines.push(format!(
-        "{:<14} {:<10} {:<16} {:<10} {:<10} {:<8} {:<6} {:<6} {:<12} DETAIL",
-        "MEMBER", "CLASS", "SERVICE_IP", "VMM", "MODE", "FINAL", "LAG", "VRF", "TEE"
+        "{:<14} {:<10} {:<16} {:<10} {:<10} {:<8} {:<6} {:<6} {:<12} {:<12} DETAIL",
+        "MEMBER", "CLASS", "SERVICE_IP", "VMM", "MODE", "FINAL", "LAG", "VRF", "TEE", "HYPERLANE"
     ));
     for (s, a) in statuses.iter().zip(&assessments) {
         lines.push(render_member_status_row(s, a));
@@ -193,10 +194,11 @@ fn render_member_status_row(s: &VmMemberStatus, a: &MemberLagAssessment) -> Stri
         opt_u64_or_dash(s.vrf_material_version)
     };
     let tee = format_member_tee(s);
+    let hyperlane = format_member_hyperlane(s);
     let detail = format_member_detail(s, a);
     format!(
-        "{:<14} {:<10} {:<16} {:<10} {:<10} {:<8} {:<6} {:<6} {:<12} {detail}",
-        s.name, class_str, s.service_ip, s.vmm_status, mode, finalized, lag, vrf, tee
+        "{:<14} {:<10} {:<16} {:<10} {:<10} {:<8} {:<6} {:<6} {:<12} {:<12} {detail}",
+        s.name, class_str, s.service_ip, s.vmm_status, mode, finalized, lag, vrf, tee, hyperlane
     )
 }
 
@@ -214,6 +216,19 @@ fn format_member_tee(s: &VmMemberStatus) -> String {
     s.tee_ready
         .map(|r| if r { "ready" } else { "not-ready" }.to_owned())
         .unwrap_or_else(|| "-".to_owned())
+}
+
+fn format_member_hyperlane(s: &VmMemberStatus) -> String {
+    if s.role == MemberRole::FullNode {
+        return "n/a".to_owned();
+    }
+    match (s.hyperlane_healthy, s.hyperlane_controller.as_deref()) {
+        (Some(true), Some(controller)) => format!("ok/{controller}"),
+        (Some(false), Some(controller)) => format!("bad/{controller}"),
+        (Some(true), None) => "ok".to_owned(),
+        (Some(false), None) => "bad".to_owned(),
+        (None, _) => "-".to_owned(),
+    }
 }
 
 fn format_member_detail(s: &VmMemberStatus, a: &MemberLagAssessment) -> String {

@@ -1,24 +1,28 @@
-//! Outbe Hyperlane validator daemon.
+//! Outbe Hyperlane agent: the validator role and the relayer role in one
+//! process.
 //!
-//! Syncs the MerkleTreeHook of each origin chain, signs checkpoints into a
-//! local store, serves them as an S3-compatible bucket, announces the bucket
-//! on each origin chain, and proves liveness to the HyperlaneController.
+//! Validator: syncs the MerkleTreeHook of each origin chain, signs checkpoints
+//! into a local store, serves them as an S3-compatible bucket, announces the
+//! bucket on each origin chain, and proves liveness to the HyperlaneController.
+//!
+//! Relayer: delivers the messages of each origin chain
+//! to their destination chains with the signatures of the validators.
 
 mod abi;
-mod announce;
 mod checkpoint;
 mod client;
 mod config;
 mod daemon;
 mod errors;
 mod http;
-mod liveness;
 mod merkle;
-mod signer;
+mod relayer;
+mod status;
 mod store;
 mod sync;
 #[cfg(test)]
 mod test_vectors;
+mod validator;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -36,12 +40,12 @@ use crate::store::{Meta, Store};
 
 #[derive(Parser)]
 #[command(
-    name = "outbe-hyperlane-validator",
-    about = "Outbe Hyperlane validator daemon"
+    name = "outbe-hyperlane-agent",
+    about = "Outbe Hyperlane agent: validator and relayer"
 )]
 struct Cli {
     /// Path to the TOML configuration file.
-    #[arg(short, long, global = true, default_value = "hyperlane-validator.toml")]
+    #[arg(short, long, global = true, default_value = "hyperlane-agent.toml")]
     config: String,
     /// Without a command, run the daemon.
     #[command(subcommand)]
@@ -54,6 +58,13 @@ enum Command {
     /// first: the store opens in exclusive mode.
     #[command(subcommand)]
     Db(DbCommand),
+    /// Print the state of the running agent: the sync of each domain and the
+    /// relayer queue. It reads `/status` of the health server.
+    Status {
+        /// Default: the `[health] bind_address` of the configuration on this host.
+        #[arg(long)]
+        url: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -119,14 +130,23 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "outbe_hyperlane_validator=info".into()),
+                .unwrap_or_else(|_| "outbe_hyperlane_agent=info".into()),
         )
         .init();
 
     let cli = Cli::parse();
+    if let Some(Command::Status { url: Some(url) }) = &cli.command {
+        return status::run(url).await;
+    }
     let config = ValidatorConfig::load(&cli.config)?;
-    if let Some(Command::Db(command)) = cli.command {
-        return run_db(&config, command);
+    match cli.command {
+        Some(Command::Db(command)) => return run_db(&config, command),
+        Some(Command::Status { url }) => {
+            let bind = config.health.as_ref().map(|h| h.bind_address.as_str());
+            let url = url.unwrap_or_else(|| status::local_url(bind.unwrap_or("0.0.0.0:9003")));
+            return status::run(&url).await;
+        }
+        None => {}
     }
     config.validate()?;
     warn!("private key loaded from plaintext config - use an encrypted keystore in production");
@@ -171,16 +191,22 @@ async fn main() -> Result<()> {
         validator = %validator,
         signer = %key.address(),
         location,
-        "starting outbe-hyperlane-validator"
+        "starting outbe-hyperlane-agent"
     );
     let poll_interval = Duration::from_secs(config.hyperlane.poll_interval_secs);
-    let liveness = liveness::Liveness::new(
+    let liveness = validator::liveness::Liveness::new(
         config.hyperlane,
         &config.chain,
         EthereumWallet::from(key.clone()),
         validator,
         health.clone(),
     );
+    let relay = daemon::Relay::new(u32::try_from(config.chain.chain_id)?)?;
+    let liveness = liveness.with_report_checks(relayer::report::ReportChecks {
+        chains: relay.chains.clone(),
+        fetcher: relay.fetcher.clone(),
+        store: store.clone(),
+    });
     let daemon = daemon::Daemon {
         origins: config.origin,
         poll_interval,
@@ -189,6 +215,7 @@ async fn main() -> Result<()> {
         store,
         health,
         location,
+        relay,
     };
     tokio::select! {
         _ = daemon.run(outbe) => {}

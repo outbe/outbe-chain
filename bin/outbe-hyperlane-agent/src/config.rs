@@ -1,4 +1,4 @@
-//! TOML configuration for the Hyperlane validator daemon.
+//! TOML configuration for the Hyperlane agent.
 
 use eyre::{Context, Result};
 use serde::Deserialize;
@@ -84,7 +84,7 @@ pub struct ChainConfig {
 #[serde(deny_unknown_fields)]
 pub struct AccountConfig {
     /// Hex-encoded private key `H`: the checkpoint signer, the announce
-    /// sender and the `submitCheckpoint` sender. Its lowercase address is the
+    /// sender and the `submitReport` sender. Its lowercase address is the
     /// bucket name.
     pub private_key: String,
     /// Validator `V` that this daemon acts for.
@@ -300,7 +300,7 @@ public_url = "http://203.0.113.7:9000"
     #[test]
     fn example_config_parses_and_validates() {
         let cfg: ValidatorConfig =
-            toml::from_str(include_str!("../hyperlane-validator.example.toml")).unwrap();
+            toml::from_str(include_str!("../hyperlane-agent.example.toml")).unwrap();
         cfg.validate().unwrap();
         let domains: Vec<u32> = cfg.origin.iter().map(|o| o.domain).collect();
         assert_eq!(domains, [54322345, 97, 11155111]);

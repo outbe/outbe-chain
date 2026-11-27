@@ -18,7 +18,7 @@
 //! another key is signed again. Here only the signature may differ, the value
 //! must be the same.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -37,10 +37,10 @@ use crate::checkpoint::{Checkpoint, CheckpointWithMessageId, Signed};
 use crate::client::eth_call;
 use crate::config::OriginConfig;
 use crate::errors::{SignerError, StoreError};
-use crate::liveness::HYPERLANE_CONTROLLER_ADDRESS;
 use crate::merkle::IncrementalMerkle;
 use crate::store::{Leaf, Meta, SignedRoot, Store};
 use crate::sync::{wait_next, DomainSync, Origin, Tick, VerifiedBatch};
+use crate::validator::liveness::HYPERLANE_CONTROLLER_ADDRESS;
 
 /// Leaves per backfill transaction.
 const BACKFILL_PAGE: usize = 1000;
@@ -56,6 +56,13 @@ pub struct DomainSigner {
     halted: AtomicBool,
     /// The sync rewinds again and again. See [`DomainSync::stalled`].
     stalled: AtomicBool,
+    /// The last final block of the origin chain and the last block that the
+    /// sync read. See [`DomainSync::progress`].
+    head: AtomicU64,
+    scanned: AtomicU64,
+    /// The store has the newest leaf of the origin chain. See
+    /// [`DomainSync::caught_up`].
+    synced: AtomicBool,
     /// Wakes the backfill worker after a commit or a halt.
     wake: Notify,
 }
@@ -70,6 +77,9 @@ impl DomainSigner {
             key,
             halted: AtomicBool::new(halted),
             stalled: AtomicBool::new(false),
+            head: AtomicU64::new(0),
+            scanned: AtomicU64::new(0),
+            synced: AtomicBool::new(false),
             wake: Notify::new(),
         })
     }
@@ -94,6 +104,20 @@ impl DomainSigner {
 
     pub fn stalled(&self) -> bool {
         self.stalled.load(Ordering::Relaxed)
+    }
+
+    /// The last final block of the origin chain and the number of blocks
+    /// that the sync did not read yet. `None` before the first read.
+    pub fn progress(&self) -> Option<(u64, u64)> {
+        let head = self.head.load(Ordering::Relaxed);
+        let scanned = self.scanned.load(Ordering::Relaxed);
+        (head > 0).then(|| (head, head.saturating_sub(scanned)))
+    }
+
+    /// True when the store has the newest leaf of the origin chain. The
+    /// relayer starts at that leaf.
+    pub fn synced(&self) -> bool {
+        self.synced.load(Ordering::Relaxed)
     }
 
     /// Syncs, signs and backfills the domain until a reorg halts it. A domain
@@ -121,6 +145,9 @@ impl DomainSigner {
             if let Some(s) = &mut sync {
                 let tick = s.tick().await;
                 self.stalled.store(s.stalled(), Ordering::Relaxed);
+                let (head, scanned) = s.progress();
+                self.head.store(head, Ordering::Relaxed);
+                self.scanned.store(scanned, Ordering::Relaxed);
                 match tick {
                     Ok(Tick::Batch(batch)) => {
                         if let Err(error) = self.commit(&batch).await {
@@ -143,6 +170,9 @@ impl DomainSigner {
                     Err(error) => warn!(domain, %error, "sync tick failed"),
                 }
             }
+            // After the commit: the leaves of the batch are in the store.
+            let synced = sync.as_ref().is_some_and(DomainSync::caught_up);
+            self.synced.store(synced, Ordering::Relaxed);
             if !self.halted() {
                 wait_next(interval, ws_wake.as_deref()).await;
             }

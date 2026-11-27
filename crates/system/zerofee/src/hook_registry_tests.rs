@@ -96,13 +96,13 @@ fn hook_cases() -> Vec<HookCase> {
         HookCase {
             hook: HYPERLANE_SUBMIT_CHECKPOINT_HOOK,
             target: HYPERLANE_CONTROLLER_ADDRESS,
-            selector: IHyperlaneController::submitCheckpointCall::SELECTOR,
+            selector: IHyperlaneController::submitReportCall::SELECTOR,
             valid_input: crate::test_support::checkpoint_calldata().to_vec(),
             min_max_fee_per_gas: crate::hyperlane::MIN_ZERO_FEE_CHECKPOINT_MAX_FEE_PER_GAS,
             max_calldata_bytes: crate::hyperlane::MAX_ZERO_FEE_CHECKPOINT_CALLDATA_BYTES,
             max_gas_limit: crate::hyperlane::MAX_ZERO_FEE_CHECKPOINT_GAS_LIMIT,
             malformed_reason: "zero-fee oracle vote calldata is malformed: \
-                submitCheckpoint(uint32,bytes32,uint32,bytes32,bytes) decode failed",
+                submitReport(uint32,uint32,bytes32,uint32,address[],address[]) decode failed",
             delegate_role: ValidatorDelegateRole::Hyperlane,
         },
     ]

@@ -191,6 +191,7 @@ fn build_founder_tree(tree: &Path, chain_id: u64, ip: Ipv4Addr) {
                 "OUTBE_BOOTNODES=\"enode://abcd@{ip}:30303\"\n",
                 "OUTBE_CONSENSUS_PEERS=\"{peer_key}@{ip}:30400\"\n",
                 "OUTBE_CONSENSUS_EXTRA_ARGS=\"--consensus.use-local-defaults\"\n",
+                "OUTBE_HYPERLANE_FUNDING_WEI=\"1000000000000000000\"\n",
                 "OUTBE_CHAIN_ID=\"{chain_id}\"\n",
             ),
             ip = ip,
@@ -214,7 +215,7 @@ fn build_founder_tree(tree: &Path, chain_id: u64, ip: Ipv4Addr) {
                 "gasless = true\n\n",
                 "[health]\n",
                 "enabled = true\n",
-                "bind_address = \"127.0.0.1:9003\"\n\n",
+                "bind_address = \"{ip}:9003\"\n\n",
                 "[storage]\n",
                 "db_path = \"/opt/outbe-chain/state/hyperlane/db\"\n\n",
                 "[server]\n",
@@ -222,7 +223,7 @@ fn build_founder_tree(tree: &Path, chain_id: u64, ip: Ipv4Addr) {
                 "public_url = \"http://{ip}:9000\"\n\n",
                 "[[origin]]\n",
                 "domain = {chain_id}\n",
-                "rpc_urls = [\"http://127.0.0.1:8545\"]\n",
+                "rpc_urls = [\"http://{ip}:8545\"]\n",
                 "rpc_consensus = \"single\"\n",
                 "reorg_period = 0\n",
             ),
@@ -230,6 +231,11 @@ fn build_founder_tree(tree: &Path, chain_id: u64, ip: Ipv4Addr) {
             chain_id = chain_id
         )
         .as_bytes(),
+        0o640,
+    );
+    write_mode(
+        &tree.join("reth.toml"),
+        b"[peers]\nincoming_ip_throttle_duration = \"30s\"\n",
         0o640,
     );
 
@@ -602,6 +608,15 @@ impl HostExec for FakeHostExec {
 
     fn capture_raw(&self, _ssh: &Ssh, _label: &str, command: &str) -> Result<String> {
         let mut g = self.state.lock().unwrap();
+
+        if command.contains(":9003/status") {
+            return Ok(json!({
+                "healthy": true,
+                "controller": "waiting_for_controller",
+                "active": false,
+            })
+            .to_string());
+        }
 
         if command.contains(" version --json") {
             let bin = extract_pinned_bin_name(command).unwrap_or_default();
@@ -1938,6 +1953,9 @@ fn c2_readiness_requires_growth_common_vrf_and_respects_no_tee() {
             has_threshold_shares: Some(true),
             vrf_material_version: Some(vrf),
             tee_ready: if no_tee { None } else { Some(tee_ok) },
+            hyperlane_healthy: Some(true),
+            hyperlane_controller: Some("waiting_for_controller".to_owned()),
+            hyperlane_active: Some(false),
             consensus: Some(consensus),
             boot_warning: None,
             error: None,
@@ -2145,6 +2163,14 @@ fn host_check_port_specs_include_p2p_and_radicle_1to1_ports() {
             "31304/udp",
             "8777/tcp",
         ]
+    );
+    assert_eq!(
+        ctx.hyperlane_port_specs(&members[0]).unwrap(),
+        vec!["9000/tcp"]
+    );
+    assert_eq!(
+        ctx.hyperlane_port_specs(&members[1]).unwrap(),
+        vec!["9000:9001/tcp"]
     );
 }
 
@@ -2980,7 +3006,7 @@ async fn s4_add_validator_and_add_full_node_full_lifecycle_and_exit2_gate() {
         assert!(g
             .disk_prepare_roles
             .contains(&"joining-validator".to_owned()));
-        let check_cmd = g.host_check_commands.last().unwrap();
+        let check_cmd = g.host_check_commands[..g.host_check_commands.len() - 1].join("\n");
         for port in [
             "30305/tcp",
             "30305/udp",
@@ -2993,6 +3019,16 @@ async fn s4_add_validator_and_add_full_node_full_lifecycle_and_exit2_gate() {
                 "joiner host check must verify 1:1 port {port}: {check_cmd}"
             );
         }
+        let hyperlane_check = g.host_check_commands.last().unwrap();
+        assert!(
+            hyperlane_check.contains("--port '9000:9002/tcp'")
+                || hyperlane_check.contains("--port 9000:9002/tcp"),
+            "joiner host check must verify Hyperlane 9002 -> VM:9000: {hyperlane_check}"
+        );
+        assert!(
+            !hyperlane_check.contains("--source"),
+            "Hyperlane host check must accept the firewall's dedicated infra source: {hyperlane_check}"
+        );
         assert!(
             !g.vm_start_calls
                 .iter()
@@ -3015,11 +3051,12 @@ async fn s4_add_validator_and_add_full_node_full_lifecycle_and_exit2_gate() {
         );
         let expected_min_funding = min_stake
             + alloy_primitives::U256::from(outbe_operator_node_role::FEEDER_FUNDING_WEI)
+            + alloy_primitives::U256::from(1_000_000_000_000_000_000_u128)
             + alloy_primitives::U256::from(2_000_000_000_000_000_000_u128);
         assert_eq!(
             d.funded_calls[0],
             (joiner_addr, expected_min_funding),
-            "F7: pre-start funding must cover min_stake + feeder + explicit gas reserve"
+            "F7: pre-start funding must cover min_stake + feeder + Hyperlane + gas reserve"
         );
         assert_eq!(d.staked_symmetric.as_deref(), Some("198.51.100.20:30402"));
         assert!(d.confirm_ready_called);
@@ -3178,7 +3215,15 @@ fn s4_boot_error_warning_vs_live_unhealthy() {
         fn capture(&self, _ssh: &Ssh, _label: &str, _command: &str) -> Result<String> {
             unreachable!()
         }
-        fn capture_raw(&self, _ssh: &Ssh, _label: &str, _command: &str) -> Result<String> {
+        fn capture_raw(&self, _ssh: &Ssh, _label: &str, command: &str) -> Result<String> {
+            if command.contains(":9003/status") {
+                return Ok(json!({
+                    "healthy": true,
+                    "controller": "waiting_for_controller",
+                    "active": false,
+                })
+                .to_string());
+            }
             unreachable!()
         }
         fn capture_stdin(
@@ -4135,6 +4180,9 @@ async fn s7_f2_dkg_guard_time_based_ceremony_window_and_fail_closed() {
             has_threshold_shares: Some(true),
             vrf_material_version: Some(1),
             tee_ready: Some(true),
+            hyperlane_healthy: Some(true),
+            hyperlane_controller: Some("waiting_for_controller".to_owned()),
+            hyperlane_active: Some(false),
             consensus: Some(ConsensusStatus {
                 randomness_status: rs.map(ToOwned::to_owned),
                 ..Default::default()
@@ -4352,6 +4400,9 @@ async fn s7_pre_stop_requires_every_validator_connected_peers_at_least_n_minus_1
         has_threshold_shares: Some(true),
         vrf_material_version: Some(1),
         tee_ready: Some(true),
+        hyperlane_healthy: Some(true),
+        hyperlane_controller: Some("waiting_for_controller".to_owned()),
+        hyperlane_active: Some(false),
         consensus: peers.map(|p| ConsensusStatus {
             connected_peers: p,
             is_validator: true,
@@ -4674,6 +4725,10 @@ async fn s10_status_fails_when_validator_consensus_peers_below_n_minus_1_or_miss
         has_threshold_shares: Some(role != MemberRole::FullNode),
         vrf_material_version: Some(if role == MemberRole::FullNode { 0 } else { 1 }),
         tee_ready: Some(role != MemberRole::FullNode),
+        hyperlane_healthy: (role != MemberRole::FullNode).then_some(true),
+        hyperlane_controller: (role != MemberRole::FullNode)
+            .then(|| "waiting_for_controller".to_owned()),
+        hyperlane_active: (role != MemberRole::FullNode).then_some(false),
         consensus: peers.map(|p| ConsensusStatus {
             connected_peers: p,
             is_validator: role != MemberRole::FullNode,
@@ -4709,6 +4764,16 @@ async fn s10_status_fails_when_validator_consensus_peers_below_n_minus_1_or_miss
             && missing_err.contains("missing outbe_consensusStatus"),
         "{missing_err}"
     );
+
+    // A validator whose Hyperlane status endpoint is missing or unhealthy must make status fail.
+    for hyperlane in [None, Some(false)] {
+        let mut bad_hyperlane = mk_member("validator-0", MemberRole::Founder, Some(3));
+        bad_hyperlane.hyperlane_healthy = hyperlane;
+        let err = check_unhealthy_members(&[bad_hyperlane], &[ok_assess()], &[], 3)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("Hyperlane unavailable/unhealthy"), "{err}");
+    }
 
     // 2. Validator reporting `connectedPeers < n - 1` (0 or 2 in a 4-validator network) -> unhealthy.
     for low in [0u64, 2u64] {
@@ -4835,6 +4900,9 @@ fn s10_member_node_ready_requires_execution_peers_ge_1_and_consensus_peers_ge_n_
         has_threshold_shares: Some(true),
         vrf_material_version: Some(1),
         tee_ready: Some(true),
+        hyperlane_healthy: Some(true),
+        hyperlane_controller: Some("waiting_for_controller".to_owned()),
+        hyperlane_active: Some(false),
         consensus: Some(ConsensusStatus {
             connected_peers: cons_peers,
             is_validator: true,
@@ -5247,7 +5315,7 @@ async fn certified_rpc_preflight_skips_brand_new_deploy_checks_end_of_start_and_
 }
 
 #[test]
-fn manifest_firewall_mappings_match_host_check_p2p_port_specs() {
+fn manifest_firewall_mappings_match_host_check_port_specs() {
     let mixed: crate::network::config::NetworkConfig = serde_yaml_ng::from_str(
         r#"
 version: 1
@@ -5336,9 +5404,16 @@ genesis:
         let from_manifest: Vec<String> = mappings
             .iter()
             .filter(|e| e.member == member.name)
-            .map(|e| format!("{}/{}", e.public_port, e.proto))
+            .map(|e| {
+                if e.vm_port == e.public_port {
+                    format!("{}/{}", e.public_port, e.proto)
+                } else {
+                    format!("{}:{}/{}", e.vm_port, e.public_port, e.proto)
+                }
+            })
             .collect();
-        let from_host_check = ctx.p2p_port_specs(member).unwrap();
+        let mut from_host_check = ctx.p2p_port_specs(member).unwrap();
+        from_host_check.extend(ctx.hyperlane_port_specs(member).unwrap());
         assert_eq!(
             from_manifest, from_host_check,
             "manifest firewall_mappings must match host check port specs for {}",
@@ -5348,7 +5423,7 @@ genesis:
 }
 
 #[tokio::test]
-async fn update_refuses_legacy_env_schema_disks_before_touching_hosts() {
+async fn update_refuses_pre_reth_runtime_schema_before_touching_hosts() {
     let tmp = tempfile::tempdir().unwrap();
     let fixture = build_test_vm_artifacts(tmp.path(), "legacyenv", "~/.dstack-vmm", b"outbe-up");
     let fake_image = tmp.path().join("img.tar.zst");
@@ -5372,10 +5447,10 @@ async fn update_refuses_legacy_env_schema_disks_before_touching_hosts() {
     .await
     .unwrap();
 
-    // Simulate a legacy `network-vm-state.json` written before `env_schema` existed (defaults to 1).
+    // Simulate v2 disks prepared before reth.toml became mandatory.
     let state_path = NetworkVmState::path(&fixture.root);
     let mut raw: Value = serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
-    raw.as_object_mut().unwrap().remove("env_schema");
+    raw["env_schema"] = json!(2);
     fs::write(&state_path, serde_json::to_vec_pretty(&raw).unwrap()).unwrap();
 
     fake.state.lock().unwrap().vm_update_calls.clear();
@@ -5398,10 +5473,10 @@ async fn update_refuses_legacy_env_schema_disks_before_touching_hosts() {
         Arc::clone(&exec),
     )
     .await
-    .expect_err("network update must refuse legacy env_schema v1 disks");
+    .expect_err("network update must refuse runtime schema v2 disks");
     assert!(
-        err.to_string().contains("validator.env schema v1")
-            && err.to_string().contains("requires schema v2"),
+        err.to_string().contains("runtime schema v2")
+            && err.to_string().contains("requires schema v3"),
         "{err}"
     );
     assert!(

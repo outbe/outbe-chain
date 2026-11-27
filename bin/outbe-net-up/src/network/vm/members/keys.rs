@@ -160,6 +160,11 @@ pub(super) fn build_joining_validator_tar_bytes(
     op_cfg.network.vm_reth_port = Some(ports.reth_p2p_tcp);
     op_cfg.network.vm_discv5_port = Some(ports.reth_discv5_udp);
     op_cfg.network.vm_radicle_port = Some(ports.radicle_tcp);
+    op_cfg.hyperlane = build.config.resolve_hyperlane_for_endpoint(
+        format!("http://{}:{}", member.advertise_ip, ports.hyperlane_tcp),
+        member.service_ip,
+        member.rpc_port,
+    )?;
     op_cfg.validate()?;
 
     let tmp = tempfile::Builder::new()
@@ -184,6 +189,7 @@ pub(super) fn build_joining_validator_tar_bytes(
         "validator.env",
         "feeder-public.toml",
         "hyperlane-public.toml",
+        "reth.toml",
     ] {
         fs::set_permissions(tree.join(name), fs::Permissions::from_mode(0o640))?;
     }
@@ -228,10 +234,8 @@ fn load_joining_operator_template(build: &NetworkArtifacts) -> Result<OperatorCo
             example_path.display()
         )
     })?;
-    // Parse the template before overriding placeholder `rpc_bind_ip`/`advertise_ip` (the template
-    // uses `127.0.0.1` placeholder alongside `vm_prefix`/`vm_gateway`), then validate strictly.
-    // Hyperlane configuration is left as-is from the template (Hyperlane is not started on VMs
-    // until S9).
+    // Parse the template before overriding placeholder endpoint values, then validate strictly
+    // after applying the joining member's actual VM network and Hyperlane configuration.
     serde_yaml_ng::from_str(&raw_example).wrap_err_with(|| {
         format!(
             "invalid joining operator config template at {}",

@@ -1,11 +1,12 @@
 //! The daemon loop: reads the HyperlaneController domains every poll, runs
 //! one signer per domain, and announces the storage location on each origin
-//! chain.
+//! chain. It also runs one relayer per domain.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use alloy_network::EthereumWallet;
 use alloy_primitives::Address;
 use alloy_provider::DynProvider;
 use alloy_signer_local::PrivateKeySigner;
@@ -13,13 +14,18 @@ use eyre::Result;
 use tokio::task::JoinSet;
 use tracing::{error, info, warn};
 
-use crate::announce::announce;
 use crate::config::OriginConfig;
 use crate::errors::{ConfigError, StoreError};
 use crate::http::health::{Controller, ValidatorHealth};
-use crate::signer::DomainSigner;
+use crate::relayer::deliver::{Chain, Chains};
+use crate::relayer::fetch::Fetcher;
+use crate::relayer::Relayer;
 use crate::store::{Meta, Store};
-use crate::sync::{check_origin, controller_domains, ws_wake, ControllerDomain, Origin};
+use crate::sync::{
+    check_origin, connect, controller_domains, dedup_urls, ws_wake, ControllerDomain, Origin,
+};
+use crate::validator::announce::announce;
+use crate::validator::signer::DomainSigner;
 
 pub struct Daemon {
     pub origins: Vec<OriginConfig>,
@@ -30,6 +36,41 @@ pub struct Daemon {
     pub health: Arc<ValidatorHealth>,
     /// `s3+http(s)://host[:port]/<bucket>`. The domain follows.
     pub location: String,
+    /// What the relayers of all domains share.
+    pub relay: Relay,
+}
+
+/// What the relayers of all domains share.
+pub struct Relay {
+    pub chains: Chains,
+    pub fetcher: Arc<Fetcher>,
+    /// The Hyperlane domain of Outbe, equal to its chain id.
+    pub outbe_domain: u32,
+}
+
+impl Relay {
+    pub fn new(outbe_domain: u32) -> Result<Self> {
+        Ok(Self {
+            chains: Chains::default(),
+            fetcher: Arc::new(Fetcher::new()?),
+            outbe_domain,
+        })
+    }
+
+    /// The entry of a running domain for the relayers.
+    fn chain(&self, origin: &Origin, config: &OriginConfig, ism: Address) -> Result<Arc<Chain>> {
+        let providers = dedup_urls(&config.rpc_urls)
+            .iter()
+            .map(|url| connect(url))
+            .collect::<Result<_>>()?;
+        Ok(Arc::new(Chain::new(
+            origin.clone(),
+            providers,
+            config.reorg_period,
+            ism,
+            origin.domain == self.outbe_domain,
+        )))
+    }
 }
 
 /// A controller domain that this process started.
@@ -75,7 +116,22 @@ impl Daemon {
             keep
         });
         self.health.retain_domains(listed_has);
+        let relay = &self.relay;
+        relay.chains.retain(listed_has);
         for d in &listed {
+            // The relayer takes the controller ISM of a domain as fixed. If
+            // it changes all the same, the relayer must not drop the
+            // messages of that domain as messages of a foreign ISM: it stops
+            // the deliveries and shows an error. The validator role continues.
+            if let Some(chain) = relay.chains.get(d.domain).filter(|c| c.ism != d.ism) {
+                let message = format!(
+                    "ismByDomain changed from {} to {}: the relayer stopped the deliveries of this domain. Restart the agent",
+                    chain.ism, d.ism
+                );
+                error!(domain = d.domain, "{message}");
+                relay.chains.retain(|domain| domain != d.domain);
+                self.health.set_relay_error(d.domain, message);
+            }
             match domains.get_mut(&d.domain) {
                 Some(Domain::Running { hook, .. }) if *hook != d.hook => {
                     let message = format!(
@@ -85,6 +141,7 @@ impl Daemon {
                     error!(domain = d.domain, "{message}");
                     domains.insert(d.domain, Domain::Stopped);
                     self.health.set_error(d.domain, message);
+                    relay.chains.retain(|domain| domain != d.domain);
                 }
                 // The signed history stays valid. Only the announce changes.
                 Some(Domain::Running {
@@ -142,6 +199,9 @@ impl Daemon {
     async fn restart_announce(&self, d: &ControllerDomain) -> Result<JoinSet<()>> {
         let config = self.origin_config(d.domain)?;
         let origin = check_origin(d, config).await?;
+        // The relayer reads the storage locations from the new contract.
+        let relay = &self.relay;
+        relay.chains.insert(relay.chain(&origin, config, d.ism)?);
         Ok(self.spawn_announce(origin, config))
     }
 
@@ -178,6 +238,21 @@ impl Daemon {
         let mut tasks = JoinSet::new();
         let wake = ws_wake(config, origin.hook, &mut tasks);
         tasks.spawn(signer.clone().run(config.clone(), wake));
+        let relay = &self.relay;
+        relay.chains.insert(relay.chain(&origin, config, d.ism)?);
+        let relayer = Relayer {
+            origin: origin.clone(),
+            store: self.store.clone(),
+            chains: relay.chains.clone(),
+            fetcher: relay.fetcher.clone(),
+            outbe: outbe.clone(),
+            wallet: EthereumWallet::from(self.key.clone()),
+            validator: self.validator,
+            health: self.health.clone(),
+            signer: signer.clone(),
+        };
+        // Its own task: a relayer error never stops the signer.
+        tasks.spawn(relayer.run(Duration::from_secs(config.interval_secs)));
         let announce = self.spawn_announce(origin, config);
         self.health.set_running(signer);
         info!(domain = d.domain, hook = %d.hook, "domain started");
@@ -194,7 +269,6 @@ impl Daemon {
 mod tests {
     use std::sync::Mutex;
 
-    use alloy_network::EthereumWallet;
     use alloy_primitives::{Bytes, B256};
     use alloy_sol_types::{SolCall, SolValue};
     use serde_json::{json, Value};
@@ -202,16 +276,17 @@ mod tests {
     use super::*;
     use crate::abi::{IHyperlaneController, IMerkleTreeHook, IValidatorAnnounce, IValidatorSet};
     use crate::checkpoint::{Announcement, Signed};
-    use crate::liveness::{HYPERLANE_CONTROLLER_ADDRESS, VALIDATOR_SET_ADDRESS};
     use crate::sync::connect;
     use crate::sync::tests::serve_json_rpc;
+    use crate::validator::liveness::{HYPERLANE_CONTROLLER_ADDRESS, VALIDATOR_SET_ADDRESS};
 
     const VA: Address = Address::repeat_byte(0xa1);
     const MAILBOX: Address = Address::repeat_byte(0xb2);
 
     /// What the controller returns: icaRouter, domains, hook and
     /// ValidatorAnnounce of each domain.
-    type Controller = Arc<Mutex<(Address, Vec<u32>, Address, Address)>>;
+    /// ValidatorAnnounce and ISM of each domain.
+    type Controller = Arc<Mutex<(Address, Vec<u32>, Address, Address, Address)>>;
 
     /// One endpoint for Outbe and the origin chain of domain 5. The
     /// announcement of `location` is already on-chain.
@@ -222,6 +297,7 @@ mod tests {
                 "eth_blockNumber" => json!("0x64"),
                 "eth_chainId" => json!("0x5"),
                 "eth_getLogs" => json!([]),
+                "eth_getBalance" => json!("0x0"),
                 "eth_call" => eth_call(&state, &location, &req["params"][0]),
                 other => panic!("unexpected method {other}"),
             };
@@ -239,9 +315,10 @@ mod tests {
         };
         let data: Bytes = serde_json::from_value(input.clone()).unwrap();
         let selector: [u8; 4] = data[..4].try_into().unwrap();
-        let (ica, domains, hook, va) = state.lock().unwrap().clone();
+        let state = state.lock().unwrap().clone();
+        let va = state.3;
         let out = if to == HYPERLANE_CONTROLLER_ADDRESS {
-            controller_call(selector, ica, domains, hook, va)
+            controller_call(selector, state)
         } else if to == VALIDATOR_SET_ADDRESS {
             assert_eq!(selector, IValidatorSet::getActiveValidatorsCall::SELECTOR);
             Vec::<Address>::new().abi_encode()
@@ -255,16 +332,14 @@ mod tests {
 
     fn controller_call(
         selector: [u8; 4],
-        ica: Address,
-        domains: Vec<u32>,
-        hook: Address,
-        va: Address,
+        (ica, domains, hook, va, ism): (Address, Vec<u32>, Address, Address, Address),
     ) -> Vec<u8> {
         match selector {
             IHyperlaneController::icaRouterCall::SELECTOR => ica.abi_encode(),
             IHyperlaneController::domainsCall::SELECTOR => domains.abi_encode(),
             IHyperlaneController::hookByDomainCall::SELECTOR => hook.abi_encode(),
             IHyperlaneController::validatorAnnounceByDomainCall::SELECTOR => va.abi_encode(),
+            IHyperlaneController::ismByDomainCall::SELECTOR => ism.abi_encode(),
             IHyperlaneController::hyperlaneSignerCall::SELECTOR => Address::ZERO.abi_encode(),
             IHyperlaneController::submittedIndexCall::SELECTOR
             | IHyperlaneController::targetIndexCall::SELECTOR
@@ -300,7 +375,8 @@ mod tests {
     #[tokio::test]
     async fn poll_starts_stops_and_removes_domains() {
         let hook1 = Address::repeat_byte(0x11);
-        let state: Controller = Arc::new(Mutex::new((Address::ZERO, vec![], hook1, VA)));
+        let ism1 = Address::repeat_byte(0x15);
+        let state: Controller = Arc::new(Mutex::new((Address::ZERO, vec![], hook1, VA, ism1)));
         let url = chain(state.clone(), "s3+http://h:9000/0xb/5".into()).await;
         let dir = tempfile::tempdir().unwrap();
         let store = Arc::new(Store::open(dir.path()).unwrap());
@@ -317,6 +393,7 @@ mod tests {
             store: store.clone(),
             health: health.clone(),
             location: "s3+http://h:9000/0xb".into(),
+            relay: Relay::new(5).unwrap(),
         };
         let outbe = connect(&url).unwrap();
         let mut domains = HashMap::new();
@@ -366,7 +443,7 @@ mod tests {
             rpc_endpoint: url.clone(),
             chain_id: 5,
         };
-        let liveness = crate::liveness::Liveness::new(
+        let liveness = crate::validator::liveness::Liveness::new(
             Default::default(),
             &chain,
             wallet,
@@ -387,6 +464,19 @@ mod tests {
             Some(Domain::Running { validator_announce, .. }) if *validator_announce == va2
         ));
         assert_eq!(health.running().len(), 1);
+
+        // The controller ISM of a domain is fixed. A change stops only the
+        // relayer of that domain and shows an error: the signer continues.
+        let chains = &daemon.relay.chains;
+        assert_eq!(chains.get(5).unwrap().ism, ism1);
+        state.lock().unwrap().4 = Address::repeat_byte(0x16);
+        daemon.poll(&outbe, &mut domains).await.unwrap();
+        assert!(chains.get(5).is_none());
+        let error = status("domains")["5"]["relay"]["error"].clone();
+        assert!(error.as_str().unwrap().contains("ismByDomain changed"));
+        assert_eq!(status("healthy"), false);
+        assert_eq!(health.running().len(), 1);
+        assert!(matches!(domains.get(&5), Some(Domain::Running { .. })));
 
         // A hook change stops the domain and its tasks. No restart.
         state.lock().unwrap().2 = Address::repeat_byte(0x22);
@@ -419,6 +509,7 @@ mod tests {
             vec![5],
             Address::repeat_byte(0x22),
             VA,
+            Address::repeat_byte(0x15),
         )));
         let url = chain(state, "s3+http://h:9000/0xb/5".into()).await;
         let dir = tempfile::tempdir().unwrap();
@@ -438,6 +529,7 @@ mod tests {
             store: store.clone(),
             health: health.clone(),
             location: "s3+http://h:9000/0xb".into(),
+            relay: Relay::new(5).unwrap(),
         };
         let mut domains = HashMap::new();
         daemon

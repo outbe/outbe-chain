@@ -7,8 +7,8 @@ use alloy_sol_types::SolCall;
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_system_common::addresses::HYPERLANE_CONTROLLER_ADDRESS;
+use outbe_validatorset::contract::ValidatorSet;
 
-use crate::liveness::LIVENESS_WINDOW_BLOCKS;
 use crate::precompile::IHyperlaneController;
 use crate::schema::HyperlaneControllerContract;
 
@@ -44,16 +44,16 @@ pub fn sync_validators(ctx: &BlockRuntimeContext) -> Result<()> {
     Ok(())
 }
 
-/// Every [`LIVENESS_WINDOW_BLOCKS`]: jails validators whose Hyperlane agent
-/// stopped submitting checkpoints. The ISMs get the new set at the next epoch
-/// boundary, so at most one rotation per epoch is in flight. Hyperlane does
-/// not keep the delivery order of two rotations.
+/// In the first block of each epoch: gives the liveness verdict of the epoch
+/// that ended and jails the validators whose Hyperlane agent does not do its
+/// work. The boundary step runs before this step in the same block. It
+/// already sent the validator set to the ISMs, so the ISMs get the set
+/// without the jailed validators at the next epoch boundary. At most one
+/// rotation per epoch is in flight: Hyperlane does not keep the delivery
+/// order of two rotations.
 pub fn run_liveness_window(ctx: &BlockRuntimeContext) -> Result<()> {
-    if !ctx
-        .block
-        .block_number
-        .is_multiple_of(LIVENESS_WINDOW_BLOCKS)
-    {
+    let epoch = ValidatorSet::new(ctx.storage.clone()).epoch_snapshot()?;
+    if epoch.start_block != ctx.block.block_number {
         return Ok(());
     }
     let mut controller = HyperlaneControllerContract::new(ctx.storage.clone());
@@ -78,7 +78,7 @@ pub fn run_liveness_window(ctx: &BlockRuntimeContext) -> Result<()> {
     Ok(())
 }
 
-/// Begin-block liveness for the hyperlane slash window.
+/// Begin-block step of the Hyperlane liveness verdict.
 pub struct HyperlaneModule;
 
 impl outbe_primitives::block::ProtocolModule for HyperlaneModule {

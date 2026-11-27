@@ -35,7 +35,7 @@ pub const VM_BINARIES: &[&str] = &[
     "outbe-chain",
     "outbe-radicle",
     "outbe-feeder",
-    "outbe-hyperlane-validator",
+    "outbe-hyperlane-agent",
     "outbe-vm-agent",
     "outbe-cli",
     "outbe-keygen",
