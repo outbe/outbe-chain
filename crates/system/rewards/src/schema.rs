@@ -13,38 +13,33 @@ use outbe_primitives::storage::types::{Mapping, Slot};
 ///
 /// Storage slots:
 ///   0:  participation_counted_for_block    - mapping(B256 => mapping(address => bool))
-///   1:  day_fee_sum_native                 - mapping(uint32 => uint256)
-///   2:  day_votes                          - mapping(uint32 => mapping(address => uint64))
-///   3:  day_voter_count                    - mapping(uint32 => uint32)
-///   4:  block_metadata_counted             - mapping(B256 => bool)
-///   5:  metadata_fingerprint_for_block     - mapping(B256 => B256)
-///   6:  pending_fees                       - mapping(B256 => uint256)
-///   7:  fees_transferred                   - mapping(B256 => bool)
-///   8:  late_voter_k_plus1                 - mapping(B256 => mapping(address => uint8))
-///   9:  late_voter_count                   - mapping(B256 => uint32)
-///  10:  late_voter_at                      - mapping(B256 => mapping(uint32 => address))
-///  11:  pending_fb_hash_at                 - mapping(uint64 => B256)    (number -> fb_hash)
-///  12:  pending_committee_size_at          - mapping(uint64 => uint32)
-///  13:  pending_epoch_at                   - mapping(uint64 => uint64)
-///  14:  pending_committee_set_hash_at      - mapping(uint64 => B256)
-///  15:  pending_view_at                    - mapping(uint64 => uint64)
-///  16:  pending_parent_view_at             - mapping(uint64 => uint64)
-///  17:  block_guard_ring                   - mapping(uint64 => B256) (prune ring of fb_hash)
-///  18:  block_guard_ring_seq               - uint64 (ring write cursor)
-///  19:  pending_reward_day                 - mapping(B256 => uint32)
-///  20:  day_votes_sealed_at_block          - mapping(uint32 => uint64)
-///  21:  last_sealed_day                    - uint32
-///  22:  day_total_votes                    - mapping(uint32 => uint256)
+///   1:  day_votes                          - mapping(uint32 => mapping(address => uint64))
+///   2:  day_voter_count                    - mapping(uint32 => uint32)
+///   3:  block_metadata_counted             - mapping(B256 => bool)
+///   4:  metadata_fingerprint_for_block     - mapping(B256 => B256)
+///   5:  pending_fees                       - mapping(B256 => uint256)
+///   6:  fees_transferred                   - mapping(B256 => bool)
+///   7:  late_voter_k_plus1                 - mapping(B256 => mapping(address => uint8))
+///   8:  late_voter_count                   - mapping(B256 => uint32)
+///   9:  late_voter_at                      - mapping(B256 => mapping(uint32 => address))
+///  10:  pending_fb_hash_at                 - mapping(uint64 => B256)    (number -> fb_hash)
+///  11:  pending_committee_size_at          - mapping(uint64 => uint32)
+///  12:  pending_epoch_at                   - mapping(uint64 => uint64)
+///  13:  pending_committee_set_hash_at      - mapping(uint64 => B256)
+///  14:  pending_view_at                    - mapping(uint64 => uint64)
+///  15:  pending_parent_view_at             - mapping(uint64 => uint64)
+///  16:  block_guard_ring                   - mapping(uint64 => B256) (prune ring of fb_hash)
+///  17:  block_guard_ring_seq               - uint64 (ring write cursor)
+///  18:  pending_reward_day                 - mapping(B256 => uint32)
+///  19:  day_votes_sealed_at_block          - mapping(uint32 => uint64)
+///  20:  last_sealed_day                    - uint32
+///  21:  day_total_votes                    - mapping(uint32 => uint256)
 #[contract(addr = REWARDS_ADDRESS)]
 pub struct Rewards {
     /// Per-(finalized_block_hash, voter) guard: voter participation has
     /// already been counted for this finalized block in the votes of the day.
     /// This guard is separate from the fee guard for audit clarity.
     pub participation_counted_for_block: Mapping<B256, Mapping<Address, bool>>,
-
-    /// Per-day raw fee sum from finalized metadata (`fees_raw`), in native COEN minor units
-    /// (wei; 10^18 per COEN). Cleared when the Validator rate of the day is set.
-    pub day_fee_sum_native: Mapping<u32, U256>,
 
     /// Per-(utc_day, voter) participation count for the day: the weight of the voter in the
     /// validator reward of the day, until the reward is claimed or expired.
@@ -53,8 +48,7 @@ pub struct Rewards {
     /// Per-day count of distinct voters seen.
     pub day_voter_count: Mapping<u32, u32>,
 
-    /// Per-finalized-block guard: cap/fees-raw from this block already
-    /// accumulated into `day_fee_sum_native`.
+    /// Per-finalized-block guard: the metadata of this block was already counted.
     pub block_metadata_counted: Mapping<B256, bool>,
 
     /// Per-finalized-block fingerprint guard. The fingerprint is
@@ -171,27 +165,26 @@ mod tests {
         let c = Rewards::new(StorageHandle::new(&mut provider));
 
         assert_eq!(c.participation_counted_for_block.base_slot(), U256::from(0));
-        assert_eq!(c.day_fee_sum_native.base_slot(), U256::from(1));
-        assert_eq!(c.day_votes.base_slot(), U256::from(2));
-        assert_eq!(c.day_voter_count.base_slot(), U256::from(3));
-        assert_eq!(c.block_metadata_counted.base_slot(), U256::from(4));
-        assert_eq!(c.metadata_fingerprint_for_block.base_slot(), U256::from(5));
-        assert_eq!(c.pending_fees.base_slot(), U256::from(6));
-        assert_eq!(c.fees_transferred.base_slot(), U256::from(7));
-        assert_eq!(c.late_voter_k_plus1.base_slot(), U256::from(8));
-        assert_eq!(c.late_voter_count.base_slot(), U256::from(9));
-        assert_eq!(c.late_voter_at.base_slot(), U256::from(10));
-        assert_eq!(c.pending_fb_hash_at.base_slot(), U256::from(11));
-        assert_eq!(c.pending_committee_size_at.base_slot(), U256::from(12));
-        assert_eq!(c.pending_epoch_at.base_slot(), U256::from(13));
-        assert_eq!(c.pending_committee_set_hash_at.base_slot(), U256::from(14));
-        assert_eq!(c.pending_view_at.base_slot(), U256::from(15));
-        assert_eq!(c.pending_parent_view_at.base_slot(), U256::from(16));
-        assert_eq!(c.block_guard_ring.base_slot(), U256::from(17));
-        assert_eq!(c.block_guard_ring_seq.slot(), U256::from(18));
-        assert_eq!(c.pending_reward_day.base_slot(), U256::from(19));
-        assert_eq!(c.day_votes_sealed_at_block.base_slot(), U256::from(20));
-        assert_eq!(c.last_sealed_day.slot(), U256::from(21));
-        assert_eq!(c.day_total_votes.base_slot(), U256::from(22));
+        assert_eq!(c.day_votes.base_slot(), U256::from(1));
+        assert_eq!(c.day_voter_count.base_slot(), U256::from(2));
+        assert_eq!(c.block_metadata_counted.base_slot(), U256::from(3));
+        assert_eq!(c.metadata_fingerprint_for_block.base_slot(), U256::from(4));
+        assert_eq!(c.pending_fees.base_slot(), U256::from(5));
+        assert_eq!(c.fees_transferred.base_slot(), U256::from(6));
+        assert_eq!(c.late_voter_k_plus1.base_slot(), U256::from(7));
+        assert_eq!(c.late_voter_count.base_slot(), U256::from(8));
+        assert_eq!(c.late_voter_at.base_slot(), U256::from(9));
+        assert_eq!(c.pending_fb_hash_at.base_slot(), U256::from(10));
+        assert_eq!(c.pending_committee_size_at.base_slot(), U256::from(11));
+        assert_eq!(c.pending_epoch_at.base_slot(), U256::from(12));
+        assert_eq!(c.pending_committee_set_hash_at.base_slot(), U256::from(13));
+        assert_eq!(c.pending_view_at.base_slot(), U256::from(14));
+        assert_eq!(c.pending_parent_view_at.base_slot(), U256::from(15));
+        assert_eq!(c.block_guard_ring.base_slot(), U256::from(16));
+        assert_eq!(c.block_guard_ring_seq.slot(), U256::from(17));
+        assert_eq!(c.pending_reward_day.base_slot(), U256::from(18));
+        assert_eq!(c.day_votes_sealed_at_block.base_slot(), U256::from(19));
+        assert_eq!(c.last_sealed_day.slot(), U256::from(20));
+        assert_eq!(c.day_total_votes.base_slot(), U256::from(21));
     }
 }

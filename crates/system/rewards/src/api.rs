@@ -11,16 +11,6 @@ use crate::schema::Rewards;
 #[cfg(test)]
 mod tests;
 
-/// Returns the raw fee total accumulated for the given UTC day. This is
-/// the value `record_votes_and_fees` writes per finalized block via
-/// `day_fee_sum_native[day] += validator_fee_sum`. Returns `U256::ZERO`
-/// if no finalized metadata has been processed yet for `day`.
-/// Details remain available until the validator job ends and bounded cleanup runs.
-pub fn get_day_fee_sum_native(ctx: &BlockRuntimeContext, day: u32) -> Result<U256> {
-    let rewards: Rewards<'_> = ctx.storage.contract::<Rewards<'_>>();
-    rewards.day_fee_sum_native.read(&day)
-}
-
 /// Whether the day's voting boundary and all open windows through that day have closed.
 /// LateFinalizeCredits runs before CycleTick in the same block.
 /// At `block_number == last_close`, those close-height credits have already run.
@@ -96,11 +86,10 @@ pub fn take_validator_weight(
     Ok(U256::from(weight))
 }
 
-/// Deletes the fee sum and the seal block of the sealed `day` once its validator reward is set.
+/// Deletes the seal block of the sealed `day` once its validator reward is set.
 pub fn clear_day_seal(storage: &StorageHandle<'_>, day: u32) -> Result<()> {
     let rewards = Rewards::new(storage.clone());
     require_sealed(&rewards, day)?;
-    rewards.day_fee_sum_native.write(&day, U256::ZERO)?;
     rewards.day_votes_sealed_at_block.write(&day, 0)
 }
 

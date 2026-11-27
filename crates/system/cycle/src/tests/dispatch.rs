@@ -307,11 +307,6 @@ fn validators_get_the_full_share_by_their_votes() {
             Address::repeat_byte(0x33),
         ];
         seed_daily_voters(&ctx, 20_240_101, &voters.map(|voter| (voter, 1)));
-        ctx.storage
-            .contract::<outbe_rewards::schema::Rewards<'_>>()
-            .day_fee_sum_native
-            .write(&20_240_101, U256::MAX)
-            .unwrap();
 
         run_emission_limit_daily(&ctx).unwrap();
 

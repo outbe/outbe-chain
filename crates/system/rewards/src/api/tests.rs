@@ -5,29 +5,6 @@ use crate::test_support::{
     FB_HASH_A, FB_HASH_B, VAL_X, VAL_Y, VAL_Z,
 };
 
-#[test]
-fn get_day_fee_sum_native_returns_zero_when_unrecorded() {
-    with_genesis_block(|ctx| {
-        assert_eq!(get_day_fee_sum_native(&ctx, 20240101).unwrap(), U256::ZERO);
-    });
-}
-
-#[test]
-fn get_day_fee_sum_native_round_trips_after_finalized_metadata() {
-    with_funded_genesis_block(300, |ctx| {
-        record_genesis_day_parent(&ctx, &meta_with_hash(FB_HASH_A, 1), 101, &[VAL_X, VAL_Y]);
-        record_genesis_day_parent(&ctx, &meta_with_hash(FB_HASH_B, 2), 199, &[VAL_X, VAL_Y]);
-
-        // 101 + 199 = 300 raw.
-        assert_eq!(
-            get_day_fee_sum_native(&ctx, 20240101).unwrap(),
-            U256::from(300u64)
-        );
-        // Untouched day stays zero.
-        assert_eq!(get_day_fee_sum_native(&ctx, 20240102).unwrap(), U256::ZERO);
-    });
-}
-
 fn weight(ctx: &BlockRuntimeContext, day: u32, voter: Address) -> U256 {
     validator_weight(&ctx.storage, day, voter).unwrap()
 }
@@ -280,16 +257,12 @@ fn a_claim_takes_the_weight_and_the_last_one_clears_the_day() {
         record_reward_participation(&ctx, FB_HASH_B, day, VAL_X).unwrap();
         record_reward_participation(&ctx, FB_HASH_A, day, VAL_Y).unwrap();
         let rewards = ctx.storage.contract::<Rewards>();
-        rewards
-            .day_fee_sum_native
-            .write(&day, U256::from(17))
-            .unwrap();
         assert!(take_validator_weight(&ctx.storage, day, VAL_X).is_err());
         assert!(clear_day_seal(&ctx.storage, day).is_err());
         seal_votes_and_fees(&ctx, day).unwrap();
 
         clear_day_seal(&ctx.storage, day).unwrap();
-        assert_eq!(rewards.day_fee_sum_native.read(&day).unwrap(), U256::ZERO);
+        assert_eq!(rewards.day_votes_sealed_at_block.read(&day).unwrap(), 0);
         assert_eq!(
             take_validator_weight(&ctx.storage, day, VAL_X).unwrap(),
             U256::from(2)

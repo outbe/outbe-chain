@@ -292,7 +292,6 @@ fn full_node_import_installs_provider_backed_accounted_parent_artifact_lookup_wi
         storage::{direct::DirectStorageProvider, hashmap::HashMapStorageProvider, StorageHandle},
         system_tx::protocol_block_gas_limit,
     };
-    use outbe_system_common::time::timestamp_to_date_key;
     use reth_ethereum::evm::{EthBlockExecutionCtx, EthEvmEnv};
     use reth_evm::{execute::BlockExecutor as _, BlockExecutorFactory};
 
@@ -493,9 +492,7 @@ fn full_node_import_installs_provider_backed_accounted_parent_artifact_lookup_wi
             5
         );
         let rewards = outbe_rewards::schema::Rewards::new(storage);
-        let date_key = timestamp_to_date_key(parent_timestamp);
         assert_eq!(rewards.pending_fees.read(&block_hash)?, seeded_fee);
-        assert_eq!(rewards.day_fee_sum_native.read(&date_key)?, seeded_fee);
         Ok::<_, outbe_primitives::error::PrecompileError>(())
     })
     .expect("accounting state should be readable");

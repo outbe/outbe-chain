@@ -302,7 +302,6 @@ fn assert_real_cpa_and_block_fee_transfer(invalid_slash_percent: bool, fail_shar
             );
             let day = outbe_system_common::time::timestamp_to_date_key(TEST_BLOCK_TIMESTAMP_BASE);
             assert_eq!(rewards.pending_reward_day.read(&settled_hash)?, day);
-            assert_eq!(rewards.day_fee_sum_native.read(&day)?, parent_fee);
             assert_eq!(rewards.day_total_votes.read(&day)?, U256::from(4));
             assert_eq!(
                 storage.balance(REWARDS_ADDRESS)?,

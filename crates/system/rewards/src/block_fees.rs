@@ -627,7 +627,6 @@ mod tests {
                             .get_nested(&FB)
                             .read(&V0)
                             .unwrap(),
-                        rewards.day_fee_sum_native.read(&19700101).unwrap(),
                         rewards.day_total_votes.read(&19700101).unwrap(),
                     ),
                 )

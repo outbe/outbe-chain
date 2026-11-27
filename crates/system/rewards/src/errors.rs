@@ -11,8 +11,6 @@ pub enum RewardsError {
     BlockGuardRingSeqOverflow,
     #[error("reward window height overflow")]
     RewardWindowHeightOverflow,
-    #[error("day_fee_sum_native overflow")]
-    DayFeeSumNativeOverflow,
     #[error("reward participation arrived after its day was sealed")]
     ParticipationAfterDaySealed,
     #[error("day_voter_count overflow")]
