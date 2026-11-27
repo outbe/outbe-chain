@@ -63,6 +63,11 @@ pub(crate) struct VmMemberStatus {
     pub(crate) has_threshold_shares: Option<bool>,
     pub(crate) vrf_material_version: Option<u64>,
     pub(crate) tee_ready: Option<bool>,
+    pub(crate) hyperlane_healthy: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) hyperlane_controller: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) hyperlane_active: Option<bool>,
     #[serde(skip_serializing)]
     pub(crate) consensus: Option<ConsensusStatus>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -281,6 +286,9 @@ fn member_unhealthy_reason(
     if status.role != MemberRole::FullNode && status.consensus.is_none() {
         return Some(format!("{}: missing outbe_consensusStatus", status.name));
     }
+    if status.role != MemberRole::FullNode && status.hyperlane_healthy != Some(true) {
+        return Some(format!("{}: Hyperlane unavailable/unhealthy", status.name));
+    }
     if status.role != MemberRole::FullNode
         && status.consensus_peers.unwrap_or(0) < required_peers as u64
     {
@@ -424,6 +432,15 @@ pub(super) fn build_member_status(
     let tee_ready = (!effective_no_tee)
         .then(|| rpc.consensus.as_ref().map(ConsensusStatus::resident_ready))
         .flatten();
+    let hyperlane = if vm.running
+        && query_rpc
+        && kind == VmClassKind::Ours
+        && member.role != MemberRole::FullNode
+    {
+        super::query_hyperlane_health(exec, &member.vmm_host, &member.name, service_ip).ok()
+    } else {
+        None
+    };
 
     VmMemberStatus {
         name: member.name,
@@ -448,6 +465,9 @@ pub(super) fn build_member_status(
         has_threshold_shares: rpc.consensus.as_ref().map(|c| c.has_threshold_shares),
         vrf_material_version: rpc.consensus.as_ref().map(|c| c.vrf_material_version),
         tee_ready,
+        hyperlane_healthy: hyperlane.as_ref().map(|status| status.healthy),
+        hyperlane_controller: hyperlane.as_ref().map(|status| status.controller.clone()),
+        hyperlane_active: hyperlane.and_then(|status| status.active),
         consensus: rpc.consensus,
         boot_warning,
         error,
@@ -482,6 +502,9 @@ fn absent_member_status(
         has_threshold_shares: None,
         vrf_material_version: None,
         tee_ready: None,
+        hyperlane_healthy: None,
+        hyperlane_controller: None,
+        hyperlane_active: None,
         consensus: None,
         boot_warning: None,
         error: Some("VM not created on host".to_owned()),

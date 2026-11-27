@@ -227,8 +227,15 @@ async fn ensure_joiner_prefunded(
     if record.registered {
         return Ok(min_stake);
     }
+    let hyperlane_funding = build
+        .config
+        .resolve_joining_hyperlane_config()?
+        .signer_funding_wei
+        .parse::<U256>()
+        .map_err(|error| eyre::eyre!("invalid Hyperlane signer funding amount: {error}"))?;
     let required_balance = min_stake
         .checked_add(U256::from(FEEDER_FUNDING_WEI))
+        .and_then(|v| v.checked_add(hyperlane_funding))
         .and_then(|v| v.checked_add(U256::from(JOINER_GAS_RESERVE_WEI)))
         .ok_or_else(|| eyre::eyre!("required joiner balance overflow"))?;
     let current_balance = driver.balance(validator_addr).await?;
@@ -242,7 +249,7 @@ async fn ensure_joiner_prefunded(
     );
     let topup = required_balance - current_balance;
     progress.stage(&format!(
-        "funding joining validator `{}` ({validator_addr:#x}) before VM start with {topup} wei (min_stake + feeder + gas reserve)",
+        "funding joining validator `{}` ({validator_addr:#x}) before VM start with {topup} wei (min_stake + feeder + Hyperlane + gas reserve)",
         member.name
     ));
     let tx = driver

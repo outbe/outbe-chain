@@ -6,7 +6,6 @@ const COMMON_POLICY: &[&str] = &[
     "RestartSec=5",
     "RestartSteps=5",
     "RestartMaxDelaySec=60",
-    "TimeoutStartSec=150",
     "TimeoutStopSec=90",
     "KillMode=mixed",
     "KillSignal=SIGTERM",
@@ -36,6 +35,19 @@ fn joining_and_founding_share_service_policy() {
             assert!(joining.contains(directive), "{name}: {directive}");
             assert!(founding.contains(directive), "{name}: {directive}");
         }
+        let expected_timeout = if name == "outbe-validator.service" {
+            "TimeoutStartSec=0"
+        } else {
+            "TimeoutStartSec=150"
+        };
+        assert!(
+            joining.contains(expected_timeout),
+            "{name}: {expected_timeout}"
+        );
+        assert!(
+            founding.contains(expected_timeout),
+            "{name}: {expected_timeout}"
+        );
     }
 }
 
@@ -257,6 +269,7 @@ fn joining_units_match_pinned_output() {
                 "Environment=RUST_MIN_STACK=16777216\n",
                 "ExecStartPre=/usr/local/bin/outbe-up internal wait-validator-dependencies\n",
                 "ExecStart=/opt/outbe-chain/outbe-chain node \\\n",
+                "  --config /opt/outbe-chain/reth.toml \\\n",
                 "  --chain /opt/outbe-chain/genesis.json \\\n",
                 "  --datadir /opt/outbe-chain/validator-0/data \\\n",
                 "  --engine.persistence-threshold 0 \\\n",
@@ -288,13 +301,13 @@ fn joining_units_match_pinned_output() {
                 "  --upstream ${OUTBE_CERTIFIED_RPC} \\\n",
                 "  --radicle.control-socket /opt/outbe-chain/keys/radicle/node/outbe-control.sock \\\n",
                 "  --radicle.status-address 127.0.0.1:8876\n",
-                "ExecStartPost=/usr/local/bin/outbe-up internal wait-rpc\n",
+                "ExecStartPost=/usr/local/bin/outbe-up internal wait-rpc --timeout 0\n",
                 "Restart=always\n",
                 "RestartMode=direct\n",
                 "RestartSec=5\n",
                 "RestartSteps=5\n",
                 "RestartMaxDelaySec=60\n",
-                "TimeoutStartSec=150\n",
+                "TimeoutStartSec=0\n",
                 "TimeoutStopSec=90\n",
                 "KillMode=mixed\n",
                 "KillSignal=SIGTERM\n",
@@ -424,6 +437,26 @@ fn vm_units_share_service_policy_and_target() {
     let feeder = unit(&vm, "outbe-feeder.service");
     assert!(!feeder.contains("Wants=outbe-validator.service"));
 
+    for name in [
+        "outbe-validator.service",
+        "outbe-joining-validator.service",
+        "outbe-full-node.service",
+    ] {
+        let node = unit(&vm, name);
+        assert!(node.contains("TimeoutStartSec=0\n"), "{name}");
+        assert!(
+            node.contains("ExecStartPost=/usr/local/bin/outbe-vm-agent wait-rpc --timeout 0\n"),
+            "{name}"
+        );
+    }
+    for name in [
+        "outbe-radicle.service",
+        "outbe-feeder.service",
+        "outbe-hyperlane-validator.service",
+    ] {
+        assert!(unit(&vm, name).contains("TimeoutStartSec=150\n"), "{name}");
+    }
+
     let target = unit(&vm, "outbe-validator.target");
     assert!(target.contains("Requires=outbe-vm-boot.service"));
     assert!(target.contains("After=outbe-vm-boot.service"));
@@ -518,6 +551,7 @@ fn vm_validator_args_match_pinned_founding_flags() {
     // Founding node_script flags in bin/outbe-genesis-cli/src/launch_bundle/scripts.rs.
     let expected_founding_flags: BTreeSet<&str> = [
         "--validator",
+        "--config",
         "--chain",
         "--datadir",
         "--engine.persistence-threshold",
@@ -583,6 +617,7 @@ fn vm_units_use_explicit_env_ports_for_listen_and_advertise_and_keep_fixed_ports
     };
 
     let validator = expand(unit(&vm, "outbe-validator.service"));
+    assert!(validator.contains("--config /opt/outbe-chain/reth.toml"));
     assert!(validator.contains("--consensus.listen-addr 0.0.0.0:30401"));
     assert!(validator.contains("--port 30304"));
     assert!(validator.contains("--discovery.port 30304"));
@@ -601,6 +636,7 @@ fn vm_units_use_explicit_env_ports_for_listen_and_advertise_and_keep_fixed_ports
     assert!(radicle.contains("--status-listen 127.0.0.1:8876"));
 
     let joining = expand(unit(&vm, "outbe-joining-validator.service"));
+    assert!(joining.contains("--config /opt/outbe-chain/reth.toml"));
     assert!(joining.contains("--http.port 8546"));
     assert!(joining.contains("--consensus.listen-addr 0.0.0.0:30401"));
     assert!(joining.contains("--port 30304"));
@@ -611,6 +647,7 @@ fn vm_units_use_explicit_env_ports_for_listen_and_advertise_and_keep_fixed_ports
     assert!(joining.contains("--upstream ${OUTBE_CERTIFIED_RPC}"));
 
     let full_node = expand(unit(&vm, "outbe-full-node.service"));
+    assert!(full_node.contains("--config /opt/outbe-chain/reth.toml"));
     assert!(full_node.contains("--port 30304"));
     assert!(full_node.contains("--discovery.port 30304"));
     assert!(full_node.contains("--discovery.v5.port 31304"));
@@ -664,7 +701,9 @@ fn vm_joining_validator_args_match_bare_host_joining_flags_and_full_node_is_keyl
     assert!(!full_content.contains("outbe-radicle.service"));
     assert!(!full_content.contains("wait-validator-dependencies"));
     assert!(full_content.contains("ReadWritePaths=/opt/outbe-chain/validator-0\n"));
-    assert!(full_content.contains("ExecStartPost=/usr/local/bin/outbe-vm-agent wait-rpc\n"));
+    assert!(
+        full_content.contains("ExecStartPost=/usr/local/bin/outbe-vm-agent wait-rpc --timeout 0\n")
+    );
 }
 
 #[test]

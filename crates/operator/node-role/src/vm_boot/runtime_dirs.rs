@@ -120,6 +120,13 @@ pub(super) fn prepare_directories(
                 0o640,
                 root_group_outbe,
             )?;
+            normalize_file_nofollow(
+                &root_fd,
+                root,
+                Path::new("reth.toml"),
+                0o640,
+                root_group_outbe,
+            )?;
         }
     }
     Ok(())

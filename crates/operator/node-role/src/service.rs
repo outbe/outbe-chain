@@ -165,23 +165,33 @@ where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = Result<()>>,
 {
-    let deadline = Instant::now() + Duration::from_secs(timeout);
+    let deadline = (timeout > 0).then(|| Instant::now() + Duration::from_secs(timeout));
     loop {
         let last_error = match tokio::time::timeout(Duration::from_secs(2), probe()).await {
             Ok(Ok(())) => return Ok(()),
             Ok(Err(error)) => error.to_string(),
             Err(_) => "probe timed out".to_owned(),
         };
-        if watched_pid.is_some_and(|pid| !Path::new("/proc").join(pid.to_string()).exists()) {
+        if watched_pid.is_some_and(|pid| !process_is_live(Path::new("/proc"), pid)) {
             bail!(
                 "outbe-chain exited before {description} became ready: {last_error}; inspect the service journal"
             );
         }
-        if Instant::now() >= deadline {
+        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
             bail!("timed out waiting for {description}: {last_error}");
         }
         tokio::time::sleep(Duration::from_millis(250)).await;
     }
+}
+
+fn process_is_live(proc_root: &Path, pid: u32) -> bool {
+    let Ok(status) = fs::read_to_string(proc_root.join(pid.to_string()).join("status")) else {
+        return false;
+    };
+    !status.lines().any(|line| {
+        line.strip_prefix("State:")
+            .is_some_and(|state| state.trim_start().starts_with('Z'))
+    })
 }
 
 fn required_env(name: &str) -> Result<String> {
@@ -248,6 +258,24 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn zero_timeout_waits_without_a_deadline() {
+        let mut attempts = 0;
+        wait_for("test RPC", 0, None, || {
+            attempts += 1;
+            async move {
+                if attempts < 2 {
+                    Err(eyre::eyre!("RPC unavailable"))
+                } else {
+                    Ok(())
+                }
+            }
+        })
+        .await
+        .expect("zero timeout must wait until the probe succeeds");
+        assert_eq!(attempts, 2);
+    }
+
+    #[tokio::test]
     async fn wait_stops_when_watched_process_has_exited() {
         let error = wait_for("test RPC", 60, Some(u32::MAX), || async {
             Err(eyre::eyre!("RPC unavailable"))
@@ -255,6 +283,29 @@ mod tests {
         .await
         .expect_err("missing process must stop the wait");
         assert!(error.to_string().contains("outbe-chain exited"));
+    }
+
+    #[test]
+    fn watched_process_must_exist_and_not_be_a_zombie() {
+        let proc_root = tempfile::tempdir().unwrap();
+        let live = proc_root.path().join("11");
+        let zombie = proc_root.path().join("12");
+        fs::create_dir_all(&live).unwrap();
+        fs::create_dir_all(&zombie).unwrap();
+        fs::write(
+            live.join("status"),
+            "Name:\toutbe-chain\nState:\tS (sleeping)\n",
+        )
+        .unwrap();
+        fs::write(
+            zombie.join("status"),
+            "Name:\toutbe-chain\nState:\tZ (zombie)\n",
+        )
+        .unwrap();
+
+        assert!(process_is_live(proc_root.path(), 11));
+        assert!(!process_is_live(proc_root.path(), 12));
+        assert!(!process_is_live(proc_root.path(), 13));
     }
 
     #[test]

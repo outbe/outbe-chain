@@ -100,7 +100,9 @@ Guests do not depend on DHCP or `dnsmasq` reservations for their service IPs. Pi
 
 ## Known limitations
 
-- **Hyperlane on VM roles:** `outbe-hyperlane-agent.service` is not started by `outbe-vm-agent` on VM roles yet.
+- **Hyperlane controller deployment:** VM validators start Hyperlane automatically; checkpoint
+  submission remains in `waiting_for_controller` until the network's Hyperlane controller is
+  deployed and initialized.
 - **Forced stop during pending DKG:** force-stopping or power-cutting a validator can lose its pending DKG snapshot. Always use graceful `outbe-up vm stop`, `outbe-up vm update`, or `outbe-net-up network update` (never `--force`).
 - **Guest memory:** allocate at least `8` GiB of RAM per validator VM (`memory_gib: 8`) to avoid guest OOM kills.
 - **TEE resident key:** in devnet/testnet VMs without sealed storage, the resident TEE key lives in memory and re-registers on reboot. DKG shares persist under `/opt/outbe-chain`.

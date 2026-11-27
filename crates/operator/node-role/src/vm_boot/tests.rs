@@ -53,6 +53,7 @@ fn valid_env_for_role(role: &str) -> String {
             "OUTBE_BOOTNODES=\"enode://abcd@10.0.0.1:30303\"\n",
             "OUTBE_CONSENSUS_PEERS=\"{peer_key}@10.0.0.1:30400\"\n",
             "OUTBE_CONSENSUS_EXTRA_ARGS=\"--consensus.use-local-defaults\"\n",
+            "OUTBE_HYPERLANE_FUNDING_WEI=\"1000000000000000000\"\n",
             "OUTBE_CHAIN_ID=\"707\"\n",
         ),
         role = role,
@@ -90,6 +91,11 @@ fn build_valid_root() -> tempfile::TempDir {
             "reorg_period = 0\n",
         )
         .as_bytes(),
+        0o640,
+    );
+    write_file_mode(
+        &root.join("reth.toml"),
+        b"[peers]\nincoming_ip_throttle_duration = \"30s\"\n",
         0o640,
     );
     write_file_mode(
@@ -412,6 +418,11 @@ fn build_valid_full_node_root() -> tempfile::TempDir {
         0o644,
     );
     write_file_mode(&root.join(".bb-crs/bn254_g1.dat"), b"crs", 0o644);
+    write_file_mode(
+        &root.join("reth.toml"),
+        b"[peers]\nincoming_ip_throttle_duration = \"30s\"\n",
+        0o640,
+    );
     dir
 }
 
@@ -616,6 +627,7 @@ fn vm_role_services_match_exact_per_role_units() {
             "outbe-radicle.service",
             "outbe-validator.service",
             "outbe-feeder.service",
+            "outbe-hyperlane-validator.service",
         ]
     );
     assert_eq!(
@@ -624,6 +636,7 @@ fn vm_role_services_match_exact_per_role_units() {
             "outbe-radicle.service",
             "outbe-joining-validator.service",
             "outbe-feeder.service",
+            "outbe-hyperlane-validator.service",
         ]
     );
     assert_eq!(

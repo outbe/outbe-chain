@@ -262,6 +262,7 @@ fn emit_single_vm_founder_tree(
         "validator.env",
         "feeder-public.toml",
         "hyperlane-public.toml",
+        "reth.toml",
     ] {
         fs::set_permissions(tree.join(name), fs::Permissions::from_mode(0o640))?;
     }
