@@ -1,25 +1,6 @@
 [
   {
     "type": "event",
-    "name": "MetadosisCanceled",
-    "inputs": [
-      {
-        "name": "emissionDay",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "reason",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "uint8"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "MetadosisCompleted",
     "inputs": [
       {
@@ -68,25 +49,6 @@
       },
       {
         "name": "excessMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "MetadosisLimitSet",
-    "inputs": [
-      {
-        "name": "emissionDay",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "metadosisLimitMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

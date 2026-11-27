@@ -41,7 +41,32 @@
             "internalType": "uint8"
           },
           {
+            "name": "desisState",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
             "name": "emissionLimit",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "validatorsLimit",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "ccaLimit",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "waaLimit",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "sraLimit",
             "type": "uint128",
             "internalType": "uint128"
           },
@@ -51,7 +76,17 @@
             "internalType": "uint128"
           },
           {
+            "name": "lysisLimit",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
             "name": "desisLimit",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "nominalAmount",
             "type": "uint128",
             "internalType": "uint128"
           },
@@ -81,9 +116,14 @@
             "internalType": "uint128"
           },
           {
-            "name": "promisLimit",
+            "name": "intexes",
             "type": "uint128",
             "internalType": "uint128"
+          },
+          {
+            "name": "promisLimit",
+            "type": "int128",
+            "internalType": "int128"
           }
         ]
       }
@@ -94,27 +134,6 @@
     "type": "error",
     "name": "AmountOverflow",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ConflictingWwdLink",
-    "inputs": [
-      {
-        "name": "day",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "existingWwd",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "attemptedWwd",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ]
   },
   {
     "type": "error",
@@ -134,17 +153,12 @@
   },
   {
     "type": "error",
-    "name": "DayAlreadyAllocated",
+    "name": "EmissionDayExists",
     "inputs": [
       {
         "name": "day",
         "type": "uint32",
         "internalType": "uint32"
-      },
-      {
-        "name": "state",
-        "type": "uint8",
-        "internalType": "uint8"
       }
     ]
   },
@@ -152,6 +166,27 @@
     "type": "error",
     "name": "EmissionDayNotFound",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidDesisStateTransition",
+    "inputs": [
+      {
+        "name": "day",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "fromState",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "toState",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
   },
   {
     "type": "error",
