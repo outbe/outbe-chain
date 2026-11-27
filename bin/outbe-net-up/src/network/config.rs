@@ -20,8 +20,10 @@ use serde::{Deserialize, Serialize};
 
 pub const CONFIG_VERSION: u32 = 1;
 pub const MIN_FOUNDERS: usize = 4;
-pub const DEFAULT_EPOCH_LENGTH_BLOCKS: u64 = 1200;
-pub const DEFAULT_DKG_PREPARE_WINDOW_BLOCKS: u64 = 300;
+/// One hour at the 1 s minimum block time: the validator set changes at most once an hour.
+pub const DEFAULT_EPOCH_LENGTH_BLOCKS: u64 = 3600;
+/// 15 minutes at the 1 s minimum block time: the DKG ceremony starts 15 minutes before the epoch ends.
+pub const DEFAULT_DKG_PREPARE_WINDOW_BLOCKS: u64 = 900;
 pub const DEFAULT_DKG_ACTIVATION_GRACE_BLOCKS: u64 = 300;
 /// Minimum safe DKG prepare/activation grace window in blocks.
 /// Shorter windows risk starving `ACK_COLLECTION_GRACE` (30s) at ~4 blocks/s.
@@ -1289,7 +1291,7 @@ genesis:
 
     #[test]
     fn rejects_dkg_windows_below_minimum_and_accepts_floor_and_defaults() {
-        // Omitting epoch & DKG fields is valid (build applies safe 1200/300/300 defaults).
+        // Omitting epoch & DKG fields is valid (build applies safe 3600/900/300 defaults).
         config_with(4).validate().unwrap();
 
         // Prepare window < 120 blocks must be refused with a clear error.

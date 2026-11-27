@@ -80,8 +80,9 @@ genesis:
   # base: ./custom-genesis.json
   # Omit timestamp for a fresh launch time. Set it to reproduce one exact genesis.
   # timestamp: 1793795928
-  epoch_length_blocks: 1200
-  dkg_prepare_window_blocks: 300
+  # Blocks are at least 1 s apart: 3600 blocks is at least one hour, 900 blocks at least 15 minutes.
+  epoch_length_blocks: 3600
+  dkg_prepare_window_blocks: 900
   dkg_activation_grace_blocks: 300
   prefunded_accounts:
     "0x1111111111111111111111111111111111111111": "1000000000000000000000"

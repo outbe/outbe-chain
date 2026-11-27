@@ -281,8 +281,8 @@ fn genesis_cli_config_defaults_epoch_and_dkg_windows_when_omitted() {
 
     let (keys, _) = feeder_keys(temp.path(), config.founders.len());
     let defaulted = genesis_cli_config(&config, temp.path(), &keys, None).unwrap();
-    assert_eq!(defaulted["epoch_length_blocks"], 1200);
-    assert_eq!(defaulted["dkg_prepare_window_blocks"], 300);
+    assert_eq!(defaulted["epoch_length_blocks"], 3600);
+    assert_eq!(defaulted["dkg_prepare_window_blocks"], 900);
     assert_eq!(defaulted["dkg_activation_grace_blocks"], 300);
     outbe_genesis_cli::network::validate_config(&defaulted).unwrap();
 

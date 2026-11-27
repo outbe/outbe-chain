@@ -97,8 +97,8 @@ feeder:
 topology:
   use_local_defaults: false
 genesis:
-  epoch_length_blocks: 1200
-  dkg_prepare_window_blocks: 300
+  epoch_length_blocks: 3600
+  dkg_prepare_window_blocks: 900
   dkg_activation_grace_blocks: 300
   prefunded_accounts: {}
 ```
@@ -113,8 +113,8 @@ Configuration rules:
 - Optionally set per-founder `rpc_port` (default `8545`, written to `OUTBE_RPC_PORT`) or pass `--rpc-port` to `add-validator` / `add-full-node`; RPC ports must be in `1..=65535` and distinct from all other configurable ports and fixed service ports (`8551`, `8876`, `9000`, `9002`, `9003`, `9101`).
 - Set `topology.use_local_defaults: false` when founders advertise public IPs across hosts.
 - For non-devnet VM networks (such as `testnet`), configure `feeder.rpc_endpoints` in `network.yaml` for every external chain ID required by the active feeder profile (`1`, `97`, and `11155111` for `testnet/pairs.toml`), plus `feeder.api_keys.<provider>` if a profile uses an API-key provider. `network build` embeds these endpoints into every validator `feeder-public.toml` (both founders and `joining/operator-config.example.yaml` for `add-validator`) and refuses to build if any required chain ID is missing or any `REPLACE_WITH_` placeholder remains. Devnet (`network: devnet`) uses the self-contained `mock` provider and requires no external feeder RPCs.
-- When `genesis.base` is not set, `network build` defaults omitted epoch and DKG fields to `1200 / 300 / 300`.
-- `network build` refuses `dkg_prepare_window_blocks < 120` or `dkg_activation_grace_blocks < 120`. Shorter windows risk starving DKG `ACK_COLLECTION_GRACE` (30s) at ~4 blocks/s.
+- When `genesis.base` is not set, `network build` defaults omitted epoch and DKG fields to `3600 / 900 / 300`. Blocks are at least 1 s apart, so this is at least one hour per epoch and at least 15 minutes for the DKG prepare window.
+- `network build` refuses `dkg_prepare_window_blocks < 120` or `dkg_activation_grace_blocks < 120`. Shorter windows risk starving DKG `ACK_COLLECTION_GRACE` (30s).
 
 ## Build, deploy, start, and inspect
 
@@ -173,8 +173,10 @@ outbe-net-up network add-validator \
   --port-offset 2 \
   --memory-gib 16 \
   --ssh-key ~/.ssh/id_ed25519 \
-  --timeout 900
+  --timeout 6000
 ```
+
+`add-validator` waits for the DKG activation at an epoch boundary. With hourly epochs this takes up to 75-80 minutes.
 
 Add a strictly keyless full-node VM and check finalized block tracking:
 
@@ -199,7 +201,7 @@ outbe-net-up network update \
   --image-archive ./outbe-vm-image-v1-dev-<new-hash16>.tar.zst \
   --software-bundle ./outbe-software-bundle-v1-<new-commit>.tar.zst \
   --ssh-key ~/.ssh/id_ed25519 \
-  --timeout 900 \
+  --timeout 4500 \
   --stop-timeout 120 \
   --max-lag 20 \
   --min-finalized-blocks 10 \

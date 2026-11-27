@@ -57,7 +57,7 @@
 //! # Startup invariants
 //!
 //! The genesis reader enforces these at node start (structured error, no panic):
-//! `0 < leaderTimeoutMs <= certificationTimeoutMs`.
+//! `MIN_BLOCK_TIME_MS < leaderTimeoutMs <= certificationTimeoutMs`.
 
 /// Default Simplex leader (proposal) timeout, in milliseconds.
 ///

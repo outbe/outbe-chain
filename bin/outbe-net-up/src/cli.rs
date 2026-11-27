@@ -204,7 +204,9 @@ enum NetworkCommand {
         #[arg(long)]
         ssh_config: Option<PathBuf>,
         /// Overall timeout in seconds for sync, stake, DKG activation, and post-activation lockstep.
-        #[arg(long, default_value_t = 900)]
+        /// The default covers a join after the DKG freeze of an hourly epoch: one epoch plus one
+        /// prepare window (4500 blocks) at about 1.1 s per block, plus sync and stake time.
+        #[arg(long, default_value_t = 6000)]
         timeout: u64,
         /// Maximum acceptable finalized block lag.
         #[arg(long, default_value_t = 20)]
@@ -316,7 +318,9 @@ enum NetworkCommand {
         #[arg(long)]
         ssh_config: Option<PathBuf>,
         /// Per-VM post-update recovery timeout (and post-rollout DKG boundary timeout) in seconds.
-        #[arg(long, default_value_t = 600)]
+        /// The default covers the wait for the next boundary of an hourly epoch (3600 blocks at
+        /// about 1.1 s per block).
+        #[arg(long, default_value_t = 4500)]
         timeout: u64,
         /// Graceful guest shutdown timeout in seconds passed to `outbe-up vm update` (never forced).
         #[arg(long, default_value_t = 120)]
