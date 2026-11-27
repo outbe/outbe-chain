@@ -130,7 +130,10 @@ contract DeployAllTest is Test {
     }
 
     function test_DeployAll_ReRunKeepsTheProxiesAndWritesNothing() public {
+        // Forge puts its linked-library deployments into a test's first recording.
+        vm.startStateDiffRecording();
         script.deployWith(PK, _config(false));
+        vm.stopAndReturnStateDiff();
 
         vm.startStateDiffRecording();
         script.deployWith(PK, _config(false));
