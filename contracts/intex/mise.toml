@@ -64,13 +64,6 @@ set -a; f="${ENV_FILE:-.env}"; [ -f "$f" ] && . "$f"; set +a
 forge script script/6_HandOver.s.sol:HandOver --rpc-url "$NETWORK" --broadcast --slow --legacy -vvv --skip-simulation
 '''
 
-[tasks.prepare-upgrade]
-description = "Deploy new Intex implementations and print the upgradeContracts payload"
-run = '''
-set -a; f="${ENV_FILE:-.env}"; [ -f "$f" ] && . "$f"; set +a
-forge script script/PrepareUpgrade.s.sol:PrepareUpgrade --rpc-url "$NETWORK" --broadcast --slow --legacy -vvv --skip-simulation
-'''
-
 [tasks.clean]
 description = "Clean up forge artifacts"
 run = "forge clean"
