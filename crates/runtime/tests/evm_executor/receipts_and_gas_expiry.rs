@@ -153,6 +153,8 @@ pub(super) fn run() {
 
 #[test]
 fn hyperlane_liveness_gross_work_grows_with_domain_population() {
+    use outbe_validatorset::{test_support::StorageOverrides, EpochSnapshot};
+
     let mut previous_gross = 0;
     for domain_count in [1u32, 64, 256] {
         let signer = test_evm_signer();
@@ -168,6 +170,14 @@ fn hyperlane_liveness_gross_work_grows_with_domain_population() {
                     .last_accounted_block_number
                     .write(148)
                     .expect("prior parent accounting");
+                outbe_validatorset::contract::ValidatorSet::new(storage.clone())
+                    .test_set_epoch_snapshot(EpochSnapshot {
+                        number: U256::from(1),
+                        start_timestamp: 0,
+                        start_block: 150,
+                        length_blocks: 60,
+                    })
+                    .expect("Hyperlane liveness boundary fixture");
                 let controller =
                     outbe_hyperlanecontroller::schema::HyperlaneControllerContract::new(storage);
                 controller
