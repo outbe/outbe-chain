@@ -243,7 +243,7 @@ pub fn create_gem_factory_position(
     Ok(gem_factory_position_id)
 }
 
-/// Burn `units` of the merchant's Issued Intex into the position (BURNER_ROLE). Reverts on
+/// Burn `units` of the merchant's Issued Intex into the position. Reverts on
 /// zero units or more than the merchant holds.
 fn send_intex_to_gem_factory(
     storage: &StorageHandle<'_>,

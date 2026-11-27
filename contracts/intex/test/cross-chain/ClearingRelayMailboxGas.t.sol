@@ -1,0 +1,310 @@
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.30;
+
+import {Test, Vm} from "forge-std/Test.sol";
+import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
+import {IERC7786GatewaySource} from "@openzeppelin/contracts/interfaces/draft-IERC7786.sol";
+
+import {IntexAuctionTargetRouter} from "@contracts/target/IntexAuctionTargetRouter.sol";
+import {IIntexAuctionTargetRouter} from "@contracts/target/interfaces/IIntexAuctionTargetRouter.sol";
+import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
+import {IGatewayQuote} from "@crosschain/interfaces/IGatewayQuote.sol";
+import {IMailbox} from "@crosschain/interfaces/IHyperlane.sol";
+import {IntexGas} from "@contracts/shared/libs/IntexGas.sol";
+import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
+import {DeployProxy} from "../utils/DeployProxy.sol";
+import {MockERC7786Bridge} from "@test-mocks/MockERC7786Bridge.sol";
+
+/// @notice What the hub and its Hyperlane adapter do on the way out, wired to the real mailbox.
+/// @dev This file reproduces them rather than importing them from `contracts/crosschain`. Compiling
+///      that into this project puts it in its own solc unit, and the upgrades-core layout validator
+///      cannot dereference that unit. Both wraps are byte-identical to production, so the mailbox
+///      hashes and logs a production-sized message.
+contract LocalHyperlaneGateway is IERC7786GatewaySource, IGatewayQuote {
+    using InteroperableAddress for bytes;
+
+    IMailbox private immutable MAILBOX;
+    uint32 private immutable DOMAIN;
+    uint256 private _nonce;
+
+    bytes4 private constant GAS_LIMIT_SELECTOR = bytes4(keccak256("executionGasLimit(uint256)"));
+    uint16 private constant HOOK_METADATA_VARIANT = 1;
+    uint256 private constant DEFAULT_GAS_LIMIT = 200_000;
+
+    constructor(address mailbox, uint32 domain) {
+        MAILBOX = IMailbox(mailbox);
+        DOMAIN = domain;
+    }
+
+    function supportsAttribute(bytes4) external pure returns (bool) {
+        return true;
+    }
+
+    function quote(bytes calldata recipient, bytes calldata payload) external view returns (uint256) {
+        return _quote(recipient, payload, DEFAULT_GAS_LIMIT);
+    }
+
+    function quote(bytes calldata recipient, bytes calldata payload, bytes[] calldata attributes)
+        external
+        view
+        returns (uint256)
+    {
+        return _quote(recipient, payload, _gasAttribute(attributes));
+    }
+
+    function sendMessage(bytes calldata recipient, bytes calldata payload, bytes[] calldata attributes)
+        external
+        payable
+        returns (bytes32)
+    {
+        return MAILBOX.dispatch{value: msg.value}(
+            DOMAIN, _self(), _body(recipient, payload, ++_nonce), _metadata(_gasAttribute(attributes))
+        );
+    }
+
+    /// @dev Hub wrap (nonce, sender, recipient, payload) inside the adapter wrap (sender, recipient, body).
+    function _body(bytes calldata recipient, bytes calldata payload, uint256 nonce)
+        private
+        view
+        returns (bytes memory)
+    {
+        bytes memory sender = InteroperableAddress.formatEvmV1(block.chainid, msg.sender);
+        return abi.encode(sender, recipient, abi.encode(nonce, sender, recipient, payload));
+    }
+
+    function _quote(bytes calldata recipient, bytes calldata payload, uint256 gasLimit) private view returns (uint256) {
+        return MAILBOX.quoteDispatch(DOMAIN, _self(), _body(recipient, payload, _nonce + 1), _metadata(gasLimit));
+    }
+
+    function _self() private view returns (bytes32) {
+        return bytes32(uint256(uint160(address(this))));
+    }
+
+    function _metadata(uint256 gasLimit) private view returns (bytes memory) {
+        return abi.encodePacked(HOOK_METADATA_VARIANT, uint256(0), gasLimit, msg.sender);
+    }
+
+    function _gasAttribute(bytes[] calldata attributes) private pure returns (uint256) {
+        for (uint256 i = 0; i < attributes.length; i++) {
+            if (bytes4(attributes[i]) == GAS_LIMIT_SELECTOR) return abi.decode(attributes[i][4:], (uint256));
+        }
+        return DEFAULT_GAS_LIMIT;
+    }
+}
+
+/// @dev Bids live in storage and `setUp` seeds them, so the relay reads them cold as in production.
+///      `GasBudget.t.sol`'s stub fabricates them in memory and misses two slots per bid.
+contract StoredBidStub {
+    IIntexAuction.SubmittedIntexAuctionBidData[] private _bids;
+    uint256 private _visible;
+    uint256 private _flipGas;
+
+    function seed(uint256 count) external {
+        for (uint256 i = 0; i < count; ++i) {
+            _bids.push(
+                IIntexAuction.SubmittedIntexAuctionBidData({
+                    bidder: address(uint160(0xCAFE + i)),
+                    intexBidRate: 100e6,
+                    intexQuantity: 1,
+                    timestamp: uint32(block.timestamp),
+                    issuanceCurrency: 840,
+                    referenceCurrency: 840
+                })
+            );
+        }
+    }
+
+    function setVisible(uint256 count) external {
+        _visible = count;
+    }
+
+    function setFlipGas(uint256 gasCost) external {
+        _flipGas = gasCost;
+    }
+
+    /// @dev Burns what the real flip costs (452k, `GasBudget.t.sol`) so a budget test pays for it.
+    function startAuctionClearing(uint32) external view {
+        uint256 floorGas = gasleft() - _flipGas;
+        uint256 spin;
+        while (gasleft() > floorGas) {
+            ++spin;
+        }
+    }
+
+    function auctionStage(uint32) external pure returns (IIntexAuction.AuctionStage) {
+        return IIntexAuction.AuctionStage.AwaitingResult;
+    }
+
+    function revealedIntexAuctionBidsCount(uint32) external view returns (uint256) {
+        return _visible;
+    }
+
+    function revealedIntexAuctionBidsSlice(uint32, uint256 offset, uint256 limit)
+        external
+        view
+        returns (IIntexAuction.SubmittedIntexAuctionBidData[] memory slice)
+    {
+        uint256 length = _visible;
+        if (offset >= length) return new IIntexAuction.SubmittedIntexAuctionBidData[](0);
+        uint256 end = offset + limit;
+        if (end > length) end = length;
+        slice = new IIntexAuction.SubmittedIntexAuctionBidData[](end - offset);
+        for (uint256 i = 0; i < slice.length; ++i) {
+            slice[i] = _bids[offset + i];
+        }
+    }
+}
+
+/// @notice What one bids relay costs on a target chain, per bid count. Run with `--isolate`.
+/// @dev The round budgets are cut from the fixed part, the step 64 -> 65 (one chunk) and the step
+///      1 -> 64 (per bid). `_measure` drives `sendIntexAuctionBidsToOutbe` as the router itself, so only the
+///      relay is in the reading: ~157k a send and ~8.7k a bid. The inbound clearing handler uses
+///      the same entry. On top of that, the budgets carry ~40k a send for the hub's frame and nonce
+///      write. The fixed part reads 490k-565k depending on the fork block, because what the
+///      mailbox's merkle insert touches moves with the tree's state. The budgets' 1.5x covers that
+///      drift.
+abstract contract RelayGasBase is Test {
+    /// @dev The canonical IGP prices this domain, which `quoteDispatch` needs.
+    uint32 internal constant DST_CHAIN_ID = 56;
+    uint32 internal constant EMISSION_DAY = 20260501;
+    uint256 internal constant SEEDED_BIDS = 256;
+
+    IntexAuctionTargetRouter internal router;
+    StoredBidStub internal stub;
+    address internal admin = address(this);
+    address internal outbeIca = address(0x0B1);
+
+    function _interop(uint32 chainId, address a) internal pure returns (bytes memory) {
+        return InteroperableAddress.formatEvmV1(chainId, a);
+    }
+
+    function _measure(uint256 bids) internal returns (uint256 spent) {
+        stub.setVisible(bids);
+        vm.prank(address(router));
+        uint256 before = gasleft();
+        router.sendIntexAuctionBidsToOutbe(EMISSION_DAY);
+        spent = before - gasleft();
+    }
+
+    function _wireRouter(address bridge) internal {
+        stub = new StoredBidStub();
+        stub.seed(SEEDED_BIDS);
+        router = DeployProxy.targetRouter(
+            bridge,
+            admin,
+            DeployProxy.TargetRouterLinks(
+                DST_CHAIN_ID, DeployProxy.WCOEN_BRIDGE, address(stub), makeAddr("intex"), makeAddr("escrow"), outbeIca
+            )
+        );
+        vm.deal(address(router), 100 ether);
+    }
+
+    function test_Relay0Bids() public {
+        emit log_named_uint(string.concat(_label(), "_0bids"), _measure(0));
+    }
+
+    function test_Relay1Bid() public {
+        emit log_named_uint(string.concat(_label(), "_1bid"), _measure(1));
+    }
+
+    function test_Relay64Bids() public {
+        emit log_named_uint(string.concat(_label(), "_64bids"), _measure(64));
+    }
+
+    function test_Relay65Bids() public {
+        emit log_named_uint(string.concat(_label(), "_65bids"), _measure(65));
+    }
+
+    function test_Relay128Bids() public {
+        emit log_named_uint(string.concat(_label(), "_128bids"), _measure(128));
+    }
+
+    function test_Relay256Bids() public {
+        emit log_named_uint(string.concat(_label(), "_256bids"), _measure(256));
+    }
+
+    function _label() internal pure virtual returns (string memory);
+}
+
+/// @notice The relay against the canonical Hyperlane mailbox, over a mainnet fork.
+/// @dev A real `dispatch` inserts into the live merkle tree, runs the default hook and pays the
+///      IGP. The mock does none of it. The test skips without an endpoint, so CI stays offline.
+contract ClearingRelayRealMailboxTest is RelayGasBase {
+    address internal constant MAILBOX = 0xc005dc82818d67AF737725bD4bf75435d065D239;
+
+    /// @dev What flipping the auction to Clearing costs on the real contract (`GasBudget.t.sol`).
+    uint256 internal constant STAGE_FLIP_GAS = 452_000;
+
+    LocalHyperlaneGateway internal gateway;
+
+    function setUp() public {
+        string memory rpc = vm.envOr("ETH_MAINNET_RPC_URL", string(""));
+        if (bytes(rpc).length == 0) {
+            vm.skip(true);
+            return;
+        }
+        vm.createSelectFork(rpc);
+
+        gateway = new LocalHyperlaneGateway(MAILBOX, DST_CHAIN_ID);
+        _wireRouter(address(gateway));
+    }
+
+    /// @notice `INTEX_AUCTION_CLEARING_START` is the budget that a chain with no history gets, so it has
+    ///         to be worth sending. The round must place at least one chunk and report the rest.
+    ///         Otherwise the day stalls waiting for a hand.
+    /// @dev The Interchain Account of Outbe hands the CLEARING over, and the stage flip runs at its
+    ///      measured price. The outbound sends go against the canonical mailbox. The cap is the
+    ///      budget less two 63/64 steps. These steps pay for the call frames that production has
+    ///      between the mailbox and the router, which this stand collapses.
+    function test_TheClearingFloorPlacesAChunkAndReportsTheRest() public {
+        stub.setVisible(SEEDED_BIDS);
+        stub.setFlipGas(STAGE_FLIP_GAS);
+
+        bytes memory message = BridgeMsgCodec.encodeIntexAuctionClearingStart(EMISSION_DAY);
+        uint256 cap = ((IntexGas.INTEX_AUCTION_CLEARING_START * 63) / 64 * 63) / 64;
+        vm.recordLogs();
+        vm.prank(outbeIca);
+        uint256 before = gasleft();
+        (bool delivered,) =
+            address(router).call{gas: cap}(abi.encodeCall(IntexAuctionTargetRouter.receiveFromOutbe, (message)));
+        emit log_named_uint("floor_cap", cap);
+        emit log_named_uint("floor_spent", before - gasleft());
+        assertTrue(delivered, "the floor could not even carry the delivery");
+
+        (uint16 nextPage, uint16 totalPages, bool done) = router.getIntexAuctionBidsSendState(EMISSION_DAY);
+        emit log_named_uint("floor_chunks_placed", nextPage);
+        assertEq(totalPages, 4, "256 bids span four chunks");
+        assertFalse(done, "the floor is not meant to finish a 256-bid day");
+        assertGe(nextPage, 1, "the floor placed no chunk at all");
+        assertTrue(
+            _sawTopic(IIntexAuctionTargetRouter.IntexAuctionBidsPauseSent.selector), "the remainder was not reported"
+        );
+    }
+
+    function _sawTopic(bytes32 topic) private returns (bool) {
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i = 0; i < logs.length; ++i) {
+            if (logs[i].topics.length != 0 && logs[i].topics[0] == topic) return true;
+        }
+        return false;
+    }
+
+    function _label() internal pure override returns (string memory) {
+        return "relay_real";
+    }
+}
+
+/// @notice The same relay through the mock, to size the stand's distortion.
+/// @dev The mock stores the message body in `lastPayload` at 22 100 per fresh word. This cost
+///      dominates the first chunk and inflates `GasBudget.t.sol`'s clearing curve.
+contract ClearingRelayMockBridgeTest is RelayGasBase {
+    function setUp() public {
+        MockERC7786Bridge bridge = new MockERC7786Bridge();
+        bridge.setAutoDeliver(false);
+        _wireRouter(address(bridge));
+    }
+
+    function _label() internal pure override returns (string memory) {
+        return "relay_mock";
+    }
+}

@@ -13,29 +13,6 @@
     "stateMutability": "nonpayable"
   },
   {
-    "type": "function",
-    "name": "setDependencies",
-    "inputs": [
-      {
-        "name": "intexAuction",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "intexContract",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "escrow",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
     "type": "event",
     "name": "IntexAuctionBidsPauseSendFailed",
     "inputs": [
@@ -291,31 +268,6 @@
   },
   {
     "type": "event",
-    "name": "IntexAuctionTargetRouterDependenciesSet",
-    "inputs": [
-      {
-        "name": "intexAuction",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      },
-      {
-        "name": "intexContract",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      },
-      {
-        "name": "escrow",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "IntexAuctionWinnersReceived",
     "inputs": [
       {
@@ -414,11 +366,6 @@
   },
   {
     "type": "error",
-    "name": "EscrowHasLiveLocks",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "NoFailedIntexSeriesCallNoticeApply",
     "inputs": [
       {
@@ -484,6 +431,17 @@
         "name": "totalPages",
         "type": "uint16",
         "internalType": "uint16"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "UnauthorizedCaller",
+    "inputs": [
+      {
+        "name": "caller",
+        "type": "address",
+        "internalType": "address"
       }
     ]
   },
