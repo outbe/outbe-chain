@@ -630,16 +630,6 @@
   },
   {
     "type": "error",
-    "name": "AlreadyExists",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "AlreadySettled",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "DateStep",
     "inputs": [
       {
@@ -680,6 +670,16 @@
         "internalType": "uint32"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "GemAlreadyExists",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "GemAlreadySettled",
+    "inputs": []
   },
   {
     "type": "error",

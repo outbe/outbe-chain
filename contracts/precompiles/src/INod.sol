@@ -19,7 +19,7 @@ interface INod {
     error GroupUnsettledLoadOverflow(bytes32 groupKey);
     error GroupUnsettledLoadUnderflow(bytes32 groupKey);
     error GroupSettledCountUnderflow(uint256 groupId);
-    error AlreadySettled();
+    error NodAlreadySettled();
     error SettledCountOverflow();
     error GroupMemberIndexOverflow(bytes32 groupKey);
     error GroupMemberCountUnderflowDuringRemoval(bytes32 groupKey);

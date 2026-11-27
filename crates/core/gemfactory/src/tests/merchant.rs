@@ -825,7 +825,7 @@ fn one_owner_gets_one_gem_of_a_sub_series_in_a_block() {
         assert_eq!(
             err.to_string(),
             outbe_primitives::error::PrecompileError::from(
-                outbe_gem::errors::GemError::AlreadyExists
+                outbe_gem::errors::GemError::GemAlreadyExists
             )
             .to_string()
         );

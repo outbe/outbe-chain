@@ -196,7 +196,7 @@ impl NodContract<'_> {
         let mut group = group.into_body();
         check_loaded(self, &item, &group)?;
         if item.is_settled {
-            return Err(NodError::AlreadySettled.into());
+            return Err(NodError::NodAlreadySettled.into());
         }
         group.settled_nods = group
             .settled_nods

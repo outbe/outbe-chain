@@ -18,10 +18,10 @@ pub enum GemError {
     GemNotFound,
 
     #[error("gem is already settled")]
-    AlreadySettled,
+    GemAlreadySettled,
 
     #[error("gem already exists")]
-    AlreadyExists,
+    GemAlreadyExists,
 
     #[error("gem owner is the zero address")]
     ZeroOwner,
@@ -111,8 +111,8 @@ impl From<GemError> for PrecompileError {
         match value {
             GemError::NonTransferable => revert_with(I::NonTransferable {}),
             GemError::GemNotFound => revert_with(I::GemNotFound {}),
-            GemError::AlreadySettled => revert_with(I::AlreadySettled {}),
-            GemError::AlreadyExists => revert_with(I::AlreadyExists {}),
+            GemError::GemAlreadySettled => revert_with(I::GemAlreadySettled {}),
+            GemError::GemAlreadyExists => revert_with(I::GemAlreadyExists {}),
             GemError::ZeroOwner => revert_with(I::ZeroOwner {}),
             GemError::UnknownProfileSelector(value) => {
                 revert_with(I::UnknownProfileSelector { value })

@@ -655,11 +655,6 @@
   },
   {
     "type": "error",
-    "name": "AlreadySettled",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "AmountReadFailed",
     "inputs": [
       {
@@ -832,6 +827,11 @@
   {
     "type": "error",
     "name": "NodAlreadyExists",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NodAlreadySettled",
     "inputs": []
   },
   {

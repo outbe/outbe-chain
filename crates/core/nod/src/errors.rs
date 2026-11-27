@@ -66,7 +66,7 @@ pub enum NodError {
     GroupSettledCountUnderflow { group_id: WwdEntityId },
 
     #[error("nod is already settled")]
-    AlreadySettled,
+    NodAlreadySettled,
 
     #[error("Nod settled count overflow")]
     SettledCountOverflow,
@@ -162,7 +162,7 @@ impl From<NodError> for PrecompileError {
                     groupId: group_id.to_u256(),
                 })
             }
-            NodError::AlreadySettled => revert_with(I::AlreadySettled {}),
+            NodError::NodAlreadySettled => revert_with(I::NodAlreadySettled {}),
             NodError::SettledCountOverflow => revert_with(I::SettledCountOverflow {}),
             NodError::GroupMemberIndexOverflow { group_key } => {
                 revert_with(I::GroupMemberIndexOverflow {
