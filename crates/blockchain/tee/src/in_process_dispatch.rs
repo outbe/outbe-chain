@@ -250,7 +250,9 @@ pub struct InProcessTestGuard {
 #[cfg(any(test, feature = "test-utils"))]
 impl Drop for InProcessTestGuard {
     fn drop(&mut self) {
-        TEST_RUNTIME.with(|slot| *slot.borrow_mut() = self.previous.take());
+        // NB: a guard parked in another thread-local can outlive `TEST_RUNTIME` at thread exit;
+        // there is nothing left to restore then, and panicking in a TLS destructor aborts.
+        let _ = TEST_RUNTIME.try_with(|slot| *slot.borrow_mut() = self.previous.take());
     }
 }
 /// Override only this test thread, including explicitly disabling the installed runtime.
@@ -297,8 +299,25 @@ mod tests {
         assert!(matches!(cause, Some(InProcessError::NotReady)));
     }
 
+    /// A guard parked in a thread-local registered before `TEST_RUNTIME` outlives it at thread
+    /// exit; its drop must not panic inside the TLS destructor, which aborts the process.
+    #[test]
+    fn guard_parked_in_thread_local_survives_thread_exit() {
+        thread_local! {
+            static PARKED: std::cell::RefCell<Option<InProcessTestGuard>> =
+                const { std::cell::RefCell::new(None) };
+        }
+        std::thread::spawn(|| {
+            PARKED.with(|slot| {
+                *slot.borrow_mut() = Some(set_in_process_tee_context_for_test(None));
+            });
+        })
+        .join()
+        .unwrap();
+    }
+
     thread_local! {
-        static NEXT_CONTEXT: std::cell::RefCell<Option<Arc<InProcessTeeContext>>> =
+        static NEXT_CONTEXT:std::cell::RefCell<Option<Arc<InProcessTeeContext>>> =
             const { std::cell::RefCell::new(None) };
         static HELD_GUARD: std::cell::RefCell<Option<InProcessTestGuard>> =
             const { std::cell::RefCell::new(None) };
