@@ -34,7 +34,7 @@ pub fn require_active_cca(storage: &StorageHandle<'_>, cca: Address) -> Result<(
     }
 }
 
-/// Raw GRATIS in one UTC day bucket (YYYYMMDD). Distribution is the only step that normalizes it.
+/// The net GRATIS of `cca` in one UTC day (YYYYMMDD): its weight in the CCA pool of that day.
 pub fn reward_weight(storage: &StorageHandle<'_>, cca: Address, day: u32) -> Result<U256> {
     CcaContract::new(storage.clone())
         .gratis_minor_per_utc_day

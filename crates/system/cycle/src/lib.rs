@@ -5,8 +5,8 @@
 //! fires at every slot `t` where `(t - offset) % period == 0`, on the
 //! first block whose timestamp is `>= t`. If `block.timestamp` jumps
 //! over multiple hourly slots, ProcessEmissionDay fires once for the most recent
-//! slot. It allocates one oldest unallocated completed day within the 64-day derived
-//! horizon. It never allocates the current UTC day.
+//! slot. It starts one oldest completed day not started within the 64-day derived
+//! horizon. It never starts the current UTC day.
 //!
 //! [`tasks::TaskId::ProcessEmissionDay`] fires one second into each UTC hour
 //! (`period = 3_600`, `offset = 1`). Its handler seals the WWDs whose offering ended and, once a

@@ -4,7 +4,7 @@ pragma solidity ^0.8.30;
 /// Reward surface. Each pool and emission day has one rate. An agent claims its days, and the
 /// claim issues the reward as a Gem. The `#[contract_dispatch]` macro synthesizes the Rust dispatch
 /// at compile time from `#[contract_public(...)]` annotations in
-/// `crates/core/agentreward/src/precompile.rs`. The drift test in that crate keeps the two in sync.
+/// `crates/core/agentreward/src/precompile.rs`.
 /// Every `promisLoadMinor` is a PROMIS load in protocol units (6 decimals); a rate has 18 decimal
 /// places; pools are 0 = WAA, 1 = SRA, 2 = CCA, 3 = Validator.
 interface IAgentReward {

@@ -255,3 +255,59 @@ fn same_block_claims_with_different_currencies_have_distinct_ids() {
         assert_eq!(outbe_gem::api::balance_of(&storage, agent(1)).unwrap(), 3);
     });
 }
+
+#[test]
+fn a_claim_of_64_days_issues_one_gem_for_their_sum() {
+    with_storage(|storage| {
+        seed_oracle(&storage, ONE_COEN);
+        let mut days = Vec::new();
+        let mut day = DAY;
+        for _ in 0..MAX_REWARD_DAYS_PER_CALL {
+            sole_waa(&storage, day, agent(1), LOAD);
+            days.push(day);
+            day = outbe_system_common::time::next_date_key(day).unwrap();
+        }
+        AgentRewardContract::new(storage.clone())
+            .redeem_agent_reward(RewardPool::Waa, agent(1), &days, (USD, USD))
+            .unwrap();
+        assert_eq!(
+            gem_of(&storage, agent(1)).item.promis_load_minor,
+            U256::from(LOAD * MAX_REWARD_DAYS_PER_CALL as u128)
+        );
+    });
+}
+
+#[test]
+fn the_last_claim_of_a_day_sends_the_rounding_rest_to_the_promis_limit() {
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    provider.set_timestamp(U256::from(T_NOW));
+    StorageHandle::enter(&mut provider, |storage| {
+        seed_oracle(&storage, ONE_COEN);
+        // A limit of 3 over two equal weights pays 1 to each and leaves 1 of rounding.
+        record_day(&storage, DAY, 3, emission_day_state::PROCESSING);
+        let mut contract = AgentRewardContract::new(storage.clone());
+        offers(&mut contract, DAY, &[(agent(1), 1), (agent(2), 1)]);
+        contract
+            .set_agent_reward_rate(RewardPool::Waa, DAY)
+            .unwrap();
+        assert_eq!(record_of(&storage, DAY).waa, 3);
+        let before = promis_limit(&storage);
+        for owner in [agent(1), agent(2)] {
+            contract
+                .redeem_agent_reward(RewardPool::Waa, owner, &[DAY], (USD, USD))
+                .unwrap();
+        }
+        assert_eq!(promis_limit(&storage), before + U256::ONE);
+        assert_eq!(
+            contract.agent_reward_rate(RewardPool::Waa, DAY).unwrap(),
+            (U256::ZERO, 0, U256::ZERO)
+        );
+    });
+    let returned: Vec<_> = provider
+        .get_ordered_events()
+        .iter()
+        .filter_map(|log| IAgentReward::AgentRewardLimitReturned::decode_log(log).ok())
+        .map(|log| log.data.amountMinor)
+        .collect();
+    assert_eq!(returned, vec![U256::ONE]);
+}
