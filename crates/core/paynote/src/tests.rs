@@ -205,20 +205,19 @@ fn tree_capacity_bound_exceeds_u32() {
 #[test]
 fn deposit_guards_fire_before_any_sub_call() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-    let serial = note(CHAIN_ID, 17, USDC, U256::from(100)).serial;
+    // The block timestamp of a fresh provider is zero.
+    let deadline = runtime::PAYNOTE_TRANSFER_TIMELOCK_SECS;
+    let lock = (b256(Field::from(17u64)), deadline);
 
     provider.enter(|storage| {
-        let result = runtime::deposit(storage, ALICE, (USDC, U256::ZERO, U256::ZERO), b256(serial));
+        let result = runtime::deposit(storage, ALICE, (USDC, U256::ZERO, U256::ZERO), lock);
         assert_revert(result, "PayNote deposit amount must be non-zero");
     });
     let mismatch = "PayNote msg.value must equal amount for native COEN and be zero for ERC20";
     for (asset, value) in [(Address::ZERO, 99u64), (Address::ZERO, 0), (USDC, 100)] {
         provider.enter(|storage| {
             let funds = (asset, U256::from(100), U256::from(value));
-            assert_revert(
-                runtime::deposit(storage, ALICE, funds, b256(serial)),
-                mismatch,
-            );
+            assert_revert(runtime::deposit(storage, ALICE, funds, lock), mismatch);
         });
     }
     provider.enter(|storage| {
@@ -226,9 +225,9 @@ fn deposit_guards_fire_before_any_sub_call() {
             storage,
             ALICE,
             (USDC, U256::from(100), U256::ZERO),
-            B256::ZERO,
+            (B256::ZERO, deadline),
         );
-        assert_revert(result, "PayNote noteSn must be non-zero");
+        assert_revert(result, "PayNote lock must be non-zero");
     });
     provider.enter(|storage| {
         // All-ones is above the BN254 modulus, so it is not a canonical word.
@@ -236,9 +235,17 @@ fn deposit_guards_fire_before_any_sub_call() {
             storage,
             ALICE,
             (USDC, U256::from(100), U256::ZERO),
-            B256::repeat_byte(0xff),
+            (B256::repeat_byte(0xff), deadline),
         );
-        assert_revert(result, "PayNote noteSn is not a canonical BN254 field");
+        assert_revert(result, "PayNote lock is not a canonical BN254 field");
+    });
+    provider.enter(|storage| {
+        let funds = (USDC, U256::from(100), U256::ZERO);
+        let result = runtime::deposit(storage, ALICE, funds, (lock.0, deadline - 1));
+        assert_revert(
+            result,
+            "PayNote transfer deadline is earlier than the 30-day timelock",
+        );
     });
 }
 
@@ -248,10 +255,25 @@ fn deposit_guards_fire_before_any_sub_call() {
 fn native_deposit_books_the_commitment() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let amount = U256::from(100);
-    let fixture = note(CHAIN_ID, 17, Address::ZERO, amount);
+    let deadline = runtime::PAYNOTE_TRANSFER_TIMELOCK_SECS;
+    // Alice deposits for herself: she is both the recipient and the sender.
+    let serial = crate::hash::note_sn(Field::from(17u64)).unwrap();
+    let fixture = crate::test_support::locked_note(
+        CHAIN_ID,
+        (serial, 17, 5),
+        deadline,
+        Address::ZERO,
+        amount,
+    );
     provider.enter(|storage| {
         let funds = (Address::ZERO, amount, amount);
-        runtime::deposit(storage.clone(), ALICE, funds, b256(fixture.serial)).unwrap();
+        runtime::deposit(
+            storage.clone(),
+            ALICE,
+            funds,
+            (b256(fixture.lock), deadline),
+        )
+        .unwrap();
         let paynote: PayNoteContract<'_> = storage.contract();
         assert_eq!(paynote.leaf_count.read().unwrap(), 1);
         assert!(paynote.commitments.read(&b256(fixture.commitment)).unwrap());

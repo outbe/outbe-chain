@@ -2,7 +2,11 @@
 //!
 //! A **deposit** does these steps:
 //! 1. The pool pulls the ERC20 from the caller and keeps it.
-//! 2. It appends a note commitment to a depth-32 incremental Merkle tree.
+//! 2. It appends a locked transfer note to a depth-32 incremental Merkle tree.
+//!
+//! The depositor names the recipient in the lock, as in a transfer. They name
+//! themselves to deposit for themselves. `IPayNote.resolveTransfer` turns the
+//! locked note into an ordinary note that can be spent.
 //!
 //! The runtime derives the commitment from the transfer it actually performed.
 //! The circuit binds the asset in the *commitment* rather than the serial

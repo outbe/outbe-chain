@@ -19,8 +19,9 @@ use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::{sol, SolCall};
 use evm2::evm::{AccountInfo, CacheDB, EmptyDB};
 use outbe_evm::test_support::{install_code, runtime_code, seed_storage, EvmWorld};
-use outbe_paynote::hash::{note_commitment, note_sn};
+use outbe_paynote::hash::{note_sn, transfer_commitment, transfer_lock};
 use outbe_paynote::precompile::IPayNote;
+use outbe_paynote::runtime::PAYNOTE_TRANSFER_TIMELOCK_SECS;
 use outbe_paynote::Field;
 use outbe_primitives::chain::CHAIN_ID;
 use outbe_primitives::storage::{SubCallInput, SubCallOutput, SubCallStatus};
@@ -44,16 +45,21 @@ const VAULT: Address = Address::new([0x55; 20]);
 const UNREGISTERED_ASSET: Address = Address::new([0x66; 20]);
 const TIMESTAMP: u64 = 1_700_000_000;
 const DEPOSIT_AMOUNT: u64 = 1_000;
+const DEADLINE: u64 = TIMESTAMP + PAYNOTE_TRANSFER_TIMELOCK_SECS;
 const SPEND_KEY: u64 = 17;
+const RHO: u64 = 777;
 const ALICE_COEN: u64 = 1_000_000;
 
-fn serial() -> Field {
-    note_sn(Field::from(SPEND_KEY)).unwrap()
+/// Alice deposits for herself: her serial is both the recipient and the
+/// sender of the lock.
+fn lock() -> Field {
+    let serial = note_sn(Field::from(SPEND_KEY)).unwrap();
+    transfer_lock(serial, serial, Field::from(RHO)).unwrap()
 }
 
 /// The commitment the runtime must derive, computed independently here.
 fn expected_commitment(asset: Address, amount: U256) -> B256 {
-    field_to_b256(&note_commitment(CHAIN_ID, serial(), asset, amount).unwrap()).unwrap()
+    field_to_b256(&transfer_commitment(CHAIN_ID, lock(), DEADLINE, asset, amount).unwrap()).unwrap()
 }
 
 /// `ALICE` has both assets and approves the pool for both, and holds native
@@ -114,7 +120,8 @@ fn deposit_with_value(
     let call = IPayNote::depositCall {
         asset,
         amount,
-        noteSn: field_to_b256(&serial()).unwrap(),
+        lock: field_to_b256(&lock()).unwrap(),
+        deadline: DEADLINE,
     };
     let input = SubCallInput {
         target: PAYNOTE_ADDRESS,
@@ -192,7 +199,7 @@ fn deposit_holds_full_width_amount_in_the_pool_and_appends_the_derived_commitmen
             commitment: expected_commitment(ASSET, amount),
         },
     ));
-    // A proof built against the post-deposit root right now would be spendable.
+    // A claim proof built against the post-deposit root right now would resolve.
     let root = world.view(ALICE, PAYNOTE_ADDRESS, IPayNote::currentRootCall {});
     assert!(world.view(ALICE, PAYNOTE_ADDRESS, IPayNote::isKnownRootCall { root }));
 }
@@ -230,7 +237,7 @@ fn a_token_that_delivers_less_than_the_amount_deposits_nothing() {
 }
 
 #[test]
-fn a_duplicate_leaf_reverts_but_a_differing_amount_under_the_same_serial_appends() {
+fn a_duplicate_leaf_reverts_but_a_differing_amount_under_the_same_lock_appends() {
     let mut world = world();
     let amount = U256::from(DEPOSIT_AMOUNT);
     assert!(matches!(

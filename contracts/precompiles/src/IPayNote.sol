@@ -31,9 +31,14 @@ interface IPayNote {
     /// @notice The commitment tree is at its 2^32-leaf capacity.
     error TreeFull();
 
-    /// @notice Deposit `amount` of `asset` into the pool under `noteSn`.
-    /// @dev `noteSn` is the note serial number — a hiding commitment to the spend key,
-    /// chosen off-chain as `P(NOTE_SN, [spendKey])`. It reveals nothing about the key.
+    /// @notice Deposit `amount` of `asset` into the pool as a locked transfer
+    /// note under `lock`.
+    /// @dev `lock` is chosen off-chain as
+    /// `P(TRANSFER_LOCK, [recipientPk, senderSerial, rho])`, the same lock a
+    /// `transfer` uses. It reveals nothing about either party. The recipient
+    /// resolves the note with `resolveTransfer` at any time, and the sender
+    /// from `deadline` on. To deposit for themselves, the caller uses their own
+    /// serial as both `recipientPk` and `senderSerial`.
     /// `asset == address(0)` deposits native COEN: `msg.value` must equal `amount`.
     /// An ERC20 deposit must send no value. A native note can be merged and
     /// withdrawn. It cannot settle a factory payment.
@@ -41,9 +46,11 @@ interface IPayNote {
     /// or `address(0)` for native COEN.
     /// @param amount Units to deposit. For an ERC20, the caller must approve
     /// this pool, and the pool must receive exactly `amount`.
-    /// @param noteSn Caller-supplied note serial. Must be a non-zero canonical
+    /// @param lock Caller-supplied transfer lock. Must be a non-zero canonical
     /// BN254 field word.
-    function deposit(address asset, uint256 amount, bytes32 noteSn) external payable;
+    /// @param deadline Unix time from which the sender may reclaim the note.
+    /// Must be at least 30 days after the block timestamp.
+    function deposit(address asset, uint256 amount, bytes32 lock, uint64 deadline) external payable;
 
     /// @notice Atomically consume 2..maxMergeInputs same-asset notes and append
     /// one ordinary note for their exact sum. Any address may relay the proof.
