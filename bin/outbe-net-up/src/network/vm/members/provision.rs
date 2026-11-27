@@ -18,13 +18,13 @@ use outbe_operator_remote::{run_host_json, shell_quote, validate_ssh, HostExec, 
 use outbe_software_bundle::sha256_file;
 
 use super::super::{
-    build_all_desired_members, build_host_check_command, build_member_state, can_reuse_staged_disk,
-    classify_host_vm, cleanup_remote_dir, ensure_pinned_outbe_up_on_host, ensure_vm_deployment,
+    build_all_desired_members, build_member_state, can_reuse_staged_disk, classify_host_vm,
+    cleanup_remote_dir, ensure_pinned_outbe_up_on_host, ensure_vm_deployment,
     ensure_vm_rpc_reachable_for_orchestration, fetch_host_staged_disks, fetch_host_vms,
     format_failed_host_checks, founder_vm_name, host_key, make_remote_temp_dir, member_owner_tag,
-    parse_host_check_output, publish_image_on_host, resolve_image_source,
-    resolve_state_or_bundled_outbe_up_sha256, shell_quote_tilde_path, DesiredMember, ExitCodeError,
-    HostImageTarget, ImageSource, PublishContext, RemoteCleanStagingOutput, RemoteCleanStaleOutput,
+    publish_image_on_host, resolve_image_source, resolve_state_or_bundled_outbe_up_sha256,
+    run_member_host_checks, shell_quote_tilde_path, DesiredMember, ExitCodeError, HostImageTarget,
+    ImageSource, PublishContext, RemoteCleanStagingOutput, RemoteCleanStaleOutput,
     RemoteDiskPrepareOutput, RemoteHostStatusOutput, RemoteImagePublishOutput, RemoteListedImage,
     RemoteOutbeUp, RemoteStagedDiskInfo, RemoteVmCreateOutput, RemoteVmStartOutput,
     VmClassification, EXIT_CODE_HOST_CONFIG_REQUIRED,
@@ -421,19 +421,7 @@ fn verify_member_host_check(
         "verifying host networking for {label} `{}` (`outbe-up host check`)",
         member.vm_name
     ));
-    let check_cmd = build_host_check_command(member, target_bin, &publish_ctx)?;
-    let raw_check = exec
-        .capture_raw(&member.vmm_host, &member.name, &check_cmd)
-        .wrap_err_with(|| {
-            format!(
-                "run `outbe-up host check` for `{}` on {}",
-                member.vm_name, member.vmm_host.host
-            )
-        })?;
-    let (mut report, rc) = parse_host_check_output(&raw_check, &member.vm_name)?;
-    if rc != 0 || !report.service_ip_ok || !report.host_network_ok || !report.published_ports_ok {
-        report.ready = false;
-    }
+    let report = run_member_host_checks(exec, member, target_bin, &publish_ctx)?;
     if report.ready {
         return Ok(());
     }

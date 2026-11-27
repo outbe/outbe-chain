@@ -772,13 +772,13 @@ fn the_unit_counts_view_reports_the_disjoint_classes() {
     with_factory(|s| {
         runtime::open_intex_series(&s, sample(7)).unwrap();
         outbe_intex::api::record_settled_units(&s, sid(7), owner(), 40).unwrap();
-        outbe_intex::api::record_gem_factory_units(&s, sid(7), owner(), 10).unwrap();
+        outbe_intex::api::record_gem_factory_units(&s, sid(7), 10).unwrap();
         outbe_intex::api::record_mined_units(&s, sid(7), owner(), 15).unwrap();
 
         // Through dispatch, so the selector and the struct encoding are covered too.
         let out = outbe_intex::precompile::dispatch(
             s.clone(),
-            &outbe_intex::precompile::IIntex::seriesUnitCountsCall {
+            &outbe_intex::precompile::IIntex::intexUnitCountsCall {
                 intexId: outbe_intex::intex_id(sid(7)),
             }
             .abi_encode(),
@@ -787,70 +787,13 @@ fn the_unit_counts_view_reports_the_disjoint_classes() {
         )
         .unwrap();
         let counts =
-            outbe_intex::precompile::IIntex::seriesUnitCountsCall::abi_decode_returns(&out)
-                .unwrap();
-        assert_eq!(counts.issuedUnits, 100);
-        assert_eq!(counts.activeUnits, 50);
+            outbe_intex::precompile::IIntex::intexUnitCountsCall::abi_decode_returns(&out).unwrap();
+        assert_eq!(counts.totalUnits, 100);
+        assert_eq!(counts.issuedUnits, 50);
         assert_eq!(counts.settledUnits, 25);
         assert_eq!(counts.minedUnits, 15);
         assert_eq!(counts.gemFactoryUnits, 10);
         assert_eq!(counts.forfeitedUnits, 0);
-    });
-}
-
-/// Live balances count until the series is forfeited. The owner's history stays with the owner.
-#[test]
-fn the_owner_balances_view_reports_live_units_and_owner_history() {
-    use crate::sol_ext::IERC1155;
-
-    let read = |s: &StorageHandle<'_>| {
-        let out = precompile::dispatch(
-            s.clone(),
-            &IIntexFactory::ownerBalancesCall {
-                intexId: outbe_intex::intex_id(sid(7)),
-                owner: owner(),
-            }
-            .abi_encode(),
-            owner(),
-            U256::ZERO,
-        )
-        .unwrap();
-        IIntexFactory::ownerBalancesCall::abi_decode_returns(&out).unwrap()
-    };
-    let mut storage = factory_provider();
-    storage.stub_sub_call_at_selector(
-        crate::constants::INTEX_NFT1155_ADDRESS,
-        IERC1155::balanceOfCall::SELECTOR,
-        word(3),
-    );
-    let stamp = StorageHandle::enter(&mut storage, |s| {
-        select_prod_profile(&s);
-        runtime::open_intex_series(&s, sample(7)).unwrap();
-        outbe_intex::api::record_settled_units(&s, sid(7), owner(), 40).unwrap();
-        outbe_intex::api::record_gem_factory_units(&s, sid(7), owner(), 10).unwrap();
-        outbe_intex::api::record_mined_units(&s, sid(7), owner(), 15).unwrap();
-        outbe_intex::api::call_group_of(&s, sid(7), ISSUED_AT).unwrap();
-
-        let live = read(&s);
-        assert_eq!((live.issuedUnits, live.settledUnits), (3, 25));
-        assert_eq!((live.minedUnits, live.gemFactoryUnits), (15, 10));
-        assert_eq!(live.ownerUnits, 28);
-        let series = outbe_intex::api::get_series(&s, sid(7)).unwrap();
-        outbe_intex::api::call_stamp(&s, &series).unwrap()
-    });
-
-    storage.set_timestamp(U256::from(stamp.deadline + 1));
-    StorageHandle::enter(&mut storage, |s| {
-        let in_transit = read(&s);
-        assert_eq!((in_transit.issuedUnits, in_transit.settledUnits), (3, 25));
-    });
-
-    storage.set_timestamp(U256::from(stamp.close_at + 1));
-    StorageHandle::enter(&mut storage, |s| {
-        let forfeited = read(&s);
-        assert_eq!((forfeited.issuedUnits, forfeited.settledUnits), (0, 25));
-        assert_eq!((forfeited.minedUnits, forfeited.gemFactoryUnits), (15, 10));
-        assert_eq!(forfeited.ownerUnits, 25);
     });
 }
 

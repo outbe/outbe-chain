@@ -103,7 +103,7 @@ pub fn issue_credis(
                 CREDIS_FACTORY_ADDRESS,
                 alloy_sol_types::SolEvent::encode_log_data(&ICredisFactory::CredisSeriesOpened {
                     seriesId: opened.series_id.into(),
-                    subSeries: opened.sub_series,
+                    subSeriesId: u16::from(opened.sub_series),
                     issuanceCurrency: opened.issuance_currency,
                     referenceCurrency: opened.reference_currency,
                     entryPriceMinor: opened.entry_price_minor,
@@ -120,6 +120,7 @@ pub fn issue_credis(
                 credisId: id,
                 owner: r.credis_owner,
                 seriesId: opened.series_id.into(),
+                subSeriesId: u16::from(opened.sub_series),
                 issuanceCurrency: opened.issuance_currency,
                 referenceCurrency: opened.reference_currency,
                 cca: r.cca,
@@ -133,17 +134,31 @@ pub fn issue_credis(
     })
 }
 
+/// A settlement quote: the full payoff, and the fee in it that is also the smallest payment.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SettlementQuote {
+    pub payoff_minor: U256,
+    pub fee_minor: U256,
+}
+
 /// What paying `credis_id` off now takes: outstanding amount plus accrued fee.
 /// Zero once it is Forfeited by its deadline. A deleted Credis has no record to quote.
-pub fn quote_settlement(storage: &StorageHandle<'_>, credis_id: U256) -> Result<U256> {
+pub fn quote_settlement(storage: &StorageHandle<'_>, credis_id: U256) -> Result<SettlementQuote> {
     let record = CredisContract::new(storage.clone()).get_credis(credis_id)?;
     let now = storage.now_secs()?;
     match effective_state(&record, now)? {
-        CredisState::Settled | CredisState::Forfeited => Ok(U256::ZERO),
-        CredisState::Issued | CredisState::Called => record
-            .outstanding_amount_minor
-            .checked_add(CredisContract::accrued_fee(&record, now)?)
-            .ok_or_else(|| CredisFactoryError::PayoffOverflow.into()),
+        CredisState::Settled | CredisState::Forfeited => Ok(SettlementQuote::default()),
+        CredisState::Issued | CredisState::Called => {
+            let fee_minor = CredisContract::accrued_fee(&record, now)?;
+            let payoff_minor = record
+                .outstanding_amount_minor
+                .checked_add(fee_minor)
+                .ok_or(CredisFactoryError::PayoffOverflow)?;
+            Ok(SettlementQuote {
+                payoff_minor,
+                fee_minor,
+            })
+        }
     }
 }
 

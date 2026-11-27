@@ -133,6 +133,7 @@ fn build_founder_tree(tree: &Path, chain_id: u64) {
                 "OUTBE_BOOTNODES=\"enode://abcd@10.77.0.10:30303\"\n",
                 "OUTBE_CONSENSUS_PEERS=\"{peer_key}@10.77.0.10:30400\"\n",
                 "OUTBE_CONSENSUS_EXTRA_ARGS=\"--consensus.use-local-defaults\"\n",
+                "OUTBE_HYPERLANE_FUNDING_WEI=\"1000000000000000000\"\n",
                 "OUTBE_CHAIN_ID=\"{chain_id}\"\n",
             ),
             peer_key = peer_key,
@@ -155,7 +156,7 @@ fn build_founder_tree(tree: &Path, chain_id: u64) {
                 "gasless = true\n\n",
                 "[health]\n",
                 "enabled = true\n",
-                "bind_address = \"127.0.0.1:9003\"\n\n",
+                "bind_address = \"10.77.0.10:9003\"\n\n",
                 "[storage]\n",
                 "db_path = \"/opt/outbe-chain/state/hyperlane/db\"\n\n",
                 "[server]\n",
@@ -163,13 +164,18 @@ fn build_founder_tree(tree: &Path, chain_id: u64) {
                 "public_url = \"http://10.77.0.10:9000\"\n\n",
                 "[[origin]]\n",
                 "domain = {chain_id}\n",
-                "rpc_urls = [\"http://127.0.0.1:8545\"]\n",
+                "rpc_urls = [\"http://10.77.0.10:8545\"]\n",
                 "rpc_consensus = \"single\"\n",
                 "reorg_period = 0\n",
             ),
             chain_id = chain_id
         )
         .as_bytes(),
+        0o640,
+    );
+    write_mode(
+        &tree.join("reth.toml"),
+        b"[peers]\nincoming_ip_throttle_duration = \"30s\"\n",
         0o640,
     );
 
@@ -833,6 +839,7 @@ fn full_node_disk_prepare_has_zero_keys_is_deterministic_and_device_target_refus
         "outbe-chain/genesis.json",
         "outbe-chain/.bb-crs/bn254_g1.dat",
         "outbe-chain/validator.env",
+        "outbe-chain/reth.toml",
     ] {
         let (exists, _) = debugfs_stat(&part, required);
         assert!(exists, "missing {required} in full-node disk");

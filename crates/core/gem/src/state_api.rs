@@ -95,7 +95,7 @@ impl GemContract<'_> {
             return Err(GemError::ZeroOwner.into());
         }
         if self.records.get(item.gem_id)?.is_some() {
-            return Err(GemError::AlreadyExists.into());
+            return Err(GemError::GemAlreadyExists.into());
         }
         let group_key = item.group_key;
         let group_id = item.group_id().map_err(date_step_error)?;
@@ -145,7 +145,7 @@ impl GemContract<'_> {
         let mut group = group.into_body();
         check_loaded(self, &item, &group)?;
         if item.is_settled() {
-            return Err(GemError::AlreadySettled.into());
+            return Err(GemError::GemAlreadySettled.into());
         }
         group.settled_gems = group
             .settled_gems

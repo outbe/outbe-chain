@@ -373,7 +373,7 @@ library BridgeMsgCodec {
 
     /// @notice One series of the issuance instructions. It is grouped into a struct to keep the
     ///         encoder/decoder API resilient against EVM stack depth limits.
-    /// @dev `issuedUnits` mirrors the auction-cleared count across all chains.
+    /// @dev `totalUnits` mirrors the auction-cleared count across all chains.
     struct IntexSeriesPayload {
         bytes14 seriesId;
         /// @notice Emission day the series was derived from. It is carried so the destination
@@ -381,7 +381,7 @@ library BridgeMsgCodec {
         uint32 emissionDay;
         /// @notice When the origin created the series, so every chain dates it from the same moment.
         uint64 issuedAt;
-        uint32 issuedUnits;
+        uint32 totalUnits;
         uint128 promisLoadMinor;
         uint64 entryPriceMinor;
         /// @notice Duration in seconds between Called and the settlement deadline. 0 uses default.

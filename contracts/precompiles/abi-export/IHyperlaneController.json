@@ -19,6 +19,25 @@
   },
   {
     "type": "function",
+    "name": "deliveryIndex",
+    "inputs": [
+      {
+        "name": "domain",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "domains",
     "inputs": [],
     "outputs": [
@@ -172,6 +191,19 @@
   },
   {
     "type": "function",
+    "name": "livenessRound",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "missCount",
     "inputs": [
       {
@@ -191,6 +223,30 @@
   },
   {
     "type": "function",
+    "name": "reportedRound",
+    "inputs": [
+      {
+        "name": "validator",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "domain",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "setHyperlaneSigner",
     "inputs": [
       {
@@ -204,10 +260,15 @@
   },
   {
     "type": "function",
-    "name": "submitCheckpoint",
+    "name": "submitReport",
     "inputs": [
       {
         "name": "domain",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "index",
         "type": "uint32",
         "internalType": "uint32"
       },
@@ -217,19 +278,19 @@
         "internalType": "bytes32"
       },
       {
-        "name": "index",
+        "name": "latestIndex",
         "type": "uint32",
         "internalType": "uint32"
       },
       {
-        "name": "messageId",
-        "type": "bytes32",
-        "internalType": "bytes32"
+        "name": "notServing",
+        "type": "address[]",
+        "internalType": "address[]"
       },
       {
-        "name": "signature",
-        "type": "bytes",
-        "internalType": "bytes"
+        "name": "notDelivered",
+        "type": "address[]",
+        "internalType": "address[]"
       }
     ],
     "outputs": [],
@@ -392,6 +453,25 @@
   },
   {
     "type": "event",
+    "name": "DeliveryIndexSet",
+    "inputs": [
+      {
+        "name": "domain",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "index",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "DomainAdded",
     "inputs": [
       {
@@ -482,6 +562,12 @@
         "type": "uint32",
         "indexed": false,
         "internalType": "uint32"
+      },
+      {
+        "name": "reasons",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
       }
     ],
     "anonymous": false
@@ -612,17 +698,6 @@
     "type": "error",
     "name": "InvalidDomain",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InvalidSignatureLength",
-    "inputs": [
-      {
-        "name": "length",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ]
   },
   {
     "type": "error",
@@ -804,22 +879,12 @@
   },
   {
     "type": "error",
-    "name": "SignerMismatch",
+    "name": "ReportTooLong",
     "inputs": [
       {
-        "name": "validator",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "expected",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "recovered",
-        "type": "address",
-        "internalType": "address"
+        "name": "length",
+        "type": "uint64",
+        "internalType": "uint64"
       }
     ]
   },

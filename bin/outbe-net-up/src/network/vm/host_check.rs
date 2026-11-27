@@ -52,7 +52,20 @@ impl PublishContext {
         Ok(ports
             .dnat_ports()
             .into_iter()
+            .filter(|(_, _, _, purpose)| *purpose != "hyperlane")
             .map(|(public_port, _vm_port, proto, _purpose)| format!("{public_port}/{proto}"))
+            .collect())
+    }
+
+    pub(crate) fn hyperlane_port_specs(&self, member: &DesiredMember) -> Result<Vec<String>> {
+        if !self.requires_published_ports(member) {
+            return Ok(Vec::new());
+        }
+        Ok(FounderPublishedPorts::from_offset(member.port_offset)?
+            .publish_port_specs()
+            .into_iter()
+            .rev()
+            .take(1)
             .collect())
     }
 }
@@ -62,6 +75,32 @@ pub(crate) fn build_host_check_command(
     bin: &RemoteOutbeUp,
     ctx: &PublishContext,
 ) -> Result<String> {
+    build_host_check_command_for(member, bin, &ctx.p2p_port_specs(member)?, &ctx.peer_sources)
+}
+
+pub(crate) fn build_hyperlane_host_check_command(
+    member: &DesiredMember,
+    bin: &RemoteOutbeUp,
+    ctx: &PublishContext,
+) -> Result<Option<String>> {
+    let ports = ctx.hyperlane_port_specs(member)?;
+    if ports.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(build_host_check_command_for(
+        member,
+        bin,
+        &ports,
+        &[],
+    )?))
+}
+
+fn build_host_check_command_for(
+    member: &DesiredMember,
+    bin: &RemoteOutbeUp,
+    ports: &[String],
+    sources: &[String],
+) -> Result<String> {
     let mut sub = format!(
         "host check --vm {} --ip {} --bridge {} --vmm-home {}",
         shell_quote(&member.vm_name),
@@ -69,13 +108,12 @@ pub(crate) fn build_host_check_command(
         shell_quote(&member.bridge),
         shell_quote_tilde_path(&member.vmm_home),
     );
-    let ports = ctx.p2p_port_specs(member)?;
     if !ports.is_empty() {
         sub.push_str(&format!(" --public-ip {}", member.advertise_ip));
         for port in ports {
-            sub.push_str(&format!(" --port {}", shell_quote(&port)));
+            sub.push_str(&format!(" --port {}", shell_quote(port)));
         }
-        for src in &ctx.peer_sources {
+        for src in sources {
             sub.push_str(&format!(" --source {}", shell_quote(src)));
         }
     }
@@ -84,6 +122,73 @@ pub(crate) fn build_host_check_command(
     Ok(format!(
         "rc=0; out=$({inner}) || rc=$?; if [ -z \"$out\" ] && [ \"$rc\" -ne 0 ]; then exit \"$rc\"; fi; printf '%s\\n{HOST_CHECK_EXIT_SENTINEL}%d\\n' \"$out\" \"$rc\""
     ))
+}
+
+pub(crate) fn run_member_host_checks(
+    exec: &dyn HostExec,
+    member: &DesiredMember,
+    bin: &RemoteOutbeUp,
+    ctx: &PublishContext,
+) -> Result<RemoteHostCheckOutput> {
+    let command = build_host_check_command(member, bin, ctx)?;
+    let mut report = run_host_check_command(exec, member, &command)?;
+    if let Some(command) = build_hyperlane_host_check_command(member, bin, ctx)? {
+        let hyperlane = run_host_check_command(exec, member, &command)?;
+        merge_host_check(&mut report, hyperlane);
+    }
+    Ok(report)
+}
+
+fn run_host_check_command(
+    exec: &dyn HostExec,
+    member: &DesiredMember,
+    command: &str,
+) -> Result<RemoteHostCheckOutput> {
+    let raw = exec
+        .capture_raw(&member.vmm_host, &member.name, command)
+        .wrap_err_with(|| {
+            format!(
+                "run `outbe-up host check` for `{}` on {}",
+                member.vm_name, member.vmm_host.host
+            )
+        })?;
+    let (mut report, exit_code) = parse_host_check_output(&raw, &member.vm_name)?;
+    if exit_code != 0
+        || !report.service_ip_ok
+        || !report.host_network_ok
+        || !report.published_ports_ok
+    {
+        report.ready = false;
+    }
+    Ok(report)
+}
+
+fn merge_host_check(report: &mut RemoteHostCheckOutput, extra: RemoteHostCheckOutput) {
+    report.ready &= extra.ready;
+    report.host_network_ok &= extra.host_network_ok;
+    report.service_ip_ok &= extra.service_ip_ok;
+    report.published_ports_ok &= extra.published_ports_ok;
+    report.missing.extend(extra.missing);
+    report.conflicts.extend(extra.conflicts);
+    report
+        .recommended_forward_rules
+        .extend(extra.recommended_forward_rules);
+    report
+        .recommended_prerouting_rules
+        .extend(extra.recommended_prerouting_rules);
+    report
+        .recommended_firewall_commands
+        .extend(extra.recommended_firewall_commands);
+    dedup_strings(&mut report.missing);
+    dedup_strings(&mut report.conflicts);
+    dedup_strings(&mut report.recommended_forward_rules);
+    dedup_strings(&mut report.recommended_prerouting_rules);
+    dedup_strings(&mut report.recommended_firewall_commands);
+}
+
+fn dedup_strings(values: &mut Vec<String>) {
+    let mut seen = BTreeSet::new();
+    values.retain(|value| seen.insert(value.clone()));
 }
 
 pub(crate) fn run_host_checks(
@@ -96,23 +201,7 @@ pub(crate) fn run_host_checks(
     for member in members {
         let hkey = host_key(&member.vmm_host, &member.vmm_home);
         let bin = &host_bins[&hkey];
-        let cmd = build_host_check_command(member, bin, ctx)?;
-        let raw = exec
-            .capture_raw(&member.vmm_host, &member.name, &cmd)
-            .wrap_err_with(|| {
-                format!(
-                    "run `outbe-up host check` for `{}` on {}",
-                    member.vm_name, member.vmm_host.host
-                )
-            })?;
-        let (mut report, exit_code) = parse_host_check_output(&raw, &member.vm_name)?;
-        if exit_code != 0
-            || !report.service_ip_ok
-            || !report.host_network_ok
-            || !report.published_ports_ok
-        {
-            report.ready = false;
-        }
+        let report = run_member_host_checks(exec, member, bin, ctx)?;
         results.push((member.vmm_host.host.clone(), report));
     }
     Ok(results)

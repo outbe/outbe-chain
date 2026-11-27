@@ -56,23 +56,14 @@ pub enum HyperlaneControllerError {
     #[error("caller {caller} is not the system transaction")]
     NotSystemTransaction { caller: Address },
 
-    #[error(
-        "checkpoint signer {recovered} does not match validator {validator} signer {expected}"
-    )]
-    SignerMismatch {
-        validator: Address,
-        expected: Address,
-        recovered: Address,
-    },
-
     #[error("signer {signer} is already registered by validator {validator}")]
     SignerTaken { signer: Address, validator: Address },
 
     #[error("checkpoint index {index} is not newer than the submitted {submitted}")]
     StaleIndex { index: u32, submitted: u32 },
 
-    #[error("checkpoint signature must be 65 bytes, got {length}")]
-    InvalidSignatureLength { length: usize },
+    #[error("the report names {length} validators, more than the limit")]
+    ReportTooLong { length: usize },
 
     #[error("domain {domain} is not configured")]
     UnknownDomain { domain: u32 },
@@ -182,18 +173,6 @@ impl From<HyperlaneControllerError> for PrecompileError {
                     IHyperlaneController::NotSystemTransaction { caller }.abi_encode(),
                 ))
             }
-            HyperlaneControllerError::SignerMismatch {
-                validator,
-                expected,
-                recovered,
-            } => PrecompileError::RevertBytes(Bytes::from(
-                IHyperlaneController::SignerMismatch {
-                    validator,
-                    expected,
-                    recovered,
-                }
-                .abi_encode(),
-            )),
             HyperlaneControllerError::SignerTaken { signer, validator } => {
                 PrecompileError::RevertBytes(Bytes::from(
                     IHyperlaneController::SignerTaken { signer, validator }.abi_encode(),
@@ -204,9 +183,9 @@ impl From<HyperlaneControllerError> for PrecompileError {
                     IHyperlaneController::StaleIndex { index, submitted }.abi_encode(),
                 ))
             }
-            HyperlaneControllerError::InvalidSignatureLength { length } => {
+            HyperlaneControllerError::ReportTooLong { length } => {
                 PrecompileError::RevertBytes(Bytes::from(
-                    IHyperlaneController::InvalidSignatureLength {
+                    IHyperlaneController::ReportTooLong {
                         length: length as u64,
                     }
                     .abi_encode(),
@@ -320,11 +299,6 @@ mod tests {
             IHyperlaneController::NotOwnedByOwner::abi_decode(&bytes).expect("owner payload");
         assert_eq!(decoded.target, contract);
         assert_eq!(decoded.owner, owner);
-
-        let bytes = encoded(HyperlaneControllerError::InvalidSignatureLength { length: 65 });
-        let decoded = IHyperlaneController::InvalidSignatureLength::abi_decode(&bytes)
-            .expect("length payload");
-        assert_eq!(decoded.length, 65);
 
         let bytes = encoded(HyperlaneControllerError::UndecodableReturn("short return"));
         let decoded =

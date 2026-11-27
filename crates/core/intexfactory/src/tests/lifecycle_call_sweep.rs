@@ -117,9 +117,9 @@ fn call_state(
     s: &StorageHandle<'_>,
     intex_id: U256,
 ) -> Result<IIntexFactory::CallState, alloy_primitives::Bytes> {
-    let call = IIntexFactory::callStateCall { intexId: intex_id };
+    let call = IIntexFactory::getCallStateCall { intexId: intex_id };
     match crate::precompile::dispatch(s.clone(), &call.abi_encode(), owner(), U256::ZERO) {
-        Ok(out) => Ok(IIntexFactory::callStateCall::abi_decode_returns(&out).unwrap()),
+        Ok(out) => Ok(IIntexFactory::getCallStateCall::abi_decode_returns(&out).unwrap()),
         Err(PrecompileError::RevertBytes(reason)) => Err(reason),
         Err(other) => panic!("unexpected error: {other:?}"),
     }
@@ -170,11 +170,11 @@ fn the_call_progress_counts_the_window_until_the_group_is_called() {
         assert_eq!(call::scan_and_call(&ctx).unwrap(), 1);
         assert_eq!(
             call_state(&s, intex_id).unwrap_err(),
-            IIntexFactory::SeriesNotIssued {}.abi_encode()
+            IIntexFactory::IntexNotIssued {}.abi_encode()
         );
         assert_eq!(
             call_state(&s, U256::from(1)).unwrap_err(),
-            IIntexFactory::SeriesNotFound {}.abi_encode()
+            IIntexFactory::IntexNotFound {}.abi_encode()
         );
     });
 }
@@ -275,7 +275,7 @@ fn expiry_returns_only_the_load_nobody_realized() {
         seed_called_candidate(&s, 20260101);
         let series_id = SeriesId::for_pair(20260101, 840, REFERENCE_ISO).unwrap();
         outbe_intex::api::record_settled_units(&s, series_id, owner(), 30).unwrap();
-        outbe_intex::api::record_gem_factory_units(&s, series_id, owner(), 25).unwrap();
+        outbe_intex::api::record_gem_factory_units(&s, series_id, 25).unwrap();
 
         let deadline = call_and_deadline(&s, series_of(20260101), scan_ts);
         sweep_at(&s, due(deadline));
@@ -315,7 +315,7 @@ fn called_two_member_group(s: &StorageHandle<'_>, scan_ts: u64) -> (Vec<SeriesId
         let params = outbe_intex::CreateSeriesParams {
             series_id,
             emission_day: day,
-            issued_units: count,
+            total_units: count,
             promis_load_minor: LOAD,
             entry_price_minor: trigger,
             call_price_minor: trigger,
@@ -355,7 +355,7 @@ fn called_wide_group(s: &StorageHandle<'_>, scan_ts: u64, width: u16) -> (Vec<Se
         let params = outbe_intex::CreateSeriesParams {
             series_id,
             emission_day: day,
-            issued_units: 1,
+            total_units: 1,
             promis_load_minor: LOAD,
             entry_price_minor: trigger,
             call_price_minor: trigger,

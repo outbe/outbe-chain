@@ -224,7 +224,7 @@ fn settled_units_mine_after_the_group_expired_without_moving_the_promis_limit() 
         assert!(outbe_intex::api::series_exists(&s, sid(7)).unwrap());
         let counts = outbe_intex::api::unit_counts(&s, sid(7)).unwrap();
         assert_eq!(
-            (counts.active, counts.settled, counts.forfeited),
+            (counts.issued, counts.settled, counts.forfeited),
             (0, SETTLED, 100 - SETTLED)
         );
         let intex = IntexContract::new(s.clone());

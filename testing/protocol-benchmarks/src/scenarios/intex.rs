@@ -68,7 +68,7 @@ fn params(index: usize) -> IssuanceParams {
     IssuanceParams {
         series_id,
         emission_day: TARGET_DAY,
-        issued_units: 100,
+        total_units: 100,
         promis_load_minor: 1_000_000,
         entry_price_minor,
         call_price_minor: outbe_intexfactory::marked_up(entry_price_minor, prod.call_rate)

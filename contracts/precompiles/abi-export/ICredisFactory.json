@@ -1,7 +1,31 @@
 [
   {
     "type": "function",
-    "name": "callState",
+    "name": "forfeitCredis",
+    "inputs": [
+      {
+        "name": "credisId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "forfeitedGratisMinor",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "forfeitedAmountMinor",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "getCallState",
     "inputs": [
       {
         "name": "credisId",
@@ -62,30 +86,6 @@
   },
   {
     "type": "function",
-    "name": "forfeitCredis",
-    "inputs": [
-      {
-        "name": "credisId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "forfeitedGratisMinor",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "forfeitedAmountMinor",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "issueCredis",
     "inputs": [
       {
@@ -126,6 +126,11 @@
     "outputs": [
       {
         "name": "payoffMinor",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "feeMinor",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -196,10 +201,10 @@
         "internalType": "bytes14"
       },
       {
-        "name": "subSeries",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "uint8"
+        "name": "subSeriesId",
+        "type": "uint16",
+        "indexed": true,
+        "internalType": "uint16"
       },
       {
         "name": "issuanceCurrency",
@@ -239,10 +244,10 @@
         "internalType": "bytes14"
       },
       {
-        "name": "subSeries",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "uint8"
+        "name": "subSeriesId",
+        "type": "uint16",
+        "indexed": true,
+        "internalType": "uint16"
       },
       {
         "name": "issuanceCurrency",
@@ -282,10 +287,10 @@
         "internalType": "bytes14"
       },
       {
-        "name": "subSeries",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "uint8"
+        "name": "subSeriesId",
+        "type": "uint16",
+        "indexed": true,
+        "internalType": "uint16"
       },
       {
         "name": "issuanceCurrency",
@@ -434,7 +439,7 @@
   },
   {
     "type": "error",
-    "name": "PaymentBelowAccruedFee",
+    "name": "PaymentBelowFee",
     "inputs": []
   },
   {

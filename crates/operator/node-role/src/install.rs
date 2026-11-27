@@ -53,6 +53,7 @@ const ENV_KEYS: &[&str] = &[
     "OUTBE_BOOTNODES",
     "OUTBE_CONSENSUS_PEERS",
     "OUTBE_CONSENSUS_EXTRA_ARGS",
+    "OUTBE_HYPERLANE_FUNDING_WEI",
     "OUTBE_CHAIN_ID",
 ];
 
@@ -88,9 +89,11 @@ pub fn run() -> Result<()> {
     let env_path = root.join("validator.env");
     let feeder = root.join("feeder-public.toml");
     let hyperlane = root.join("hyperlane-public.toml");
+    let reth = root.join("reth.toml");
     validate_local_config(&env_path)?;
     validate_local_config(&feeder)?;
     validate_local_config(&hyperlane)?;
+    validate_local_config(&reth)?;
     let environment = read_environment(&env_path)?;
     validate_environment(&environment)?;
     validate_bundle(root)?;
@@ -103,6 +106,8 @@ pub fn run() -> Result<()> {
     let hyperlane_public =
         fs::read_to_string(&hyperlane).wrap_err("failed to read hyperlane-public.toml")?;
     crate::config::validate_hyperlane_public_toml(&hyperlane_public, chain_id, false)?;
+    let reth_config = fs::read_to_string(&reth).wrap_err("failed to read reth.toml")?;
+    crate::config::validate_reth_toml(&reth_config)?;
     ensure_outbe_account()?;
     let uid = numeric_id("-u")?;
     let gid = numeric_id("-g")?;
@@ -111,9 +116,11 @@ pub fn run() -> Result<()> {
     process::chown(&env_path, 0, gid)?;
     process::chown(&feeder, 0, gid)?;
     process::chown(&hyperlane, 0, gid)?;
+    process::chown(&reth, 0, gid)?;
     fs::set_permissions(&env_path, fs::Permissions::from_mode(0o640))?;
     fs::set_permissions(&feeder, fs::Permissions::from_mode(0o640))?;
     fs::set_permissions(&hyperlane, fs::Permissions::from_mode(0o640))?;
+    fs::set_permissions(&reth, fs::Permissions::from_mode(0o640))?;
     install_units(root)?;
     process::systemctl(&["daemon-reload"])?;
     Ok(())
@@ -213,7 +220,10 @@ fn env_key_required(name: &str, require_vm_static_net: bool) -> bool {
 }
 
 fn is_vm_only_env_key(name: &str) -> bool {
-    name == "OUTBE_NODE_ROLE" || name == "OUTBE_RPC_PORT" || VM_STATIC_NET_KEYS.contains(&name)
+    name == "OUTBE_NODE_ROLE"
+        || name == "OUTBE_RPC_PORT"
+        || name == "OUTBE_HYPERLANE_FUNDING_WEI"
+        || VM_STATIC_NET_KEYS.contains(&name)
 }
 
 pub(crate) fn validate_environment(values: &BTreeMap<String, String>) -> Result<()> {
@@ -277,6 +287,13 @@ fn validate_environment_inner(
             .is_ok_and(|id| id > 0),
         "OUTBE_CHAIN_ID must be positive"
     );
+    if let Some(raw) = values.get("OUTBE_HYPERLANE_FUNDING_WEI") {
+        ensure!(
+            raw.parse::<alloy_primitives::U256>()
+                .is_ok_and(|amount| !amount.is_zero()),
+            "OUTBE_HYPERLANE_FUNDING_WEI must be a positive integer"
+        );
+    }
     ensure!(
         values["OUTBE_BOOTNODES"].starts_with("enode://"),
         "OUTBE_BOOTNODES is invalid"
@@ -313,7 +330,7 @@ fn validate_bundle(root: &Path) -> Result<()> {
         "outbe-cli",
         "outbe-keygen",
         "outbe-feeder",
-        "outbe-hyperlane-validator",
+        "outbe-hyperlane-agent",
         "outbe-radicle",
     ] {
         required_executable(&root.join(name))?;
@@ -621,7 +638,7 @@ mod tests {
             "outbe-cli",
             "outbe-keygen",
             "outbe-feeder",
-            "outbe-hyperlane-validator",
+            "outbe-hyperlane-agent",
             "outbe-radicle",
         ] {
             let path = root.path().join(name);
@@ -664,6 +681,23 @@ mod tests {
         fs::write(&env_path, &bare_env).unwrap();
         let parsed = read_environment(&env_path).unwrap();
         validate_environment(&parsed).unwrap();
+
+        let mut invalid_funding = parsed.clone();
+        for (name, value) in [
+            ("OUTBE_NODE_ROLE", "founder"),
+            ("OUTBE_RPC_PORT", "8545"),
+            ("OUTBE_VM_IP", "10.77.0.10"),
+            ("OUTBE_VM_PREFIX", "24"),
+            ("OUTBE_VM_GATEWAY", "10.77.0.1"),
+            ("OUTBE_VM_DNS", "1.1.1.1"),
+            ("OUTBE_HYPERLANE_FUNDING_WEI", "0"),
+        ] {
+            invalid_funding.insert(name.to_owned(), value.to_owned());
+        }
+        let funding_err = validate_environment_for_role(&invalid_funding, NodeRole::Founder)
+            .unwrap_err()
+            .to_string();
+        assert!(funding_err.contains("positive integer"), "{funding_err}");
 
         // VM env without OUTBE_RPC_PORT must still fail closed.
         let vm_env = format!(

@@ -3,7 +3,7 @@ use alloy_sol_types::{sol, SolInterface};
 use outbe_core_common::erc::{
     ERC165_INTERFACE_ID, ERC4906_INTERFACE_ID, ERC721_INTERFACE_ID, ERC721_METADATA_INTERFACE_ID,
 };
-use outbe_primitives::dispatch::{dispatch_call, metadata, mutate, view};
+use outbe_primitives::dispatch::{dispatch_call, metadata, view};
 use outbe_primitives::error::Result;
 
 use crate::api;
@@ -31,7 +31,7 @@ sol!(
 pub fn dispatch(
     storage: outbe_primitives::storage::StorageHandle,
     data: &[u8],
-    caller: Address,
+    _caller: Address,
     value: U256,
 ) -> Result<Bytes> {
     outbe_primitives::dispatch::reject_value(&value)?;
@@ -47,10 +47,6 @@ pub fn dispatch(
             | setApprovalForAll(_) => Err(NodError::NonTransferable.into()),
             getApproved(c) => view(c, |_| Ok(Address::ZERO)),
             isApprovedForAll(c) => view(c, |_| Ok(false)),
-            clean(c) => mutate(&storage, c, caller, |_, c| {
-                api::clean(&storage, c.nodId)?;
-                Ok(INod::cleanReturn {})
-            }),
             call @ (balanceOf(_) | ownerOf(_) | tokenURI(_) | tokensByOwner(_) | getNod(_)) => {
                 dispatch_entity(storage, &nod, call)
             }

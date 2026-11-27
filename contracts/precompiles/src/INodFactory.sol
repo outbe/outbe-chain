@@ -148,7 +148,7 @@ interface INodFactory {
 
     /// @notice Read the call progress of `nodId`. Reverts `NodNotFound`, or
     ///         `NodNotIssued` once it is Called, Settled or Forfeited.
-    function callState(uint256 nodId) external view returns (CallState memory);
+    function getCallState(uint256 nodId) external view returns (CallState memory);
 
     /// @notice Mine a settled Nod and mint its Gratis load to the Nod owner.
     /// @param nonce PoW over

@@ -215,7 +215,7 @@ fn full_sale_returns_only_the_dust_once() {
         assert_eq!(outbe_intex::api::total_series(&s).unwrap(), 1);
         let series = outbe_intex::api::series_id_at(&s, 0).unwrap();
         let counts = outbe_intex::api::unit_counts(&s, series).unwrap();
-        assert_eq!((counts.issued, counts.active, counts.forfeited), (3, 3, 0));
+        assert_eq!((counts.total, counts.issued, counts.forfeited), (3, 3, 0));
     });
     assert!(p
         .get_events(outbe_system_common::addresses::INTEX_FACTORY_ADDRESS)

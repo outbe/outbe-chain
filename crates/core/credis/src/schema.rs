@@ -336,11 +336,6 @@ pub struct CredisContract {
     #[attribute(order = 52)]
     pub forfeit_cursor: outbe_primitives::storage::dsl::Value<u64>,
 
-    /// Each account's amount and outstanding amount over its live Credis.
-    #[attribute(order = 53)]
-    pub owner_amount_minor: outbe_primitives::storage::dsl::Map<Address, U256>,
-    #[attribute(order = 54)]
-    pub owner_outstanding_minor: outbe_primitives::storage::dsl::Map<Address, U256>,
     #[attribute(order = 55)]
     pub daily_phase: outbe_primitives::storage::dsl::Value<u8>,
     #[attribute(order = 56)]

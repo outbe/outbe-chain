@@ -33,7 +33,8 @@ pub const NETWORK_VM_STATE_VERSION: u32 = 2;
 /// `validator.env` schema version written on member disks:
 /// - `1`: legacy disks before `OUTBE_VM_IP` / `OUTBE_RPC_PORT` / `OUTBE_RETH_P2P_PORT`.
 /// - `2`: unified `OUTBE_VM_IP` + `OUTBE_RPC_PORT` + `OUTBE_RETH_P2P_PORT`/`OUTBE_RETH_DISCOVERY_PORT`.
-pub const CURRENT_ENV_SCHEMA: u32 = 2;
+/// - `3`: operator-owned `reth.toml` is present and required by every VM node role.
+pub const CURRENT_ENV_SCHEMA: u32 = 3;
 pub const NETWORK_VM_STATE_FILENAME: &str = "network-vm-state.json";
 const NETWORK_VM_STATE_LOCK_FILENAME: &str = ".network-vm-state.lock";
 

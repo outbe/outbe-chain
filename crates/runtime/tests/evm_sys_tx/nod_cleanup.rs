@@ -1,6 +1,6 @@
 use super::fixtures::GENESIS_HASH;
 use super::*;
-use alloy_sol_types::{SolCall, SolEvent};
+use alloy_sol_types::SolEvent;
 use outbe_nod::precompile::INod;
 use outbe_nod::NodContract;
 use outbe_primitives::time::SECONDS_PER_DAY;
@@ -87,35 +87,6 @@ fn nod_factory_end_block_deletes_a_forfeited_nod() {
         assert_eq!(reserve(&storage), U256::from(7u64));
     });
     assert_eq!(burn_count(&provider), 1);
-}
-
-#[test]
-fn user_clean_then_cleanup_processing_deletes_the_rest() {
-    let mut provider = provider_at_cleanup();
-    let (left, right) = provider.enter(|storage| {
-        let left = issue(&storage, Address::repeat_byte(0x41));
-        let right = issue(&storage, Address::repeat_byte(0x42));
-        queue_forfeited(&storage, left);
-        let data = INod::cleanCall { nodId: left }.abi_encode();
-        outbe_nod::precompile::dispatch(
-            storage.clone(),
-            &data,
-            Address::repeat_byte(0x41),
-            U256::ZERO,
-        )
-        .unwrap();
-        assert!(outbe_nod::api::get_item(&storage, left).unwrap().is_none());
-        assert!(outbe_nod::api::get_item(&storage, right).unwrap().is_some());
-        (left, right)
-    });
-
-    provider.enter(|storage| {
-        run_cleanup(storage.clone());
-        assert!(outbe_nod::api::get_item(&storage, left).unwrap().is_none());
-        assert!(outbe_nod::api::get_item(&storage, right).unwrap().is_none());
-        assert_eq!(reserve(&storage), U256::ZERO);
-    });
-    assert_eq!(burn_count(&provider), 2);
 }
 
 #[test]

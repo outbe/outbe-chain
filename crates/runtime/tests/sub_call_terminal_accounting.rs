@@ -234,7 +234,7 @@ fn gem_static_gate_and_nested_child_failures_settle_inside_evm() {
                 CreateSeriesParams {
                     series_id: series,
                     emission_day: EmissionDate::new(20_261_008),
-                    issued_units: 1,
+                    total_units: 1,
                     promis_load_minor: 1_000_000,
                     entry_price_minor: U256::from(1_000_000),
                     call_price_minor: U256::ZERO,

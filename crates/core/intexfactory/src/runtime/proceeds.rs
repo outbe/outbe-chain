@@ -41,7 +41,7 @@ pub fn receive_crosschain_proceeds(
     if evm_chain_of(from, INTEX_AUCTION_TARGET_ROUTER_ADDRESS) != Some(src_chain_id) {
         return Err(IntexFactoryError::UnauthorizedProceedsSender(from.to_vec().into()).into());
     }
-    burn_wcoen_proceeds(storage, emission_day, page_index, src_chain_id, amount)
+    burn_intex_auction_proceeds(storage, emission_day, page_index, src_chain_id, amount)
 }
 
 /// The proceeds of one page of winners that IntexAuctionTargetRouter on Outbe approved to the factory.
@@ -72,7 +72,7 @@ pub fn receive_local_proceeds(
     if transferFromCall::abi_decode_returns(&returned) != Ok(true) {
         return Err(IntexFactoryError::ProceedsTransferRefused.into());
     }
-    burn_wcoen_proceeds(storage, emission_day, page_index, local, amount)
+    burn_intex_auction_proceeds(storage, emission_day, page_index, local, amount)
 }
 
 fn require_day_target(storage: &StorageHandle<'_>, emission_day: u32, chain_id: u32) -> Result<()> {
@@ -82,7 +82,7 @@ fn require_day_target(storage: &StorageHandle<'_>, emission_day: u32, chain_id: 
     Ok(())
 }
 
-fn burn_wcoen_proceeds(
+fn burn_intex_auction_proceeds(
     storage: &StorageHandle<'_>,
     emission_day: u32,
     page_index: u32,

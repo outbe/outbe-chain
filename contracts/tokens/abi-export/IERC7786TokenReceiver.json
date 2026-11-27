@@ -4,7 +4,7 @@
     "name": "onCrosschainTokensReceived",
     "inputs": [
       {
-        "name": "sourceDomain",
+        "name": "srcChainId",
         "type": "uint32",
         "internalType": "uint32"
       },

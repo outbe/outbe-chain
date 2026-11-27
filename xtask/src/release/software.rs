@@ -27,7 +27,7 @@ const COMMON_BINARIES: &[&str] = &[
     "outbe-keygen",
     "outbe-feeder",
     "outbe-radicle",
-    "outbe-hyperlane-validator",
+    "outbe-hyperlane-agent",
 ];
 const OPERATOR_TOOL: &str = "outbe-genesis-cli";
 const GENESIS_ASSETS: &str = "share/outbe-genesis";
@@ -277,7 +277,7 @@ fn binary_targets() -> [(&'static str, &'static str); 9] {
         ("outbe-keygen", "outbe-keygen"),
         ("outbe-feeder", "outbe-feeder"),
         ("outbe-radicle-sidecar", "outbe-radicle"),
-        ("outbe-hyperlane-validator", "outbe-hyperlane-validator"),
+        ("outbe-hyperlane-agent", "outbe-hyperlane-agent"),
         ("outbe-genesis-cli", OPERATOR_TOOL),
     ]
 }
@@ -574,7 +574,7 @@ mod tests {
                 "outbe-chain",
                 "outbe-cli",
                 "outbe-feeder",
-                "outbe-hyperlane-validator",
+                "outbe-hyperlane-agent",
                 "outbe-keygen",
                 "outbe-radicle",
                 "outbe-up",

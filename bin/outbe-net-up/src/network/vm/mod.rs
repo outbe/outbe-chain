@@ -59,9 +59,7 @@ pub(crate) use update::{
 };
 
 pub(crate) use deploy::deploy_with_exec;
-pub(crate) use host_check::{
-    build_host_check_command, format_failed_host_checks, parse_host_check_output, PublishContext,
-};
+pub(crate) use host_check::{format_failed_host_checks, run_member_host_checks, PublishContext};
 pub(crate) use images::{
     publish_image_on_host, resolve_image_source, HostImageTarget, ResolvedImageSource,
 };
@@ -77,7 +75,7 @@ pub(crate) use remote_bin::{
 pub(crate) use remove::remove_with_exec;
 pub(crate) use rpc::{
     ensure_vm_rpc_reachable_for_orchestration, load_and_verify_vm_orchestration,
-    query_validators_missed_votes, query_vm_block_hash, VmRpcTarget,
+    query_hyperlane_health, query_validators_missed_votes, query_vm_block_hash, VmRpcTarget,
 };
 pub(crate) use start::start_with_exec;
 pub(crate) use status::{

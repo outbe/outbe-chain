@@ -23,7 +23,7 @@ mod group_scans {
         IssuanceParams {
             series_id: SeriesId::for_pair(emission_day, issuance_currency, REFERENCE_ISO).unwrap(),
             emission_day: emission_day.into(),
-            issued_units: 100,
+            total_units: 100,
             promis_load_minor: 1_000_000_000_000_000_000,
             entry_price_minor: U256::from(ENTRY_PRICE),
             call_price_minor: U256::from(EXPECTED_TRIGGER),

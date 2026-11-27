@@ -9,7 +9,7 @@ pragma solidity ^0.8.30;
 ///      `promisLoadMinor` is returned as uint256 (its storage representation). The
 ///      Origin `uint128` bounds it.
 interface IIntex {
-    error SeriesNotFound();
+    error IntexNotFound();
     error ZeroIssuedAt();
     error InvalidStateValue(uint8 value);
     error InvalidSeriesId();
@@ -28,7 +28,7 @@ interface IIntex {
         bytes14 seriesId;
         uint256 promisLoadMinor;
         uint256 entryPriceMinor;
-        uint32 issuedUnits;
+        uint32 totalUnits;
         uint32 callWindow;
         uint32 callThreshold;
         uint256 callPriceMinor;
@@ -58,14 +58,17 @@ interface IIntex {
     ///         or mine.
     function getIntex(uint256 intexId) external view returns (SeriesData memory);
 
-    /// @notice The classes an issued unit can be in. Disjoint: they sum to
-    ///         `issuedUnits`. `activeUnits` is what is still unpaid while the series
+    /// @notice The record of `getIntex`, found by the series id. Reverts `IntexNotFound` for an unknown series.
+    function getIntexSeries(bytes14 seriesId) external view returns (SeriesData memory);
+
+    /// @notice The classes a unit of the series can be in. Disjoint: they sum to
+    ///         `totalUnits`. `issuedUnits` is what is still unpaid while the series
     ///         lives, and `forfeitedUnits` is the same remainder once it is Forfeited.
     ///         `settledUnits` is what is paid and not yet mined, the same
     ///         measure `getIntex` reports.
     struct UnitCounts {
+        uint32 totalUnits;
         uint32 issuedUnits;
-        uint32 activeUnits;
         uint32 settledUnits;
         uint32 minedUnits;
         uint32 gemFactoryUnits;
@@ -73,10 +76,7 @@ interface IIntex {
     }
 
     /// @notice Read the disjoint unit counts of `intexId`.
-    function seriesUnitCounts(uint256 intexId) external view returns (UnitCounts memory);
-
-    /// @notice Whether a series exists.
-    function seriesExists(uint256 intexId) external view returns (bool);
+    function intexUnitCounts(uint256 intexId) external view returns (UnitCounts memory);
 
     /// @notice Number of live series (dense-enumeration length).
     function totalSeries() external view returns (uint256);

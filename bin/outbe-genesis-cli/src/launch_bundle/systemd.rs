@@ -174,7 +174,7 @@ pub fn preflight_script(
     let hyperlane_binary = config
         .get("hyperlane_binary")
         .and_then(Value::as_str)
-        .unwrap_or("outbe-hyperlane-validator");
+        .unwrap_or("outbe-hyperlane-agent");
     Ok(format!(
         "\n# Read-only pre-launch check for validator {index}. Exits non-zero on anything\n\
 # that would make the network fail after start rather than before.\n\

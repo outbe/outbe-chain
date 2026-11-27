@@ -74,7 +74,7 @@ contract FactorySettlement {
         return units[account][id];
     }
 
-    function burnIntex(address owner, bytes14 seriesId, uint256 amount) external {
+    function settleIntex(address owner, bytes14 seriesId, uint256 amount) external {
         units[owner][uint256(keccak256(abi.encodePacked(seriesId)))] -= amount;
     }
 }

@@ -91,6 +91,19 @@
   },
   {
     "type": "function",
+    "name": "getEpochLengthBlocks",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getEpochNumber",
     "inputs": [],
     "outputs": [

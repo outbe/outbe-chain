@@ -1,7 +1,14 @@
 [
   {
     "type": "function",
-    "name": "callState",
+    "name": "flush",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "getCallState",
     "inputs": [
       {
         "name": "intexId",
@@ -59,13 +66,6 @@
       }
     ],
     "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "flush",
-    "inputs": [],
-    "outputs": [],
-    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -180,57 +180,6 @@
         "name": "nextTry",
         "type": "uint64",
         "internalType": "uint64"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "ownerBalances",
-    "inputs": [
-      {
-        "name": "intexId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "owner",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "tuple",
-        "internalType": "struct IIntexFactory.OwnerBalances",
-        "components": [
-          {
-            "name": "issuedUnits",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "settledUnits",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "minedUnits",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "gemFactoryUnits",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "ownerUnits",
-            "type": "uint32",
-            "internalType": "uint32"
-          }
-        ]
       }
     ],
     "stateMutability": "view"
@@ -737,6 +686,16 @@
   },
   {
     "type": "error",
+    "name": "IntexNotFound",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "IntexNotIssued",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "IntexSeriesPageCountExceedsU16",
     "inputs": []
   },
@@ -768,17 +727,7 @@
   },
   {
     "type": "error",
-    "name": "NftBalanceExceedsU32",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "NftBalanceOfUndecodable",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "OwnerUnitsExceedU32",
     "inputs": []
   },
   {
@@ -794,16 +743,6 @@
   {
     "type": "error",
     "name": "PromisOverflow",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "SeriesNotFound",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "SeriesNotIssued",
     "inputs": []
   },
   {

@@ -59,7 +59,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
         uint16 referenceCurrency;
         /// @notice Auction-cleared units the series was issued with. Set once at `openSeries`,
         ///         never mutated.
-        uint32 issuedUnits;
+        uint32 totalUnits;
         /// @notice PROMIS-units per Intex unit (1e6).
         uint128 promisLoadMinor;
         /// @notice Per-unit entry price in ISO stable-units (1e6).
@@ -161,7 +161,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @notice Series already exists for this token id.
     error IntexAlreadyExists(uint256 intexId);
     /// @notice `openSeries` was called with a zero issued-intex count.
-    error ZeroIssuedUnits();
+    error ZeroTotalUnits();
     /// @notice `issuedAt` is zero (the existence sentinel) or dated after this chain's clock.
     error InvalidIssuedAt(uint64 issuedAt);
     /// @notice A burn of zero units.
@@ -182,14 +182,14 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @notice An `issueIntex` or `crosschainMint` would push `totalSupply` past
     ///         `type(uint32).max`.
     error SupplyCapExceeded(bytes14 seriesId, uint256 attempted, uint256 cap);
-    /// @notice Series index past the end of the series list.
-    error SeriesIndexOutOfRange();
+    /// @notice `caller` is not the contract this entry point belongs to.
+    error UnauthorizedCaller(address caller);
 
     // --- Writes ---
 
     /// @notice Identity inputs for a new series, set once at `openSeries`.
-    /// @dev `emissionDay` is the day the series was derived from. It is the provenance key
-    ///      (`seriesOfDay`), stored verbatim rather than inferred from `seriesId`.
+    /// @dev `emissionDay` is the day the series was derived from, stored verbatim rather than
+    ///      inferred from `seriesId`.
     struct OpenSeriesParams {
         bytes14 seriesId;
         uint32 emissionDay;
@@ -197,7 +197,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
         uint64 issuedAt;
         uint16 issuanceCurrency;
         uint16 referenceCurrency;
-        uint32 issuedUnits;
+        uint32 totalUnits;
         uint128 promisLoadMinor;
         uint64 entryPriceMinor;
         uint64 callPriceMinor;
@@ -222,18 +222,19 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @param calledAt Unix time the origin marked the series Called. The deadline derives from it.
     function callSeries(bytes14 seriesId, uint64 calledAt) external;
 
-    /// @notice Burn `units` of `owner`'s Issued Intex on Outbe when they are settled.
-    /// @dev Entry point of the IntexFactory precompile under BURNER_ROLE. It owns the series
-    ///      state, so this burn checks none.
+    /// @notice Settle `units` of `owner`'s Issued Intex on Outbe: they leave this token and become
+    ///         Settled units of the Intex on Outbe.
+    /// @dev Entry point of the IntexFactory precompile only. It owns the series state, so this
+    ///      burn checks none.
     /// @param owner Owner whose Issued tokens are burned.
     /// @param seriesId Series identifier.
     /// @param units Issued units to burn.
-    function burnIntex(address owner, bytes14 seriesId, uint256 units) external;
+    function settleIntex(address owner, bytes14 seriesId, uint256 units) external;
 
     /// @notice Move `units` of `owner`'s Issued Intex on Outbe into the Gem Factory position
     ///         `gemFactoryPositionId`: the units leave the series and end with `IntexSentToGemFactory`.
-    /// @dev Entry point of the GemFactory precompile under BURNER_ROLE. It owns the series state,
-    ///      so this call checks none.
+    /// @dev Entry point of the GemFactory precompile only. It owns the series state, so this call
+    ///      checks none.
     function sendIntexToGemFactory(address owner, bytes14 seriesId, uint256 units, uint256 gemFactoryPositionId)
         external;
 
@@ -241,7 +242,24 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     ///         account may call it. Reverts before the transit close or for an empty balance.
     /// @param owner Owner whose forfeited units are burned.
     /// @param seriesId Series identifier.
-    function burnForfeited(address owner, bytes14 seriesId) external;
+    function forfeitIntex(address owner, bytes14 seriesId) external;
+
+    // --- Links ---
+
+    /// @notice The IntexAuctionTargetRouter, the only caller of `openSeries` and `callSeries`.
+    function intexAuctionTargetRouter() external view returns (address);
+
+    /// @notice The IntexNFT1155Router, the only caller of `crosschainBurn` and `crosschainMint`.
+    function intexNFT1155Router() external view returns (address);
+
+    /// @notice The IntexAuction, the only caller of `issueIntex`.
+    function intexAuction() external view returns (address);
+
+    /// @notice The IntexFactory precompile, the only caller of `settleIntex`. Zero off Outbe.
+    function intexFactory() external view returns (address);
+
+    /// @notice The GemFactory precompile, the only caller of `sendIntexToGemFactory`. Zero off Outbe.
+    function gemFactory() external view returns (address);
 
     // --- Reads ---
 
@@ -249,21 +267,6 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @param seriesId Series identifier.
     /// @return True once `openSeries` has run for it.
     function seriesExists(bytes14 seriesId) external view returns (bool);
-
-    /// @notice Issued token id for a series (= `uint256(keccak256(seriesId))`, its `intexId`). Pure helper.
-    /// @param seriesId Series identifier.
-    /// @return The Issued token id.
-    function issuedIntexId(bytes14 seriesId) external pure returns (uint256);
-
-    /// @notice Emission day whose auction issued the series (0 if the series does not exist).
-    /// @param seriesId Series identifier.
-    /// @return The emission day (yyyymmdd).
-    function emissionDayOf(bytes14 seriesId) external view returns (uint32);
-
-    /// @notice Series ids issued for an emission day.
-    /// @param emissionDay Emission day (yyyymmdd).
-    /// @return The series ids of that day.
-    function seriesIdsByEmissionDay(uint32 emissionDay) external view returns (bytes14[] memory);
 
     /// @notice Series a day's currency pair was created under.
     /// @param emissionDay Emission day (yyyymmdd).
@@ -306,15 +309,4 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @notice Collection-level metadata as an on-chain JSON data URI (ERC-7572).
     /// @return The collection metadata URI.
     function contractURI() external view returns (string memory);
-
-    // --- Series reads ---
-
-    /// @notice Number of series ever created on this chain; a series stays listed after its supply reaches zero.
-    /// @return The count of created series.
-    function totalSeries() external view returns (uint256);
-
-    /// @notice The series id at an index of the creation-ordered series list.
-    /// @param index Position in the list, below `totalSeries()`.
-    /// @return The series id.
-    function seriesAt(uint256 index) external view returns (bytes14);
 }

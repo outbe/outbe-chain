@@ -8255,7 +8255,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "outbe-hyperlane-validator"
+name = "outbe-hyperlane-agent"
 version = "0.1.0"
 dependencies = [
  "alloy-eips",

@@ -77,7 +77,7 @@ pub const IGNORED_CONFLICT: u8 = 3;
 pub const IGNORED_NOT_FOUND: u8 = 4;
 
 /// What a COLLECTING_BIDS round costs on a target chain - fixed part, one chunk, one bid - measured in
-/// `contracts/intex/test/foundry/cross-chain/ClearingRelayMailboxGas.t.sol`.
+/// `contracts/intex/test/cross-chain/ClearingRelayMailboxGas.t.sol`.
 pub const CLEARING_FIXED_GAS: u64 = 564_000;
 pub const CLEARING_PAGE_GAS: u64 = 197_000;
 pub const CLEARING_BID_GAS: u64 = 10_000;

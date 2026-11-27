@@ -66,7 +66,7 @@ pub enum NodError {
     GroupSettledCountUnderflow { group_id: WwdEntityId },
 
     #[error("nod is already settled")]
-    AlreadySettled,
+    NodAlreadySettled,
 
     #[error("Nod settled count overflow")]
     SettledCountOverflow,
@@ -91,12 +91,6 @@ pub enum NodError {
 
     #[error("date step kind {kind} from date key {date_key}")]
     DateStep { kind: u8, date_key: u32 },
-
-    #[error("nod is not forfeited")]
-    NodNotForfeited,
-
-    #[error("nod is already settled")]
-    NodAlreadySettled,
 
     #[error("SU hash already used")]
     SuHashAlreadyUsed,
@@ -168,7 +162,7 @@ impl From<NodError> for PrecompileError {
                     groupId: group_id.to_u256(),
                 })
             }
-            NodError::AlreadySettled => revert_with(I::AlreadySettled {}),
+            NodError::NodAlreadySettled => revert_with(I::NodAlreadySettled {}),
             NodError::SettledCountOverflow => revert_with(I::SettledCountOverflow {}),
             NodError::GroupMemberIndexOverflow { group_key } => {
                 revert_with(I::GroupMemberIndexOverflow {
@@ -200,8 +194,6 @@ impl From<NodError> for PrecompileError {
                 kind,
                 dateKey: date_key,
             }),
-            NodError::NodNotForfeited => revert_with(I::NodNotForfeited {}),
-            NodError::NodAlreadySettled => revert_with(I::NodAlreadySettled {}),
             NodError::SuHashAlreadyUsed => revert_with(I::SuHashAlreadyUsed {}),
             NodError::SuHashRingSeqOverflow => revert_with(I::SuHashRingSeqOverflow {}),
             NodError::OfferAlreadyMade => revert_with(I::OfferAlreadyMade {}),

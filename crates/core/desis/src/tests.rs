@@ -177,7 +177,7 @@ fn fixture_provider(chains: &[u32]) -> HashMapStorageProvider {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(NOW));
     seed_targets(&mut storage, chains);
-    // Stub IntexNFT1155: openSeries/burnIntex are void. balanceOf returns 0 (32 bytes).
+    // Stub IntexNFT1155: openSeries/settleIntex are void. balanceOf returns 0 (32 bytes).
     storage.stub_sub_call_at(
         outbe_intexfactory::constants::INTEX_NFT1155_ADDRESS,
         Bytes::from(vec![0u8; 32]),
@@ -2820,8 +2820,8 @@ fn clearing_issues_one_series_per_winning_currency_pair() {
         // Each series holds only its own winners and its own reference price.
         let usd_series = outbe_intex::api::get_series(&s, usd).unwrap();
         let lira_series = outbe_intex::api::get_series(&s, lira).unwrap();
-        assert_eq!(usd_series.issued_units, 2);
-        assert_eq!(lira_series.issued_units, 1);
+        assert_eq!(usd_series.total_units, 2);
+        assert_eq!(lira_series.total_units, 1);
         assert_eq!(
             usd_series.entry_price_minor,
             U256::from(ENTRY_PRICE) * U256::from(840u16)

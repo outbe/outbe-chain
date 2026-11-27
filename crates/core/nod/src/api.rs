@@ -170,11 +170,6 @@ pub fn is_group_close_started(storage: &StorageHandle<'_>, group_key: B256) -> R
     Ok(nod.group_closing.read(&group_key)? || nod.group_is_closed.read(&group_key)?)
 }
 
-/// Permissionless cleanup of an unsettled forfeited Nod (`INod.clean(uint256)`).
-pub fn clean(storage: &StorageHandle<'_>, nod_id: U256) -> Result<()> {
-    crate::state_api::clean_item(storage, nod_id)
-}
-
 /// Removes `load` from the group's unsettled total.
 ///
 /// `remove_nod` leaves an unsettled Nod's load on the old group. A storage-only

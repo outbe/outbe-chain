@@ -2,7 +2,7 @@
 
 This directory holds the dstack patches and manifest used to build reproducible Outbe guest OS images.
 
-The measured guest image contains the node binaries (`outbe-chain`, `outbe-radicle`, `outbe-feeder`, `outbe-hyperlane-validator`), the minimal in-guest runtime agent (`outbe-vm-agent`), pinned runtime libraries, and static systemd units. It does not ship `outbe-up`, SSH clients, or VMM orchestration code.
+The measured guest image contains the node binaries (`outbe-chain`, `outbe-radicle`, `outbe-feeder`, `outbe-hyperlane-agent`), the minimal in-guest runtime agent (`outbe-vm-agent`), pinned runtime libraries, and static systemd units. It does not ship `outbe-up`, SSH clients, or VMM orchestration code.
 
 Each VM stores its keys (validators only), genesis, CRS, `validator.env`, configuration files, and chain state on an unmeasured ext4 data disk mounted at `/opt/outbe-chain` with `noexec,nosuid,nodev`.
 
@@ -100,7 +100,9 @@ Guests do not depend on DHCP or `dnsmasq` reservations for their service IPs. Pi
 
 ## Known limitations
 
-- **Hyperlane on VM roles:** `outbe-hyperlane-validator.service` is not started by `outbe-vm-agent` on VM roles yet.
+- **Hyperlane controller deployment:** VM validators start Hyperlane automatically; checkpoint
+  submission remains in `waiting_for_controller` until the network's Hyperlane controller is
+  deployed and initialized.
 - **Forced stop during pending DKG:** force-stopping or power-cutting a validator can lose its pending DKG snapshot. Always use graceful `outbe-up vm stop`, `outbe-up vm update`, or `outbe-net-up network update` (never `--force`).
 - **Guest memory:** allocate at least `8` GiB of RAM per validator VM (`memory_gib: 8`) to avoid guest OOM kills.
 - **TEE resident key:** in devnet/testnet VMs without sealed storage, the resident TEE key lives in memory and re-registers on reboot. DKG shares persist under `/opt/outbe-chain`.
