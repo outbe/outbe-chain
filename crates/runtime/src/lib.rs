@@ -13,6 +13,7 @@ pub mod domain_rpc;
 pub mod equivocation_slasher;
 mod errors;
 mod execution_runtime;
+pub mod fs_epoch_rpc;
 mod identity;
 mod launch;
 pub mod marker_addresses;

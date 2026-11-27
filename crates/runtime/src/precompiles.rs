@@ -157,6 +157,10 @@ define_exact_routes! {
     CODE_REGISTRY_ADDRESS => (outbe_coderegistry::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_coderegistry::precompile::PAYABLE_SELECTORS),
     VOTE_ADDRESS => (vote_dispatch, default_base_gas, ValuePolicy::Payable, outbe_vote::precompile::PAYABLE_SELECTORS),
     UPDATE_ADDRESS => (outbe_update::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_update::precompile::PAYABLE_SELECTORS),
+    ATTESTERS_REGISTRY_ADDRESS => (outbe_attestersregistry::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_attestersregistry::precompile::PAYABLE_SELECTORS),
+    ENCLAVE_REGISTRY_ADDRESS => (outbe_enclaveregistry::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_enclaveregistry::precompile::PAYABLE_SELECTORS),
+    FS_EPOCH_REGISTRY_ADDRESS => (outbe_fsepochregistry::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_fsepochregistry::precompile::PAYABLE_SELECTORS),
+    SPENDING_UNIT_V2_ADDRESS => (outbe_spendingunitv2::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_spendingunitv2::precompile::PAYABLE_SELECTORS),
 }
 
 const _: () = outbe_evm::precompiles::assert_valid_production_routes(EXACT_ROUTE_ADDRESSES);

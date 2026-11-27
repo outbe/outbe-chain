@@ -20,7 +20,7 @@ impl OutbeRpcModuleValidator {
                 let RethRpcModule::Other(name) = module else {
                     continue;
                 };
-                if name != "outbe" {
+                if name != "outbe" && name != "fsEpoch" {
                     return Err(CliError::UnknownRpcModule { name: name.clone() });
                 }
             }

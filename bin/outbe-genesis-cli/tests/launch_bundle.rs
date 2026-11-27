@@ -459,6 +459,7 @@ fn caddy_systemd_units_and_resident_tee() {
 
     let node2 =
         fs::read_to_string(output_dir.join("validator-2").join("run-node.sh")).expect("node2");
+    assert!(node2.contains("--http.api eth,net,web3,outbe,fsEpoch"));
     assert!(node2.contains("--nat extip:10.0.0.3"));
     assert!(node2.contains("--consensus.storage-dir"));
     assert!(!node2.contains("--consensus.use-local-defaults"));

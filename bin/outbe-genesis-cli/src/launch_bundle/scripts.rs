@@ -147,7 +147,7 @@ exec {q_binary} node \\\n\
   --radicle.control-socket {q_radicle_sock} \\\n\
   --radicle.status-address 127.0.0.1:{radicle_status_port} \\\n\
   --http --http.addr {rpc_bind} --http.port {rpc_port} \\\n\
-  --http.api eth,net,web3,outbe \\\n\
+  --http.api eth,net,web3,outbe,fsEpoch \\\n\
   --authrpc.port {authrpc_port} \\\n\
   --port {reth_p2p_port} \\\n\
   --discovery.port {reth_p2p_port} \\\n\

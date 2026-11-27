@@ -137,6 +137,26 @@ pub const HYPERLANE_CONTROLLER_ADDRESS: Address =
 pub const CROSSCHAIN_BRIDGE_ADDRESS: Address =
     address!("0x000000000000000000000000000000000000EE15");
 
+// ---------------------------------------------------------------------------
+// PSO L2 / Bank-Data-Provider native precompiles (0x5200 range)
+// ---------------------------------------------------------------------------
+
+/// AttestersRegistry precompile address (`IAttestersRegistry`).
+pub const ATTESTERS_REGISTRY_ADDRESS: Address =
+    address!("0x5200000000000000000000000000000000000001");
+
+/// EnclaveRegistry precompile address (`IEnclaveRegistry`).
+pub const ENCLAVE_REGISTRY_ADDRESS: Address =
+    address!("0x5200000000000000000000000000000000000002");
+
+/// FsEpochRegistry precompile address (`IFsEpochRegistry`).
+pub const FS_EPOCH_REGISTRY_ADDRESS: Address =
+    address!("0x5200000000000000000000000000000000000003");
+
+/// SpendingUnitV2 precompile address (`ISpendingUnitV2`).
+pub const SPENDING_UNIT_V2_ADDRESS: Address =
+    address!("0x5200000000000000000000000000000000000008");
+
 /// Genesis-reserved two-byte class for dynamic stablecoin token addresses.
 pub const STABLECOIN_ADDRESS_PREFIX: [u8; 2] = RESERVED_DYNAMIC_PRECOMPILE_PREFIX;
 

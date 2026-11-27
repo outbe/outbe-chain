@@ -198,6 +198,7 @@ where
                 let tee_enclave_health = tee_canary_status_for_rpc.clone();
                 move |ctx| {
                     use crate::domain_rpc::OutbeDomainApiServer as _;
+                    use crate::fs_epoch_rpc::FsEpochApiServer as _;
                     use outbe_rpc::OutbeApiServer as _;
                     let provider = Arc::new(ctx.provider().clone());
                     let context_provider = Arc::clone(&provider);
@@ -233,7 +234,14 @@ where
                         outbe_rpc,
                         domain_rpc,
                     )?;
-                    info!("outbe_* RPC namespace registered where configured");
+                    let fs_epoch_rpc =
+                        crate::fs_epoch_rpc::FsEpochRpcHandler::new(Arc::clone(&provider))
+                            .into_rpc();
+                    crate::fs_epoch_rpc::register_fs_epoch_rpc_if_configured(
+                        ctx.modules,
+                        fs_epoch_rpc,
+                    )?;
+                    info!("outbe_* and fsEpoch_* RPC namespaces registered where configured");
                     Ok(())
                 }
             })

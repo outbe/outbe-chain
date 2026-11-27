@@ -41,6 +41,10 @@ members = [
     "crates/system/vote",
     "crates/system/hyperlanecontroller",
     "crates/system/crosschainbridge",
+    "crates/system/attestersregistry",
+    "crates/system/enclaveregistry",
+    "crates/system/fsepochregistry",
+    "crates/system/spendingunitv2",
     # core outbe
     "crates/core/gratis",
     "crates/core/promis",
@@ -129,6 +133,10 @@ default-members = [
     "crates/system/vote",
     "crates/system/hyperlanecontroller",
     "crates/system/crosschainbridge",
+    "crates/system/attestersregistry",
+    "crates/system/enclaveregistry",
+    "crates/system/fsepochregistry",
+    "crates/system/spendingunitv2",
     # core outbe
     "crates/core/gratis",
     "crates/core/promis",
@@ -235,6 +243,10 @@ outbe-teeregistry = { path = "crates/system/teeregistry" }
 outbe-l2registry = { path = "crates/system/l2registry" }
 outbe-hyperlanecontroller = { path = "crates/system/hyperlanecontroller" }
 outbe-crosschainbridge = { path = "crates/system/crosschainbridge" }
+outbe-attestersregistry = { path = "crates/system/attestersregistry" }
+outbe-enclaveregistry = { path = "crates/system/enclaveregistry" }
+outbe-fsepochregistry = { path = "crates/system/fsepochregistry" }
+outbe-spendingunitv2 = { path = "crates/system/spendingunitv2" }
 outbe-coderegistry = { path = "crates/system/coderegistry" }
 outbe-update = { path = "crates/system/update" }
 outbe-vote = { path = "crates/system/vote" }
@@ -358,6 +370,9 @@ blst = { version = "0.3.16", default-features = false }
 # Crypto
 argon2 = "0.5"
 k256 = { version = "0.13", features = ["ecdsa"] }
+p384 = "0.13"
+sev = { version = "8", default-features = false, features = ["snp", "crypto_nossl"] }
+x509-cert = "0.2"
 keyring = { version = "3", features = ["apple-native", "linux-native"] }
 ring = "0.17"
 zeroize = "1"
@@ -487,6 +502,7 @@ bn254_blackbox_solver = { opt-level = 3 }
 # Curves, signatures & AEAD transport
 k256 = { opt-level = 3 }
 p256 = { opt-level = 3 }
+p384 = { opt-level = 3 }
 crypto-bigint = { opt-level = 3 }
 ed25519-dalek = { opt-level = 3 }
 x25519-dalek = { opt-level = 3 }

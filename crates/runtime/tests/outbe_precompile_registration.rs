@@ -11,7 +11,7 @@ use outbe_evm::precompiles::{
 use outbe_runtime::precompiles::outbe_exact_precompile_addresses;
 use outbe_system_common::addresses::*;
 
-fn expected_exact_addresses() -> [Address; 37] {
+fn expected_exact_addresses() -> [Address; 41] {
     [
         GRATIS_ADDRESS,
         GRATIS_FACTORY_ADDRESS,
@@ -50,6 +50,10 @@ fn expected_exact_addresses() -> [Address; 37] {
         CODE_REGISTRY_ADDRESS,
         VOTE_ADDRESS,
         UPDATE_ADDRESS,
+        ATTESTERS_REGISTRY_ADDRESS,
+        ENCLAVE_REGISTRY_ADDRESS,
+        FS_EPOCH_REGISTRY_ADDRESS,
+        SPENDING_UNIT_V2_ADDRESS,
     ]
 }
 

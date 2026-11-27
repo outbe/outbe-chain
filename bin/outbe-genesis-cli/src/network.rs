@@ -32,7 +32,7 @@ pub const MAX_GENESIS_AGE_SECONDS: i64 = 6 * 60 * 60;
 
 const PACKAGED_ASSETS: &str = "share/outbe-genesis";
 
-pub const SEED_SECTIONS: [&str; 15] = [
+pub const SEED_SECTIONS: [&str; 16] = [
     "protocol_constants",
     "balance",
     "staking",
@@ -48,6 +48,7 @@ pub const SEED_SECTIONS: [&str; 15] = [
     "contracts",
     "tee_policy",
     "hyperlane_controller",
+    "pso_l2",
 ];
 
 pub const TEE_KEYS: [&str; 1] = ["mode"];
