@@ -239,7 +239,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     ///         account may call it. Reverts before the transit close or for an empty balance.
     /// @param owner Owner whose forfeited units are burned.
     /// @param seriesId Series identifier.
-    function burnForfeited(address owner, bytes14 seriesId) external;
+    function forfeitIntex(address owner, bytes14 seriesId) external;
 
     // --- Reads ---
 

@@ -291,7 +291,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     }
 
     /// @inheritdoc IIntexNFT1155
-    function burnForfeited(address owner, bytes14 seriesId) external {
+    function forfeitIntex(address owner, bytes14 seriesId) external {
         uint256 intexId = _issuedIntexId(seriesId);
         IIntexNFT1155.SeriesData storage data = _s().seriesData[intexId];
         if (data.issuedAt == 0) revert IntexNotFound(intexId);
