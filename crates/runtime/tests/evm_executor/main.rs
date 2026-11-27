@@ -115,6 +115,7 @@ pub mod fixtures;
 pub mod fixtures_execution;
 mod oip_00158_isolation;
 mod oracle_soft_failure;
+mod paynote_sponsored;
 mod receipts_and_gas;
 mod receipts_and_gas_begin_block_events;
 mod receipts_and_gas_calibration_auction;

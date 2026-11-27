@@ -45,6 +45,28 @@
 //! sender may resolve it too. The sender gives the recipient the note details
 //! off-chain. They do not let anyone spend.
 //!
+//! # Address privacy
+//!
+//! The pool hides who owns a note. It cannot hide who sends a transaction, so
+//! the two parties of a payment can still learn each other's address:
+//! - The recipient knows the locked commitment. They see the sender of the
+//!   `deposit` or the `transfer` that created it.
+//! - The sender chose `rho`, so they know the nullifier of the locked note.
+//!   They see the sender of the transaction that resolves it. With an
+//!   `outbe.paynote.claim_spend` proof they also see the recipient of the
+//!   withdrawal, or the caller of the settlement.
+//!
+//! A wallet that hides both addresses follows these rules:
+//! - The recipient publishes a [`client::ReceiverBundle`], never an address.
+//! - The sender deposits for themselves, then pays with `IPayNote.transfer`.
+//! - A one-time key with no balance sends `transfer`, `resolveTransfer`,
+//!   `mergePayNotes` and `withdraw`. The zero-fee path sponsors these calls for
+//!   an account that delegates to ZeroFee.
+//! - The recipient resolves the locked note first and spends the ordinary note
+//!   later. The sender cannot compute the nullifier of that note.
+//! - The recipient withdraws to a fresh address. Deposit and withdrawal amounts
+//!   are public, so equal amounts close in time link the two ends.
+//!
 //! The hash/tree formulas mirror the frozen noir circuit's `paynote.nr`. The
 //! runtime operates over persistent EVM storage.
 //!

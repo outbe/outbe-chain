@@ -25,6 +25,15 @@ pragma solidity ^0.8.0;
 /// A transfer locks a note to a recipient's public key, which is the note serial
 /// of a key the recipient holds. The recipient claims or declines it. After 30
 /// days the sender may reclaim it.
+///
+/// The pool hides who owns a note, not who sends a transaction. The recipient
+/// of a locked note sees the sender of the `deposit` or `transfer` that created
+/// it. The sender of a locked note knows its nullifier, so they see who
+/// resolves it and, with a claim-spend proof, where the funds go. To hide both
+/// addresses, the sender deposits for themselves and pays with `transfer`, and
+/// the recipient calls `resolveTransfer` before they spend. A one-time account
+/// that delegates to ZeroFee sends `transfer`, `resolveTransfer`,
+/// `mergePayNotes` and `withdraw` without a balance.
 interface IPayNote {
     /// @notice The pool holds no vault for this asset.
     error AssetVaultMissing(address asset);

@@ -919,3 +919,40 @@ fn only_a_settlement_factory_may_consume_through_the_abi() {
         assert_eq!(ret.nullifier, b256(public.nullifier));
     });
 }
+
+#[test]
+fn a_receiver_bundle_round_trips_and_rejects_malformed_text() {
+    use crate::client::ReceiverBundle;
+    use outbe_zk::primitive::curve::{mul_generator, Affine, Scalar};
+
+    let view_key = Affine::from(mul_generator(&Scalar::from(5_u64)));
+    let bundle = ReceiverBundle {
+        chain_id: CHAIN_ID,
+        recipient_pk: crate::hash::note_sn(Field::from(31_u64)).unwrap(),
+        view_key,
+    };
+    let text = bundle.to_string();
+    assert_eq!(ReceiverBundle::parse(&text, CHAIN_ID).unwrap(), bundle);
+
+    let off_curve = ReceiverBundle {
+        view_key: Affine::new_unchecked(view_key.x, view_key.y + Field::from(1_u64)),
+        ..bundle
+    };
+    let zero_key = ReceiverBundle {
+        recipient_pk: Field::zero(),
+        ..bundle
+    };
+    for (malformed, chain_id) in [
+        (text.clone(), CHAIN_ID + 1),
+        (text.replacen("st:outbe", "st:eth", 1), CHAIN_ID),
+        (format!("{text}00"), CHAIN_ID),
+        (text.replace("0x", "0xzz"), CHAIN_ID),
+        (off_curve.to_string(), CHAIN_ID),
+        (zero_key.to_string(), CHAIN_ID),
+    ] {
+        assert!(
+            ReceiverBundle::parse(&malformed, chain_id).is_err(),
+            "{malformed}"
+        );
+    }
+}
