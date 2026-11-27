@@ -212,7 +212,7 @@ pub const DESIS_CLEANUP_WORKER_BUDGET_GAS: u64 = 11_520_000;
 /// The auction of a day starts in the slot that starts the day only in that order.
 ///
 /// Budgets use measured successful gross maxima, multiplied by four and rounded up to 1,000 gas.
-/// In stable-id order those maxima are [492000, 50300, 991492, 50300, 2583089, 50300, 50300].
+/// In stable-id order those maxima are [720000, 50300, 991492, 50300, 2583089, 50300, 50300].
 /// `an_emission_day_run_stays_within_its_measured_maximum` pins the first one.
 /// The supported nested bridge profile performs calldata copy/hash, persistent
 /// reads/writes, logs, and a real relay call. It is not a universal contract bound.
@@ -233,7 +233,7 @@ pub const fn active_tasks() -> core::result::Result<[TaskSpec; 7], CycleError> {
                     PROCESS_EMISSION_DAY_PERIOD_SECONDS,
                     PROCESS_EMISSION_DAY_START_OFFSET_SECONDS
                 ),
-                1_968_000,
+                2_880_000,
                 TaskHandler::ProcessEmissionDay,
             ));
             spec.requires_accounting_window = true;
@@ -485,7 +485,7 @@ mod protocol_parameter_tests {
     #[test]
     fn calibrated_budgets_are_nonzero_and_follow_checked_headroom_rule() {
         let maxima = [
-            492_000u64, 50_300, 991_492, 50_300, 2_583_089, 50_300, 50_300,
+            720_000u64, 50_300, 991_492, 50_300, 2_583_089, 50_300, 50_300,
         ];
         let tasks = active_tasks().expect("calibrated task table");
         let mut total = 0u64;
@@ -504,6 +504,6 @@ mod protocol_parameter_tests {
                 .checked_add(spec.work_budget_gas())
                 .expect("combined allowances fit u64");
         }
-        assert_eq!(total, 22_535_000);
+        assert_eq!(total, 23_447_000);
     }
 }

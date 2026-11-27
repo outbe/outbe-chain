@@ -416,8 +416,9 @@ fn non_isolated_task_panic_and_halt_are_not_swallowed() {
 
 #[test]
 fn an_emission_day_run_stays_within_its_measured_maximum() {
-    // A catch-up run starts the day and, its offering being over, runs its 12:00 step too.
-    let fire_ts = GENESIS_TS + 2 * SECONDS_PER_DAY - 1;
+    // A catch-up run seals two WWDs, opens three with their records, starts the day and, its
+    // offering being over, runs its 12:00 step too.
+    let fire_ts = GENESIS_TS + 3 * SECONDS_PER_DAY + 1;
     let mut storage = calendar_storage();
     storage.enter(|handle| {
         let ctx = runtime_context(block_ctx(2, fire_ts), handle);
@@ -449,6 +450,7 @@ fn an_emission_day_run_stays_within_its_measured_maximum() {
             outbe_emission::schema::metadosis_state::COMPLETED
         );
         assert!(record.validators != 0 && record.waa != 0 && record.sra != 0);
-        assert!(gas <= 492_000, "measured {gas}");
+        // 645,800 measured, and up to 63 more record reads of the stalled-day scan.
+        assert!(gas <= 720_000, "measured {gas}");
     });
 }
