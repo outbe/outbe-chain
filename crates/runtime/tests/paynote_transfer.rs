@@ -2,8 +2,9 @@
 //! `IPayNote.resolveTransfer`.
 //!
 //! Runs the whole transfer flow through the real EVM with real proofs, on
-//! native COEN notes. Alice deposits, locks part of the note to Bob's public
-//! key, and the locked note is then claimed, declined or reclaimed.
+//! native COEN notes. Alice deposits for herself, locks part of the note to
+//! Bob's public key, and the locked note is then claimed, declined or
+//! reclaimed. Alice also deposits straight to Bob, with no transfer proof.
 //!
 //! What this pins that unit tests cannot:
 //!   * the note a claim, decline or reclaim creates is an ordinary note: its
@@ -20,7 +21,8 @@ use outbe_paynote::hash::note_sn;
 use outbe_paynote::precompile::IPayNote;
 use outbe_paynote::runtime::PAYNOTE_TRANSFER_TIMELOCK_SECS;
 use outbe_paynote::test_support::{
-    change_note, claim_proof, locked_note, note, spend_proof, transfer_proof, LockedNote, Note,
+    change_note, claim_proof, locked_note, note, self_claim, self_deposit, spend_proof,
+    transfer_proof, LockedNote, Note,
 };
 use outbe_paynote::{Field, PayNoteTree};
 use outbe_primitives::chain::CHAIN_ID;
@@ -43,9 +45,10 @@ const BOB_KEY: u64 = 21;
 const ALICE_REFUND_KEY: u64 = 22;
 /// Key of the note Bob claims into.
 const BOB_NOTE_KEY: u64 = 23;
-/// Leaves after the transfer: Alice's note, the locked note, her change.
-const LOCKED_LEAF: u32 = 1;
-const RESOLVED_LEAF: u32 = 3;
+/// Leaves after the transfer: Alice's deposit, her note, the locked note, her
+/// change.
+const LOCKED_LEAF: u32 = 2;
+const RESOLVED_LEAF: u32 = 4;
 
 fn call(world: &mut EvmWorld, caller: Address, value: U256, calldata: Vec<u8>) -> bool {
     let input = SubCallInput {
@@ -74,10 +77,8 @@ fn is_spent(world: &mut EvmWorld, nullifier: Field) -> bool {
     world.view(ALICE, PAYNOTE_ADDRESS, IPayNote::isSpentCall { nullifier })
 }
 
-/// Alice deposits `NOTE_AMOUNT` of native COEN and locks `SENT` of it to Bob,
-/// knowing only his public key. Returns the world, the pool tree and the
-/// locked note.
-fn transferred() -> (EvmWorld, PayNoteTree, LockedNote) {
+/// A world where Alice holds native COEN.
+fn world() -> EvmWorld {
     let mut db = CacheDB::new(EmptyDB::default());
     db.insert_account_info(
         &ALICE,
@@ -86,29 +87,36 @@ fn transferred() -> (EvmWorld, PayNoteTree, LockedNote) {
             ..Default::default()
         },
     );
-    let mut world =
-        EvmWorld::new(db, std::sync::Arc::new(outbe_runtime::OutbeRuntime::new())).at(TIMESTAMP);
+    EvmWorld::new(db, std::sync::Arc::new(outbe_runtime::OutbeRuntime::new())).at(TIMESTAMP)
+}
 
-    let amount = U256::from(NOTE_AMOUNT);
-    let source = note(CHAIN_ID, ALICE_KEY, Address::ZERO, amount);
-    let deposit = IPayNote::depositCall {
-        asset: Address::ZERO,
-        amount,
-        noteSn: field_to_b256(&source.serial).unwrap(),
-    };
-    assert!(call(&mut world, ALICE, amount, deposit.abi_encode()));
-    let mut tree = outbe_paynote::client::new_tree(CHAIN_ID).unwrap();
-    tree.append(source.commitment).unwrap();
-
+/// The note of `SENT` native COEN that Alice locks to Bob, knowing only his
+/// public key.
+fn locked_to_bob() -> LockedNote {
     let bob_pk = note_sn(Field::from(BOB_KEY)).unwrap();
-    let locked = locked_note(
+    locked_note(
         CHAIN_ID,
         (bob_pk, ALICE_REFUND_KEY, 777),
         DEADLINE,
         Address::ZERO,
         U256::from(SENT),
-    );
-    let proof = transfer_proof(CHAIN_ID, &tree, 0, &source, &locked);
+    )
+}
+
+/// Alice deposits `NOTE_AMOUNT` of native COEN for herself, claims it, and
+/// locks `SENT` of it to Bob. Returns the world, the pool tree and the locked
+/// note.
+fn transferred() -> (EvmWorld, PayNoteTree, LockedNote) {
+    let mut world = world();
+    let amount = U256::from(NOTE_AMOUNT);
+    let (deposit, deposited) = self_deposit(CHAIN_ID, ALICE_KEY, TIMESTAMP, Address::ZERO, amount);
+    assert!(call(&mut world, ALICE, amount, deposit.abi_encode()));
+    let mut tree = outbe_paynote::client::new_tree(CHAIN_ID).unwrap();
+    let (claim, source) = self_claim(CHAIN_ID, &mut tree, ALICE_KEY, &deposited);
+    assert!(call(&mut world, RELAYER, U256::ZERO, claim.abi_encode()));
+
+    let locked = locked_to_bob();
+    let proof = transfer_proof(CHAIN_ID, &tree, 1, &source, &locked);
     let transfer = IPayNote::transferCall {
         proof: proof.into(),
     };
@@ -209,4 +217,49 @@ fn the_sender_reclaims_only_after_the_timelock() {
     let (accepted, _) = resolve(&mut world, &tree, &locked, (BOB_KEY, 0), BOB_NOTE_KEY);
     assert!(!accepted);
     withdraw_all(&mut world, tree, &refund, ALICE);
+}
+
+/// A deposit names its recipient. Thus Alice pays Bob in one call and with no
+/// proof, and Bob claims the note as he claims a transfer.
+#[test]
+fn a_deposit_to_the_recipient_is_claimed_and_withdrawn() {
+    let mut world = world();
+    let locked = locked_to_bob();
+    let deposit = IPayNote::depositCall {
+        asset: Address::ZERO,
+        amount: locked.amount,
+        lock: field_to_b256(&locked.lock).unwrap(),
+        deadline: DEADLINE,
+    };
+    assert!(call(&mut world, ALICE, locked.amount, deposit.abi_encode()));
+    let mut tree = outbe_paynote::client::new_tree(CHAIN_ID).unwrap();
+    tree.append(locked.commitment).unwrap();
+
+    // Alice is the sender, so she cannot take the deposit back before the
+    // deadline.
+    let reclaimed = note(CHAIN_ID, ALICE_REFUND_KEY, Address::ZERO, locked.amount);
+    let reclaim = (ALICE_REFUND_KEY, DEADLINE);
+    let proof = claim_proof(CHAIN_ID, &tree, 0, &locked, reclaim, &reclaimed);
+    let data = IPayNote::resolveTransferCall {
+        proof: proof.into(),
+    };
+    assert!(!call(&mut world, RELAYER, U256::ZERO, data.abi_encode()));
+
+    let claimed = note(CHAIN_ID, BOB_NOTE_KEY, Address::ZERO, locked.amount);
+    let proof = claim_proof(CHAIN_ID, &tree, 0, &locked, (BOB_KEY, 0), &claimed);
+    let data = IPayNote::resolveTransferCall {
+        proof: proof.into(),
+    };
+    assert!(call(&mut world, RELAYER, U256::ZERO, data.abi_encode()));
+    tree.append(claimed.commitment).unwrap();
+
+    let context = withdraw_context(BOB).unwrap();
+    let proof = spend_proof(CHAIN_ID, &tree, 1, &claimed, context, claimed.amount);
+    let data = IPayNote::withdrawCall {
+        proof: proof.into(),
+        recipient: BOB,
+    };
+    assert!(call(&mut world, RELAYER, U256::ZERO, data.abi_encode()));
+    assert_eq!(native_balance(&mut world, BOB), locked.amount);
+    assert_eq!(native_balance(&mut world, PAYNOTE_ADDRESS), U256::ZERO);
 }

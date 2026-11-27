@@ -28,7 +28,7 @@ use outbe_zk_backend::barretenberg::verify_circuit;
 
 use crate::context::withdraw_context;
 use crate::errors::PayNoteError;
-use crate::hash::{empty_subtrees, merkle_node, note_commitment};
+use crate::hash::{empty_subtrees, merkle_node, transfer_commitment};
 use crate::precompile::IPayNote;
 use crate::schema::{
     PayNoteContract, PAYNOTE_ROOT_WINDOW, PAYNOTE_TREE_CAPACITY, PAYNOTE_TREE_DEPTH,
@@ -160,6 +160,21 @@ pub(crate) fn merge_pay_notes(storage: &StorageHandle<'_>, proof: &[u8]) -> Resu
 /// How long the recipient of a transfer has before the sender may reclaim it.
 pub const PAYNOTE_TRANSFER_TIMELOCK_SECS: u64 = 30 * 24 * 60 * 60;
 
+/// Rejects a `deadline` that leaves the recipient less than the timelock.
+fn check_transfer_deadline(storage: &StorageHandle<'_>, deadline: u64) -> Result<()> {
+    let earliest = storage
+        .now_secs()?
+        .checked_add(PAYNOTE_TRANSFER_TIMELOCK_SECS)
+        .ok_or_else(|| PayNoteError::InvalidInput("transfer deadline overflows".into()))?;
+    if deadline < earliest {
+        return Err(PayNoteError::InvalidInput(
+            "transfer deadline is earlier than the 30-day timelock".into(),
+        )
+        .into());
+    }
+    Ok(())
+}
+
 /// `transfer(proof)` — spend an ordinary note into a locked transfer note and
 /// an optional change note. The recipient can claim or decline the locked note
 /// at once. The sender can reclaim it from `deadline` on, which must leave the
@@ -171,16 +186,7 @@ pub(crate) fn transfer(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<()> 
             .map_err(|error| {
                 PayNoteError::InvalidInput(format!("transfer proof is malformed: {error}"))
             })?;
-    let earliest = storage
-        .now_secs()?
-        .checked_add(PAYNOTE_TRANSFER_TIMELOCK_SECS)
-        .ok_or_else(|| PayNoteError::InvalidInput("transfer deadline overflows".into()))?;
-    if claim.deadline < earliest {
-        return Err(PayNoteError::InvalidInput(
-            "transfer deadline is earlier than the 30-day timelock".into(),
-        )
-        .into());
-    }
+    check_transfer_deadline(storage, claim.deadline)?;
     let mut outputs = vec![claim.locked_commitment];
     // A full transfer carries the zero change sentinel.
     if !claim.change_commitment.is_zero() {
@@ -353,8 +359,12 @@ pub(crate) fn append(
     Ok((leaf_index, current))
 }
 
-/// `deposit(asset, amount, noteSn)` — move the asset into the pool and append
-/// the derived note commitment. An ERC20 is pulled from the caller and stays in
+/// `deposit(asset, amount, lock, deadline)` — move the asset into the pool and
+/// append the derived locked transfer note, the same leaf a [`transfer`] makes.
+/// The recipient in `lock` resolves it at once, the sender from `deadline` on.
+/// A self-deposit names the depositor as both. `deadline` must leave at least
+/// [`PAYNOTE_TRANSFER_TIMELOCK_SECS`].
+/// An ERC20 is pulled from the caller and stays in
 /// the pool until a spend routes it into the reserve vault of the asset.
 /// `asset == 0` is native COEN: the payable route has already credited
 /// `msg.value` to the pool, so it must equal `amount`.
@@ -362,7 +372,7 @@ pub(crate) fn deposit(
     storage: StorageHandle<'_>,
     caller: Address,
     (asset, amount, value): (Address, U256, U256),
-    note_sn: B256,
+    (lock, deadline): (B256, u64),
 ) -> Result<()> {
     // Guards, before any mutation.
     if amount.is_zero() {
@@ -373,11 +383,12 @@ pub(crate) fn deposit(
     if value != expected_value {
         return Err(PayNoteError::NativeValueMismatch.into());
     }
-    let serial = field_from_b256(&note_sn)
-        .map_err(|_| PayNoteError::InvalidInput("noteSn is not a canonical BN254 field".into()))?;
-    if serial.is_zero() {
-        return Err(PayNoteError::InvalidInput("noteSn must be non-zero".into()).into());
+    let lock = field_from_b256(&lock)
+        .map_err(|_| PayNoteError::InvalidInput("lock is not a canonical BN254 field".into()))?;
+    if lock.is_zero() {
+        return Err(PayNoteError::InvalidInput("lock must be non-zero".into()).into());
     }
+    check_transfer_deadline(&storage, deadline)?;
 
     let (chain_id, zeros) = chain_state(&storage)?;
     let paynote: PayNoteContract<'_> = storage.contract();
@@ -396,8 +407,8 @@ pub(crate) fn deposit(
     // call actually moves. The caller never supplies it, so Merkle membership
     // attests both. A caller-chosen leaf would let a depositor fund a note in a
     // cheap token and spend it as an expensive one.
-    let commitment =
-        note_commitment(chain_id, serial, asset, amount).map_err(|_| PayNoteError::Hash)?;
+    let commitment = transfer_commitment(chain_id, lock, deadline, asset, amount)
+        .map_err(|_| PayNoteError::Hash)?;
     if commitment.is_zero() {
         return Err(PayNoteError::InvalidInput("commitment must be non-zero".into()).into());
     }

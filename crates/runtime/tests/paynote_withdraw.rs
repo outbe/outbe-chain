@@ -19,7 +19,10 @@ use evm2::evm::{AccountInfo, CacheDB, EmptyDB};
 use outbe_evm::test_support::{install_code, runtime_code, seed_storage, EvmWorld};
 use outbe_paynote::api::withdraw_context;
 use outbe_paynote::precompile::IPayNote;
-use outbe_paynote::test_support::{change_note, merge_proof, note, spend_proof, Note};
+use outbe_paynote::test_support::{
+    change_note, merge_proof, note, self_claim, self_deposit, spend_proof, Note,
+};
+use outbe_paynote::PayNoteTree;
 use outbe_primitives::chain::CHAIN_ID;
 use outbe_primitives::storage::{SubCallInput, SubCallOutput, SubCallStatus};
 use outbe_system_common::addresses::PAYNOTE_ADDRESS;
@@ -107,31 +110,32 @@ fn succeeded(out: &SubCallOutput) -> bool {
     matches!(out.status, SubCallStatus::Success)
 }
 
-/// `ALICE` deposits a note of `NOTE_AMOUNT` in `asset` under spend key `key`.
-fn deposit(world: &mut EvmWorld, key: u64, asset: Address) -> Note {
+/// `ALICE` deposits `NOTE_AMOUNT` in `asset` for herself and claims it into a
+/// note under spend key `key`. `tree` gains the locked leaf, then the note.
+fn deposit(world: &mut EvmWorld, tree: &mut PayNoteTree, key: u64, asset: Address) -> Note {
     let amount = U256::from(NOTE_AMOUNT);
-    let paid = note(CHAIN_ID, key, asset, amount);
-    let deposit = IPayNote::depositCall {
-        asset,
-        amount,
-        noteSn: field_to_b256(&paid.serial).unwrap(),
-    };
+    let (deposit, locked) = self_deposit(CHAIN_ID, key, TIMESTAMP, asset, amount);
     let value = if asset.is_zero() { amount } else { U256::ZERO };
     assert!(succeeded(&call(world, ALICE, value, deposit.abi_encode())));
+    let (claim, paid) = self_claim(CHAIN_ID, tree, key, &locked);
+    assert!(succeeded(&call(
+        world,
+        RELAYER,
+        U256::ZERO,
+        claim.abi_encode()
+    )));
     paid
 }
 
 /// `ALICE` deposits a note in `asset`. Returns the note and a proof that pays
 /// `SPEND_AMOUNT` of it to `recipient`.
 fn deposit_and_prove(world: &mut EvmWorld, asset: Address, recipient: Address) -> (Note, Vec<u8>) {
-    let paid = deposit(world, 23, asset);
-
     let mut tree = outbe_paynote::client::new_tree(CHAIN_ID).unwrap();
-    tree.append(paid.commitment).unwrap();
+    let paid = deposit(world, &mut tree, 23, asset);
     let proof = spend_proof(
         CHAIN_ID,
         &tree,
-        0,
+        1,
         &paid,
         withdraw_context(recipient).unwrap(),
         U256::from(SPEND_AMOUNT),
@@ -190,7 +194,7 @@ fn an_erc20_withdrawal_pays_the_bound_recipient_once_and_keeps_the_change() {
     assert_eq!(balances(&mut world), funded);
     assert_eq!(
         world.view(ALICE, PAYNOTE_ADDRESS, IPayNote::leafCountCall {}),
-        1
+        2
     );
 
     let out = withdraw(&mut world, &proof, BOB);
@@ -250,11 +254,8 @@ fn a_native_withdrawal_pays_the_recipient_in_coen() {
 fn merged_native_notes_withdraw_as_one_note() {
     let mut world = world();
     let amount = U256::from(NOTE_AMOUNT);
-    let inputs = [23, 24].map(|key| deposit(&mut world, key, Address::ZERO));
     let mut tree = outbe_paynote::client::new_tree(CHAIN_ID).unwrap();
-    for input in &inputs {
-        tree.append(input.commitment).unwrap();
-    }
+    let inputs = [23, 24].map(|key| deposit(&mut world, &mut tree, key, Address::ZERO));
 
     let merged = note(CHAIN_ID, 25, Address::ZERO, amount + amount);
     let merge = IPayNote::mergePayNotesCall {
@@ -279,7 +280,7 @@ fn merged_native_notes_withdraw_as_one_note() {
     let proof = spend_proof(
         CHAIN_ID,
         &tree,
-        2,
+        4,
         &merged,
         withdraw_context(BOB).unwrap(),
         spend,

@@ -10,7 +10,7 @@ use outbe_evm::test_support::{install_code, runtime_code, seed_storage, EvmWorld
 use outbe_oracle::test_support::seed_trailing_vwap_window;
 use outbe_paynote::api::{settlement_context, SettlementDomain};
 use outbe_paynote::precompile::IPayNote;
-use outbe_paynote::test_support::{note, spend_proof};
+use outbe_paynote::test_support::{self_claim, self_deposit, spend_proof};
 use outbe_primitives::chain::CHAIN_ID;
 use outbe_primitives::storage::{StorageHandle, SubCallOutput, SubCallStatus};
 use outbe_system_common::addresses::{PAYNOTE_ADDRESS, VAULT_ROUTER_ADDRESS};
@@ -435,7 +435,6 @@ pub fn a_paynote_pays_exactly_the_cost_once<R: Rail>(rail: R) {
     let mut world = World::new(rail, THIRD_PARTY, true);
     let change = U256::from(5);
     let deposit = world.cost + change;
-    let paid = note(CHAIN_ID, 23, ASSET, deposit);
     world.ok(
         OWNER,
         ASSET,
@@ -452,17 +451,12 @@ pub fn a_paynote_pays_exactly_the_cost_once<R: Rail>(rail: R) {
             amount: deposit,
         },
     );
-    world.ok(
-        THIRD_PARTY,
-        PAYNOTE_ADDRESS,
-        IPayNote::depositCall {
-            asset: ASSET,
-            amount: deposit,
-            noteSn: field_to_b256(&paid.serial).unwrap(),
-        },
-    );
+    // The third party deposits for itself and claims the note at once.
+    let (call, locked) = self_deposit(CHAIN_ID, 23, TIMESTAMP, ASSET, deposit);
+    world.ok(THIRD_PARTY, PAYNOTE_ADDRESS, call);
     let mut tree = outbe_paynote::client::new_tree(CHAIN_ID).unwrap();
-    tree.append(paid.commitment).unwrap();
+    let (claim, paid) = self_claim(CHAIN_ID, &mut tree, 23, &locked);
+    world.ok(THIRD_PARTY, PAYNOTE_ADDRESS, claim);
     let nullifier = field_to_b256(&paid.nullifier).unwrap();
     let (domain, target, units) = rail.paynote_statement(world.id);
     let snapshot_id = world.snapshot_id;
@@ -474,7 +468,7 @@ pub fn a_paynote_pays_exactly_the_cost_once<R: Rail>(rail: R) {
     let stray = spend_proof(
         CHAIN_ID,
         &tree,
-        0,
+        1,
         &paid,
         bound(B256::repeat_byte(9)),
         world.cost,
@@ -490,7 +484,7 @@ pub fn a_paynote_pays_exactly_the_cost_once<R: Rail>(rail: R) {
     assert!(!world.view(PAYNOTE_ADDRESS, IPayNote::isSpentCall { nullifier }));
     assert_eq!(vault_balance(&mut world), vault_before, "{rail:?}");
 
-    let proof: Bytes = spend_proof(CHAIN_ID, &tree, 0, &paid, bound(target), world.cost).into();
+    let proof: Bytes = spend_proof(CHAIN_ID, &tree, 1, &paid, bound(target), world.cost).into();
     let direct = world.call(
         OWNER,
         PAYNOTE_ADDRESS,

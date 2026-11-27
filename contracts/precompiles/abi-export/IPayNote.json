@@ -61,9 +61,14 @@
         "internalType": "uint256"
       },
       {
-        "name": "noteSn",
+        "name": "lock",
         "type": "bytes32",
         "internalType": "bytes32"
+      },
+      {
+        "name": "deadline",
+        "type": "uint64",
+        "internalType": "uint64"
       }
     ],
     "outputs": [],

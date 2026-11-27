@@ -18,6 +18,7 @@ use crate::hash::{
     change_key, empty_subtrees, note_commitment, note_nullifier, note_sn, transfer_commitment,
     transfer_lock,
 };
+use crate::precompile::IPayNote;
 use crate::runtime;
 use crate::schema::{PayNoteContract, PAYNOTE_ROOT_WINDOW, PAYNOTE_TREE_DEPTH};
 use crate::Field;
@@ -202,6 +203,46 @@ pub fn locked_note(
         commitment,
         nullifier: note_nullifier(commitment, rho).unwrap(),
     }
+}
+
+/// The deposit that the holder of `key` makes for themselves at time `now`,
+/// and the locked note it appends. They are both the recipient and the sender.
+pub fn self_deposit(
+    chain_id: u64,
+    key: u64,
+    now: u64,
+    asset: Address,
+    amount: U256,
+) -> (IPayNote::depositCall, LockedNote) {
+    let deadline = now + runtime::PAYNOTE_TRANSFER_TIMELOCK_SECS;
+    let owner = note_sn(Field::from(key)).unwrap();
+    let locked = locked_note(chain_id, (owner, key, key), deadline, asset, amount);
+    let call = IPayNote::depositCall {
+        asset,
+        amount,
+        lock: field_to_b256(&locked.lock).unwrap(),
+        deadline,
+    };
+    (call, locked)
+}
+
+/// The claim that turns a [`self_deposit`] into the ordinary note under `key`.
+/// Appends the locked leaf and the claimed leaf to `tree`, as the pool does.
+pub fn self_claim(
+    chain_id: u64,
+    tree: &mut PayNoteTree,
+    key: u64,
+    locked: &LockedNote,
+) -> (IPayNote::resolveTransferCall, Note) {
+    let (leaf_index, _) = tree.append(locked.commitment).unwrap();
+    let output = note(chain_id, key, locked.asset, locked.amount);
+    let leaf_index = u32::try_from(leaf_index).unwrap();
+    let proof = claim_proof(chain_id, tree, leaf_index, locked, (key, 0), &output);
+    tree.append(output.commitment).unwrap();
+    let call = IPayNote::resolveTransferCall {
+        proof: proof.into(),
+    };
+    (call, output)
 }
 
 fn auth_path(tree: &PayNoteTree, leaf_index: u32) -> [B256; PAYNOTE_TREE_DEPTH] {

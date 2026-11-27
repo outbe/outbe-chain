@@ -77,7 +77,7 @@ pub fn dispatch(
                         storage.clone(),
                         caller,
                         (c.asset, c.amount, value),
-                        c.noteSn,
+                        (c.lock, c.deadline),
                     )
                 },
             ),
