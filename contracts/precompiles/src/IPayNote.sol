@@ -16,6 +16,12 @@ pragma solidity ^0.8.0;
 /// may call `consume`. An EOA pays with a note through the factory's
 /// `settle…WithPayNote` method. Any address may relay a `withdraw`.
 ///
+/// A spend also accepts a frozen `outbe.paynote.claim_spend` proof, which spends
+/// a locked transfer note directly. Thus the holder of a deposit or a transfer
+/// withdraws or settles with one proof and no `resolveTransfer` first. The
+/// recipient may do so at any time, and the sender from the deadline on. The
+/// rest of the locked note becomes an ordinary change note.
+///
 /// A transfer locks a note to a recipient's public key, which is the note serial
 /// of a key the recipient holds. The recipient claims or declines it. After 30
 /// days the sender may reclaim it.
@@ -60,7 +66,9 @@ interface IPayNote {
 
     /// @notice Spend one note for a settlement. Only NodFactory, GemFactory and
     /// IntexFactory may call it.
-    /// @dev Verifies the proof, nullifies the note, appends the change note, if
+    /// @dev Accepts an `outbe.paynote` proof of an ordinary note or an
+    /// `outbe.paynote.claim_spend` proof of a locked transfer note.
+    /// Verifies the proof, nullifies the note, appends the change note, if
     /// there is one, and routes `spendAmount` of `asset` from the pool into the
     /// reserve vault of the asset. The caller must check `asset`, `spendAmount`
     /// and `context` against the settlement it performs.
@@ -76,7 +84,8 @@ interface IPayNote {
     /// `recipient`: the canonical BN254 element of
     /// `keccak256(0x04 || bytes32(recipient) || bytes32(0) || bytes32(0))`. A
     /// proof bound to another recipient or to a settlement reverts.
-    /// @param proof Combined `outbe.paynote` public inputs and proof.
+    /// @param proof Combined public inputs and proof of `outbe.paynote`, or of
+    /// `outbe.paynote.claim_spend` to pay straight from a locked transfer note.
     /// @param recipient Receiver of the funds. Must not be zero or this pool.
     function withdraw(bytes calldata proof, address recipient) external;
 

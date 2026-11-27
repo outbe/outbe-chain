@@ -327,6 +327,58 @@ pub fn claim_proof(
     encode_combined_proof(public, proof.proof).unwrap()
 }
 
+/// A real claim-spend proof: the holder of `auth_key` spends `spend_amount` of
+/// `locked`, at `leaf_index` of `tree`, bound to `context`. Returns the proof
+/// and the change note under `change_key`, which is `None` for a full spend.
+pub fn claim_spend_proof(
+    chain_id: u64,
+    tree: &PayNoteTree,
+    leaf_index: u32,
+    locked: &LockedNote,
+    (auth_key, not_before): (u64, u64),
+    (context, spend_amount): (B256, U256),
+    change_key: u64,
+) -> (Vec<u8>, Option<Note>) {
+    use outbe_zk::paynote_claim_spend::{alloy, encode_combined_proof, PaynoteClaimSpend};
+    let word = |field: &Field| field_to_b256(field).unwrap();
+    let change = locked
+        .amount
+        .checked_sub(spend_amount)
+        .filter(|remaining| !remaining.is_zero())
+        .map(|remaining| note(chain_id, change_key, locked.asset, remaining));
+    let public = alloy::PublicInputs {
+        chain_id,
+        root: word(&tree.root()),
+        nullifier: word(&locked.nullifier),
+        asset: locked.asset,
+        context,
+        spend_amount,
+        change_commitment: change
+            .as_ref()
+            .map_or(B256::ZERO, |change| word(&change.commitment)),
+        not_before,
+    };
+    let witness = alloy::Witness {
+        amount: locked.amount,
+        deadline: locked.deadline,
+        recipient_pk: word(&locked.recipient_pk),
+        sender_serial: word(&locked.sender_serial),
+        rho: word(&locked.rho),
+        auth_key: word(&Field::from(auth_key)),
+        change_serial: word(&note_sn(Field::from(change_key)).unwrap()),
+        leaf_index,
+        auth_path: auth_path(tree, leaf_index),
+    };
+    let public = public.try_into().unwrap();
+    let proof = ProofGenerator::<PaynoteClaimSpend>::generate(
+        &prover(),
+        &witness.try_into().unwrap(),
+        &public,
+    )
+    .expect("paynote claim-spend proof generation");
+    (encode_combined_proof(public, proof.proof).unwrap(), change)
+}
+
 /// Seed an initialized pool holding exactly `leaves`, mirroring what a
 /// sequence of deposits would have produced. Bypasses `deposit` because its
 /// ERC20/VaultRouter sub-calls cannot be served in-memory.

@@ -60,15 +60,8 @@ versions = [
 ]
 
 [[circuit]]
-module = "paynote_transfer"
-label = "outbe.paynote.transfer"
-versions = [
-  { version = "1.0.0", status = "active" },
-]
-
-[[circuit]]
-module = "paynote_claim"
-label = "outbe.paynote.claim"
+module = "paynote_claim_spend"
+label = "outbe.paynote.claim_spend"
 versions = [
   { version = "1.0.0", status = "active" },
 ]

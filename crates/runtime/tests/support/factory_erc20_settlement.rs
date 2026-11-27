@@ -10,7 +10,7 @@ use outbe_evm::test_support::{install_code, runtime_code, seed_storage, EvmWorld
 use outbe_oracle::test_support::seed_trailing_vwap_window;
 use outbe_paynote::api::{settlement_context, SettlementDomain};
 use outbe_paynote::precompile::IPayNote;
-use outbe_paynote::test_support::{self_claim, self_deposit, spend_proof};
+use outbe_paynote::test_support::{claim_spend_proof, self_deposit};
 use outbe_primitives::chain::CHAIN_ID;
 use outbe_primitives::storage::{StorageHandle, SubCallOutput, SubCallStatus};
 use outbe_system_common::addresses::{PAYNOTE_ADDRESS, VAULT_ROUTER_ADDRESS};
@@ -428,8 +428,9 @@ pub fn the_payer_cannot_reenter_settlement_during_transfer<R: Rail>(rail: R) {
     assert_eq!(world.balances(), world.paid_balances(), "{rail:?}");
 }
 
-/// A deposited PayNote pays exactly the cost once, relayed by anyone. The pool routes
-/// the spent amount into the vault and keeps the change. A proof bound to another
+/// A deposited PayNote pays exactly the cost once, relayed by anyone. The payer
+/// claims and spends the deposit with one proof. The pool routes the spent
+/// amount into the vault and keeps the change. A proof bound to another
 /// statement, a replay and a direct `consume` all revert and move nothing.
 pub fn a_paynote_pays_exactly_the_cost_once<R: Rail>(rail: R) {
     let mut world = World::new(rail, THIRD_PARTY, true);
@@ -451,13 +452,15 @@ pub fn a_paynote_pays_exactly_the_cost_once<R: Rail>(rail: R) {
             amount: deposit,
         },
     );
-    // The third party deposits for itself and claims the note at once.
+    // The third party deposits for itself and pays straight from the deposit.
     let (call, locked) = self_deposit(CHAIN_ID, 23, TIMESTAMP, ASSET, deposit);
     world.ok(THIRD_PARTY, PAYNOTE_ADDRESS, call);
     let mut tree = outbe_paynote::client::new_tree(CHAIN_ID).unwrap();
-    let (claim, paid) = self_claim(CHAIN_ID, &mut tree, 23, &locked);
-    world.ok(THIRD_PARTY, PAYNOTE_ADDRESS, claim);
-    let nullifier = field_to_b256(&paid.nullifier).unwrap();
+    tree.append(locked.commitment).unwrap();
+    let nullifier = field_to_b256(&locked.nullifier).unwrap();
+    let cost = world.cost;
+    let pay =
+        |context| claim_spend_proof(CHAIN_ID, &tree, 0, &locked, (23, 0), (context, cost), 24).0;
     let (domain, target, units) = rail.paynote_statement(world.id);
     let snapshot_id = world.snapshot_id;
     let bound = |target| settlement_context(domain, target, units, snapshot_id).unwrap();
@@ -465,14 +468,7 @@ pub fn a_paynote_pays_exactly_the_cost_once<R: Rail>(rail: R) {
         |world: &mut World<R>| world.view(ASSET, IFixture::balanceOfCall { account: VAULT });
     let vault_before = vault_balance(&mut world);
 
-    let stray = spend_proof(
-        CHAIN_ID,
-        &tree,
-        1,
-        &paid,
-        bound(B256::repeat_byte(9)),
-        world.cost,
-    );
+    let stray = pay(bound(B256::repeat_byte(9)));
     let id = world.id;
     let out = world.call(
         OWNER,
@@ -484,7 +480,7 @@ pub fn a_paynote_pays_exactly_the_cost_once<R: Rail>(rail: R) {
     assert!(!world.view(PAYNOTE_ADDRESS, IPayNote::isSpentCall { nullifier }));
     assert_eq!(vault_balance(&mut world), vault_before, "{rail:?}");
 
-    let proof: Bytes = spend_proof(CHAIN_ID, &tree, 1, &paid, bound(target), world.cost).into();
+    let proof: Bytes = pay(bound(target)).into();
     let direct = world.call(
         OWNER,
         PAYNOTE_ADDRESS,

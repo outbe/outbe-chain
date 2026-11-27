@@ -12,6 +12,7 @@ pub mod error;
 pub mod errors;
 pub mod paynote;
 pub mod paynote_claim;
+pub mod paynote_claim_spend;
 pub mod paynote_merge;
 pub mod paynote_transfer;
 pub mod primitive;
