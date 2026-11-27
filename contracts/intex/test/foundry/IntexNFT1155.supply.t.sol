@@ -7,7 +7,7 @@ import {OpenSeriesLib} from "./helpers/OpenSeriesLib.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {Test} from "forge-std/Test.sol";
 
-/// @title - issued supply, burnIntex, and the paginated owners getter.
+/// @title - issued supply, settleIntex, and the paginated owners getter.
 /// @notice Every test here exercises a behavior introduced by the lifecycle/DoS hardening pass.
 contract IntexNFT1155SupplyTest is Test {
     IntexNFT1155 nft;
@@ -104,7 +104,7 @@ contract IntexNFT1155SupplyTest is Test {
         assertEq(nft.totalSupply(INTEX_ID), type(uint32).max);
     }
 
-    // --- burnIntex: the precompiles own the series state, so the burn checks none ---
+    // --- settleIntex: the precompiles own the series state, so the burn checks none ---
 
     function _issue(uint256 units, bool called) internal {
         _openSeries(10);
@@ -117,7 +117,7 @@ contract IntexNFT1155SupplyTest is Test {
     function test_BurnIntex_BurnsTheOwnersUnitsInAnyState() public {
         _issue(6, true);
         vm.prank(burner);
-        nft.burnIntex(ownerA, SERIES_ID, 4);
+        nft.settleIntex(ownerA, SERIES_ID, 4);
         assertEq(nft.balanceOf(ownerA, INTEX_ID), 2);
         assertEq(nft.totalSupply(INTEX_ID), 2);
     }
@@ -126,13 +126,13 @@ contract IntexNFT1155SupplyTest is Test {
         _issue(6, false);
         vm.prank(burner);
         vm.expectRevert(IIntexNFT1155.ZeroUnits.selector);
-        nft.burnIntex(ownerA, SERIES_ID, 0);
+        nft.settleIntex(ownerA, SERIES_ID, 0);
     }
 
     function test_BurnIntex_UnknownSeries_Reverts() public {
         vm.prank(burner);
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.IntexNotFound.selector, INTEX_ID));
-        nft.burnIntex(ownerA, SERIES_ID, 1);
+        nft.settleIntex(ownerA, SERIES_ID, 1);
     }
 
     function test_BurnIntex_WithoutTheRole_Reverts() public {
@@ -140,7 +140,7 @@ contract IntexNFT1155SupplyTest is Test {
         bytes32 role = nft.BURNER_ROLE();
         vm.prank(ownerA);
         vm.expectRevert(abi.encodeWithSignature("AccessControlUnauthorizedAccount(address,bytes32)", ownerA, role));
-        nft.burnIntex(ownerA, SERIES_ID, 1);
+        nft.settleIntex(ownerA, SERIES_ID, 1);
     }
 
     // --- Live supply ---
@@ -208,8 +208,8 @@ contract IntexNFT1155SupplyTest is Test {
         vm.stopPrank();
 
         vm.prank(burner);
-        nft.burnIntex(ownerA, SERIES_ID, 2);
-        assertEq(nft.totalSupply(INTEX_ID), 5, "burnIntex burns Issued (totalSupply 7 - 2)");
+        nft.settleIntex(ownerA, SERIES_ID, 2);
+        assertEq(nft.totalSupply(INTEX_ID), 5, "settleIntex burns Issued (totalSupply 7 - 2)");
         assertEq(nft.getIntexSeries(SERIES_ID).totalSupply, 5, "SeriesData mirror tracks live Issued supply");
     }
 }

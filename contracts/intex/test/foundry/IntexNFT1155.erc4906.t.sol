@@ -64,9 +64,9 @@ contract IntexNFT1155Erc4906Test is Test {
         (count,) = _metadataUpdates();
         assertEq(count, 0, "mint is supply-only");
 
-        nft.burnIntex(user, SERIES_ID, 1);
+        nft.settleIntex(user, SERIES_ID, 1);
         (count,) = _metadataUpdates();
-        assertEq(count, 0, "burnIntex is supply-only");
+        assertEq(count, 0, "settleIntex is supply-only");
 
         nft.callSeries(SERIES_ID, uint32(block.timestamp));
         (count, intexId) = _metadataUpdates();

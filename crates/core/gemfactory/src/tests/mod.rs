@@ -101,7 +101,7 @@ fn amount_cap() -> U256 {
 fn test_storage(rate: Option<U256>) -> HashMapStorageProvider {
     let mut storage = HashMapStorageProvider::new(1);
     storage.set_timestamp(U256::from(T_NOW));
-    // Stub IntexNFT1155: `burnIntex` succeeds and returns nothing.
+    // Stub IntexNFT1155: `sendIntexToGemFactory` succeeds and returns nothing.
     storage.stub_sub_call_at(
         outbe_core_common::addresses::INTEX_NFT1155_ADDRESS,
         alloy_primitives::Bytes::new(),

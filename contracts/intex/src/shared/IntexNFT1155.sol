@@ -30,7 +30,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     bytes32 public constant BRIDGE_ROLE = keccak256("BRIDGE_ROLE");
     /// @notice Auction role. It can call `issueIntex` for a winner.
     bytes32 public constant AUCTION_ROLE = keccak256("AUCTION_ROLE");
-    /// @notice Burner role: the IntexFactory and GemFactory precompiles on Outbe. It can call `burnIntex`.
+    /// @notice Burner role: the IntexFactory and GemFactory precompiles on Outbe. It can call `settleIntex` and `sendIntexToGemFactory`.
     bytes32 public constant BURNER_ROLE = keccak256("BURNER_ROLE");
 
     /// @custom:storage-location erc7201:outbe.intex.IntexNFT1155
@@ -263,7 +263,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     }
 
     /// @inheritdoc IIntexNFT1155
-    function burnIntex(address owner, bytes14 seriesId, uint256 units) external onlyRole(BURNER_ROLE) {
+    function settleIntex(address owner, bytes14 seriesId, uint256 units) external onlyRole(BURNER_ROLE) {
         _burnIssued(owner, seriesId, units);
     }
 
@@ -393,7 +393,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
 
     /// @notice ERC1155 transfer hook: freezes Forfeited series.
     /// @dev Transfer lock.
-    ///      - Mint/burn paths (from/to address(0)) are always allowed (issue, burnIntex,
+    ///      - Mint/burn paths (from/to address(0)) are always allowed (issue, settleIntex,
     ///        bridge crosschainBurn/crosschainMint).
     ///      - Owner-to-owner transfers stay open until a Called series' settlement deadline, the
     ///        same moment its units stop leaving by bridge. Bridge gating is separate and lives in

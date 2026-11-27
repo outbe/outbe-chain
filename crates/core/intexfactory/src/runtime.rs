@@ -264,7 +264,7 @@ pub fn settle_intex(
         storage.call(
             INTEX_NFT1155_ADDRESS,
             U256::ZERO,
-            IIntexNFT1155::burnIntexCall {
+            IIntexNFT1155::settleIntexCall {
                 owner,
                 seriesId: series_id.into(),
                 units,

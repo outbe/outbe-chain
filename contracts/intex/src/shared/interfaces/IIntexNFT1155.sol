@@ -220,13 +220,14 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @param calledAt Unix time the origin marked the series Called. The deadline derives from it.
     function callSeries(bytes14 seriesId, uint64 calledAt) external;
 
-    /// @notice Burn `units` of `owner`'s Issued Intex on Outbe when they are settled.
+    /// @notice Settle `units` of `owner`'s Issued Intex on Outbe: they leave this token and become
+    ///         Settled units of the Intex on Outbe.
     /// @dev Entry point of the IntexFactory precompile under BURNER_ROLE. It owns the series
     ///      state, so this burn checks none.
     /// @param owner Owner whose Issued tokens are burned.
     /// @param seriesId Series identifier.
     /// @param units Issued units to burn.
-    function burnIntex(address owner, bytes14 seriesId, uint256 units) external;
+    function settleIntex(address owner, bytes14 seriesId, uint256 units) external;
 
     /// @notice Move `units` of `owner`'s Issued Intex on Outbe into the Gem Factory position
     ///         `gemFactoryPositionId`: the units leave the series and end with `IntexSentToGemFactory`.

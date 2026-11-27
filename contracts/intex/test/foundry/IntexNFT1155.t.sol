@@ -709,14 +709,14 @@ contract IntexNFT1155Test is Test {
         nft.issueIntex(user, 2, SERIES_ID_1);
         _grantBurnerRole(address(this));
         vm.recordLogs();
-        nft.burnIntex(user, SERIES_ID_1, 1);
+        nft.settleIntex(user, SERIES_ID_1, 1);
         Vm.Log[] memory logs = vm.getRecordedLogs();
         for (uint256 i; i < logs.length; ++i) {
             assertTrue(logs[i].topics[0] != IIntexNFT1155.IntexSentToGemFactory.selector, "a settlement is no Gem send");
         }
     }
 
-    // --- burnIntex: the burn of a settlement or a Gem position on Outbe ---
+    // --- settleIntex: the burn of a settlement or a Gem position on Outbe ---
 
     /// @dev Helper: grant BURNER_ROLE on the deployed Intex contract to `account`.
     function _grantBurnerRole(address account) internal {
@@ -733,14 +733,14 @@ contract IntexNFT1155Test is Test {
         nft.safeTransferFrom(user, user2, INTEX_ID_1, 4, "");
         _grantBurnerRole(address(this));
 
-        nft.burnIntex(user2, SERIES_ID_1, 3);
+        nft.settleIntex(user2, SERIES_ID_1, 3);
 
         assertEq(nft.balanceOf(user2, INTEX_ID_1), 1);
         assertEq(nft.balanceOf(user, INTEX_ID_1), 6, "the sender's units are untouched");
 
         // The new owner cannot burn more than it holds by drawing on the sender's units.
         vm.expectRevert();
-        nft.burnIntex(user2, SERIES_ID_1, 2);
+        nft.settleIntex(user2, SERIES_ID_1, 2);
         assertEq(nft.balanceOf(user, INTEX_ID_1), 6);
     }
 
@@ -748,7 +748,7 @@ contract IntexNFT1155Test is Test {
         _openSeries(SERIES_ID_1_DAY, 0);
         _grantBurnerRole(address(this));
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.ZeroAddress.selector, "owner", address(0)));
-        nft.burnIntex(address(0), SERIES_ID_1, 1);
+        nft.settleIntex(address(0), SERIES_ID_1, 1);
     }
 
     function test_BurnIntex_FreesCapRoom() public {
@@ -759,7 +759,7 @@ contract IntexNFT1155Test is Test {
         vm.stopPrank();
         _grantBurnerRole(address(this));
 
-        nft.burnIntex(user, SERIES_ID_1, 4);
+        nft.settleIntex(user, SERIES_ID_1, 4);
 
         // Deliberate: the contract enforces the cap against live totalSupply, so a burn frees mint
         // room.
