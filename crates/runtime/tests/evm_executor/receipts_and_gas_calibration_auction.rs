@@ -203,7 +203,7 @@ impl DueStep {
             Self::Start => 20240101,
             Self::CommitEnd => 20231231,
             Self::RevealEnd => 20231230,
-            Self::Waiting => 20231229,
+            Self::Waiting => 20240102,
         })
     }
 
@@ -223,7 +223,7 @@ impl DueStep {
             Self::Start => return,
             Self::CommitEnd => outbe_desis::AuctionStage::CommittingBids,
             Self::RevealEnd => outbe_desis::AuctionStage::RevealingBids,
-            // Started a day before `RevealEnd`, so it is still inside its last clearing time.
+            // Its auction starts after this run, so nothing is due.
             Self::Waiting => outbe_desis::AuctionStage::CollectingBids,
         };
         let day = self.day();
@@ -515,6 +515,8 @@ fn accepted_bid_deadlines_retire_within_advance_budget() {
                 seed_accepted_auction(storage.clone(), timestamp, batches);
                 let auction = outbe_desis::DesisContract::new(storage);
                 let day = EmissionDate::new(20240101);
+                // The later days are taken already, so the run measures the retirement alone.
+                auction.next_auction_day.write(20240105).unwrap();
                 auction.sched_active_count.write(1).unwrap();
                 auction.sched_active_at.write(&0, day.value()).unwrap();
                 auction.sched_active_slot.write(&day, 1).unwrap();

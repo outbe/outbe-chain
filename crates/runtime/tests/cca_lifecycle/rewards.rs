@@ -18,9 +18,14 @@ fn a_claim_transaction_issues_the_gem_of_the_day_and_takes_its_weight() {
 
         let again = claim_tx(&mut db, pool);
         assert!(again.is_revert(), "{again:?}");
+        // The only weight of the day went with the claim, and the day with it.
         assert_eq!(
             again.output.as_ref(),
-            IAgentReward::NoAgentRewardWeight { emissionDay: DAY }.abi_encode()
+            IAgentReward::AgentRewardRateMissing {
+                pool: pool as u8,
+                emissionDay: DAY,
+            }
+            .abi_encode()
         );
         assert!(again.logs.is_empty());
     }
