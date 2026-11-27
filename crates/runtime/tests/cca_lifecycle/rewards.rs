@@ -44,6 +44,15 @@ fn a_cca_claim_transaction_needs_registration() {
 }
 
 #[test]
+fn a_cca_that_unbonds_still_claims_its_day() {
+    let mut db = reward_world();
+    bond_cca(&mut db);
+    credit(&mut db, RewardPool::Cca, REWARD);
+    with_storage(&mut db, |storage| runtime::unbond(storage, CCA).unwrap());
+    claim_by_tx(&mut db, RewardPool::Cca, REWARD);
+}
+
+#[test]
 fn an_expiry_transaction_sends_the_reward_of_any_account_to_the_promis_limit() {
     for pool in [
         RewardPool::Waa,

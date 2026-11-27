@@ -1044,3 +1044,32 @@ fn an_offer_cannot_issue_a_nod_to_another_account() {
         issue_past_proof(&storage, &offer_of(victim, 840, ("100", "0")), None).unwrap();
     });
 }
+
+#[test]
+fn offers_on_other_utc_days_weigh_in_the_emission_day_of_their_nods() {
+    let _enclave = outbe_nod::test_support::scope();
+    let mut provider = priced_world();
+    StorageHandle::enter(&mut provider, |storage| {
+        // 23:00 of the day before the emission day and 11:00 of the day after it.
+        for (hour, owner) in [
+            (13, Address::repeat_byte(0x41)),
+            (49, Address::repeat_byte(0x42)),
+        ] {
+            at_offer_hour(&storage, (hour, 0), Some(100));
+            issue_past_proof(&storage, &offer_of(owner, 840, ("100", "0")), None).unwrap();
+        }
+        let rewards = AgentRewardContract::new(storage);
+        for (pool, agent) in [
+            (RewardPool::Waa, REWARD_WALLET),
+            (RewardPool::Sra, REWARD_SRA),
+        ] {
+            assert_eq!(
+                rewards.weight(pool, OFFER_DAY, agent).unwrap(),
+                U256::from(2)
+            );
+            for utc_day in [OFFER_DAY - 1, OFFER_DAY + 1] {
+                assert_eq!(rewards.weight(pool, utc_day, agent).unwrap(), U256::ZERO);
+            }
+        }
+    });
+}

@@ -402,3 +402,6 @@ fn the_readers_give_the_rate_and_the_reward_of_an_account() {
         assert_eq!(reward.promisLoadMinor, U256::from(75u64));
     });
 }
+
+mod claim_price;
+mod offer_counters;

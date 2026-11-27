@@ -90,3 +90,99 @@ impl From<AgentRewardError> for PrecompileError {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::AgentRewardError;
+    use crate::precompile::IAgentReward;
+    use alloy_sol_types::SolError;
+    use outbe_primitives::error::PrecompileError;
+
+    #[test]
+    fn user_errors_convert_to_their_abi_revert_bytes() {
+        for (error, expected) in [
+            (
+                AgentRewardError::AgentRewardRateMissing {
+                    pool: 1,
+                    day: 20_231_113,
+                },
+                IAgentReward::AgentRewardRateMissing {
+                    pool: 1,
+                    emissionDay: 20_231_113,
+                }
+                .abi_encode(),
+            ),
+            (
+                AgentRewardError::InvalidRewardDays(65),
+                IAgentReward::InvalidRewardDays {
+                    count: alloy_primitives::U256::from(65),
+                }
+                .abi_encode(),
+            ),
+            (
+                AgentRewardError::NoAgentRewardWeight(20_231_113),
+                IAgentReward::NoAgentRewardWeight {
+                    emissionDay: 20_231_113,
+                }
+                .abi_encode(),
+            ),
+            (
+                AgentRewardError::NoAgentReward,
+                IAgentReward::NoAgentReward {}.abi_encode(),
+            ),
+            (
+                AgentRewardError::AgentRewardDeadlinePassed(u64::MAX),
+                IAgentReward::AgentRewardDeadlinePassed { deadline: u64::MAX }.abi_encode(),
+            ),
+            (
+                AgentRewardError::AgentRewardNotExpired(31_536_000),
+                IAgentReward::AgentRewardNotExpired {
+                    deadline: 31_536_000,
+                }
+                .abi_encode(),
+            ),
+            (
+                AgentRewardError::RedeemPriceUnavailable(840),
+                IAgentReward::RedeemPriceUnavailable { isoCode: 840 }.abi_encode(),
+            ),
+            (
+                AgentRewardError::EntryPriceOverflow,
+                IAgentReward::EntryPriceOverflow {}.abi_encode(),
+            ),
+            (
+                AgentRewardError::OfferCounterOverflow,
+                IAgentReward::OfferCounterOverflow {}.abi_encode(),
+            ),
+            (
+                AgentRewardError::UnknownRewardPool(4),
+                IAgentReward::UnknownRewardPool { value: 4 }.abi_encode(),
+            ),
+        ] {
+            let err = PrecompileError::from(error);
+            let PrecompileError::RevertBytes(bytes) = err else {
+                panic!("expected RevertBytes, got {err:?}");
+            };
+            assert_eq!(bytes.as_ref(), expected.as_slice());
+        }
+    }
+
+    #[test]
+    fn chain_errors_do_not_revert() {
+        for error in [
+            AgentRewardError::RateNotDue {
+                pool: 0,
+                day: 20_231_113,
+            },
+            AgentRewardError::RateOverflow,
+            AgentRewardError::UnclaimedUnderflow {
+                pool: 0,
+                day: 20_231_113,
+            },
+        ] {
+            assert!(!matches!(
+                PrecompileError::from(error),
+                PrecompileError::Revert(_) | PrecompileError::RevertBytes(_)
+            ));
+        }
+    }
+}

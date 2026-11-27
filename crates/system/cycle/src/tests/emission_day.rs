@@ -600,3 +600,34 @@ fn the_auction_starts_live_at_00_00_and_takes_its_brief_at_12_00() {
         )
     );
 }
+
+#[test]
+fn a_record_takes_only_a_valid_day_and_wwd_and_only_once() {
+    let mut storage = cycle_storage();
+    storage.enter(|handle| {
+        let ctx = runtime_context(block_ctx(2, GENESIS_TS + 60), handle);
+        for (day, wwd) in [(20_240_230, 0), (20_240_105, 20_241_301)] {
+            assert!(
+                outbe_emission::api::create_emission_day(&ctx, day, WorldwideDay::new(wwd))
+                    .is_err()
+            );
+            assert!(
+                outbe_emission::api::get_emission_day(ctx.storage.clone(), day)
+                    .unwrap()
+                    .is_none()
+            );
+        }
+        let made = outbe_emission::api::create_emission_day(&ctx, 20_240_105, WorldwideDay::new(0))
+            .unwrap();
+        assert!(outbe_emission::api::create_emission_day(
+            &ctx,
+            20_240_105,
+            WorldwideDay::new(20_240_104)
+        )
+        .is_err());
+        assert_eq!(
+            outbe_emission::api::get_emission_day(ctx.storage.clone(), 20_240_105).unwrap(),
+            Some(made)
+        );
+    });
+}
