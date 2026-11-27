@@ -72,7 +72,8 @@ impl<'storage> CredisContract<'storage> {
         )))
     }
 
-    /// Records a new Credis, lists it, puts it in its sub-series and group, and emits the ERC-721 mint `Transfer`. A group it opens seals
+    /// Records a new Credis, lists it, puts it in its sub-series and group, and emits the
+    /// ERC-721 mint `Transfer`. A group it opens seals
     /// `terms`. Returns `true` when this Credis opens its sub-series.
     pub fn create_credis_record(
         &mut self,

@@ -293,7 +293,7 @@ fn add_realized_units(
     let registry = IntexContract::new(storage.clone());
     let id = intex_id(series_id);
     // One slot, not the whole record: this runs on every settle.
-    let issued = registry.series.entry(id).total_units().read()?;
+    let total = registry.series.entry(id).total_units().read()?;
     let settled = registry.settled_units.read(&id)?;
     let mined = registry.mined_units.read(&id)?;
     let gem_factory = registry.gem_factory_units.read(&id)?;
@@ -312,11 +312,11 @@ fn add_realized_units(
                 .ok_or(IntexError::RealizedUnitsOverflow)?,
         ),
     };
-    // Crossing the issued count means the ledgers disagree.
+    // Crossing the total count means the ledgers disagree.
     if settled
         .checked_add(mined)
         .and_then(|left| left.checked_add(gem_factory))
-        .is_none_or(|realized| realized > issued)
+        .is_none_or(|realized| realized > total)
     {
         return Err(IntexError::RealizedUnitsOverflow.into());
     }
