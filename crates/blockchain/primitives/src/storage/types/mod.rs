@@ -163,6 +163,23 @@ impl Storable for u128 {
     }
 }
 
+impl StorableType for i128 {
+    const SLOTS: usize = 1;
+}
+
+/// Two's complement in the low 16 bytes of the word.
+impl Storable for i128 {
+    const BYTES: usize = 16;
+
+    fn from_word(word: U256) -> Self {
+        let limbs = word.as_limbs();
+        ((u128::from(limbs[1]) << 64) | u128::from(limbs[0])) as i128
+    }
+    fn to_word(&self) -> U256 {
+        U256::from(*self as u128)
+    }
+}
+
 impl StorableType for u64 {
     const SLOTS: usize = 1;
 }
