@@ -33,7 +33,7 @@ pub mod desis_state {
 /// - **Slot 1:** `validators_limit`, `cca_limit`. **Slot 2:** `waa_limit`, `sra_limit`.
 /// - **Slot 3:** `metadosis_limit`, `lysis_limit`. **Slot 4:** `desis_limit`, `nominal_amount`.
 /// - **Slot 5:** `validators`, `waa`. **Slot 6:** `sra`, `cca`. **Slot 7:** `nods`, `intexes`.
-/// - **Slot 8:** `promis_limit`.
+/// - **Slot 8:** `promis_limit`, `pools_recorded`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[storage_record(packed, exists_field = metadosis_start)]
 pub struct EmissionDay {
@@ -110,6 +110,10 @@ pub struct EmissionDay {
     #[attribute(order = 20, default = 0)]
     #[field(bytes = 16)]
     pub promis_limit: i128,
+
+    /// One bit for each reward pool whose result is written, so a pool is written once.
+    #[attribute(order = 21, default = 0)]
+    pub pools_recorded: u8,
 }
 
 impl EmissionDay {
@@ -145,6 +149,7 @@ impl EmissionDay {
             nods: 0,
             intexes: 0,
             promis_limit: 0,
+            pools_recorded: 0,
         }
     }
 
@@ -215,6 +220,7 @@ mod tests {
             nods: 320,
             intexes: 700,
             promis_limit: -179,
+            pools_recorded: 0,
         }
     }
 

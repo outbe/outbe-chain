@@ -130,3 +130,24 @@ fn each_offer_publishes_the_account_and_its_weight_of_the_day() {
         ]
     );
 }
+
+#[test]
+fn a_second_rate_of_a_pool_with_no_weight_fails_the_block() {
+    with_storage(|storage| {
+        record_day(&storage, DAY, 100, emission_day_state::PROCESSING);
+        let mut contract = AgentRewardContract::new(storage.clone());
+        contract
+            .set_agent_reward_rate(RewardPool::Waa, DAY)
+            .unwrap();
+        let limit = promis_limit(&storage);
+        let err = contract
+            .set_agent_reward_rate(RewardPool::Waa, DAY)
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            outbe_primitives::error::PrecompileError::FatalWithCause(_)
+        ));
+        assert_eq!(promis_limit(&storage), limit);
+        assert_eq!(record_of(&storage, DAY).promis_limit, 100);
+    });
+}

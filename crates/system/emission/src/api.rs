@@ -176,6 +176,15 @@ pub fn record_reward_pool(
     let mut record = load(&contract, day)?;
     require_open(&record)?;
     let allocated = to_u128_checked(allocated)?;
+    let bit = 1u8 << pool as u8;
+    if record.pools_recorded & bit != 0 {
+        return Err(EmissionError::RewardPoolRecorded {
+            day,
+            pool: pool as u8,
+        }
+        .into());
+    }
+    record.pools_recorded |= bit;
     let (limit, bucket) = match pool {
         RewardPool::Validator => (record.validators_limit, &mut record.validators),
         RewardPool::Waa => (record.waa_limit, &mut record.waa),
@@ -411,6 +420,27 @@ mod tests {
             check_conservation(&record).unwrap();
             assert!(record_desis_completed(storage, DAY, U256::ZERO).is_err());
         }
+    }
+
+    #[test]
+    fn a_pool_result_is_written_once() {
+        let mut provider = HashMapStorageProvider::new(1);
+        let storage = StorageHandle::new(&mut provider);
+        started_day(storage.clone());
+        let before = get_emission_day(storage.clone(), DAY).unwrap().unwrap();
+        for pool in [
+            RewardPool::Validator,
+            RewardPool::Waa,
+            RewardPool::Sra,
+            RewardPool::Cca,
+        ] {
+            let err = record_reward_pool(storage.clone(), DAY, pool, U256::ZERO).unwrap_err();
+            assert!(matches!(
+                err,
+                outbe_primitives::error::PrecompileError::FatalWithCause(_)
+            ));
+        }
+        assert_eq!(get_emission_day(storage, DAY).unwrap().unwrap(), before);
     }
 
     #[test]

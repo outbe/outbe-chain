@@ -54,6 +54,8 @@ pub enum EmissionError {
     },
     #[error("emission day amount overflow (exceeds u128)")]
     AmountOverflow,
+    #[error("emission day {day} already holds the result of reward pool {pool}")]
+    RewardPoolRecorded { day: u32, pool: u8 },
     #[error("emission day {day} conservation invariant violated: expected {expected_limit}, landed {landed_sum}")]
     ConservationInvariantViolated {
         day: u32,
@@ -81,7 +83,8 @@ impl From<TimeError> for EmissionError {
 impl From<EmissionError> for PrecompileError {
     fn from(err: EmissionError) -> Self {
         let bytes = match err {
-            EmissionError::ConservationInvariantViolated { .. } => {
+            EmissionError::ConservationInvariantViolated { .. }
+            | EmissionError::RewardPoolRecorded { .. } => {
                 return PrecompileError::FatalWithCause(Box::new(err));
             }
             EmissionError::EmissionDayNotFound => IEmission::EmissionDayNotFound {}.abi_encode(),

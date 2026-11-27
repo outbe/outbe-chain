@@ -111,6 +111,7 @@ mod tests {
             nods: 320,
             intexes: 700,
             promis_limit: -179,
+            pools_recorded: 0,
         };
         EmissionContract::new(storage.clone())
             .emission_days
