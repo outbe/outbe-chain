@@ -2,7 +2,7 @@
 
 This directory holds the dstack patches and manifest used to build reproducible Outbe guest OS images.
 
-The measured guest image contains the node binaries (`outbe-chain`, `outbe-radicle`, `outbe-feeder`, `outbe-hyperlane-validator`), the minimal in-guest runtime agent (`outbe-vm-agent`), pinned runtime libraries, and static systemd units. It does not ship `outbe-up`, SSH clients, or VMM orchestration code.
+The measured guest image contains the node binaries (`outbe-chain`, `outbe-radicle`, `outbe-feeder`, `outbe-hyperlane-agent`), the minimal in-guest runtime agent (`outbe-vm-agent`), pinned runtime libraries, and static systemd units. It does not ship `outbe-up`, SSH clients, or VMM orchestration code.
 
 Each VM stores its keys (validators only), genesis, CRS, `validator.env`, configuration files, and chain state on an unmeasured ext4 data disk mounted at `/opt/outbe-chain` with `noexec,nosuid,nodev`.
 

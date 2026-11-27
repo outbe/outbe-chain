@@ -90,7 +90,7 @@ const VM_NODE_SERVICES: &[&str] = &[
 const VM_CONSOLE_ONLY_SERVICES: &[&str] = &[
     "dstack-guest-agent.service",
     "outbe-feeder.service",
-    "outbe-hyperlane-validator.service",
+    "outbe-hyperlane-agent.service",
     "outbe-radicle.service",
 ];
 
@@ -187,7 +187,7 @@ fn managed_units(profile: &ManagedProfile<'_>) -> Vec<UnitFile> {
 
     let mut hyperlane_directives = lines(&[
         "EnvironmentFile=/opt/outbe-chain/validator.env",
-        "RuntimeDirectory=outbe-hyperlane-validator",
+        "RuntimeDirectory=outbe-hyperlane-agent",
         "RuntimeDirectoryMode=0700",
         "Environment=STATE_DIRECTORY=/opt/outbe-chain/state/hyperlane",
     ]);
@@ -261,7 +261,7 @@ fn managed_units(profile: &ManagedProfile<'_>) -> Vec<UnitFile> {
             wanted_by: "outbe-validator.target",
         }),
         render_service(&ServiceSpec {
-            name: "outbe-hyperlane-validator.service",
+            name: "outbe-hyperlane-agent.service",
             description: "Outbe Hyperlane validator",
             unit_directives: sidecar_unit_directives,
             service_directives: hyperlane_directives,
@@ -341,7 +341,7 @@ pub fn founding_units(config: FoundingConfig<'_>) -> Vec<UnitFile> {
             wanted_by: "outbe-validator.target",
         }),
         render_service(&ServiceSpec {
-            name: "outbe-hyperlane-validator.service",
+            name: "outbe-hyperlane-agent.service",
             description: "Outbe Hyperlane validator",
             unit_directives: lines(&[
                 "After=network-online.target outbe-validator.service",
@@ -350,7 +350,7 @@ pub fn founding_units(config: FoundingConfig<'_>) -> Vec<UnitFile> {
             ]),
             service_directives: lines(&[
                 &format!("WorkingDirectory={validator_dir}"),
-                "RuntimeDirectory=outbe-hyperlane-validator",
+                "RuntimeDirectory=outbe-hyperlane-agent",
                 "RuntimeDirectoryMode=0700",
                 &format!(
                     "Environment=STATE_DIRECTORY={}/state/hyperlane",
@@ -618,10 +618,10 @@ fn render_target(description: &str) -> UnitFile {
                     "Wants=outbe-radicle.service",
                     "Wants=outbe-validator.service",
                     "Wants=outbe-feeder.service",
-                    "Wants=outbe-hyperlane-validator.service",
+                    "Wants=outbe-hyperlane-agent.service",
                     "After=outbe-radicle.service",
                     "After=outbe-validator.service outbe-feeder.service",
-                    "After=outbe-hyperlane-validator.service",
+                    "After=outbe-hyperlane-agent.service",
                 ])),
             ),
         ],

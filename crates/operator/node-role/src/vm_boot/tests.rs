@@ -627,7 +627,7 @@ fn vm_role_services_match_exact_per_role_units() {
             "outbe-radicle.service",
             "outbe-validator.service",
             "outbe-feeder.service",
-            "outbe-hyperlane-validator.service",
+            "outbe-hyperlane-agent.service",
         ]
     );
     assert_eq!(
@@ -636,7 +636,7 @@ fn vm_role_services_match_exact_per_role_units() {
             "outbe-radicle.service",
             "outbe-joining-validator.service",
             "outbe-feeder.service",
-            "outbe-hyperlane-validator.service",
+            "outbe-hyperlane-agent.service",
         ]
     );
     assert_eq!(

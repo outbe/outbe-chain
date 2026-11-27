@@ -264,7 +264,7 @@ metrics `{metrics_port}`, Radicle status\n\
 \n\
 - Python 3.11+ - reads the shared storage TOML at launch\n\
 - the `outbe-chain`, `outbe-radicle`, `outbe-feeder` and\n\
-  `outbe-hyperlane-validator` binaries on `PATH`\n\
+  `outbe-hyperlane-agent` binaries on `PATH`\n\
   (or set the corresponding binary fields in the yaml to\n\
   absolute paths and regenerate)\n\
 \n\
@@ -318,7 +318,7 @@ number and `validator list` shows {founder_count} active validators.\n\
 | TEE | resident inside `outbe-chain node` | autonomous lifecycle and renewal |\n\
 | Radicle | `outbe-radicle` | validator startup requires its control socket |\n\
 | Price feeder | `outbe-feeder` | submits oracle votes |\n\
-| Hyperlane validator | `outbe-hyperlane-validator` | signs and serves checkpoints |\n\
+| Hyperlane validator | `outbe-hyperlane-agent` | signs and serves checkpoints |\n\
 \n\
 ## Storage configuration\n\
 \n\

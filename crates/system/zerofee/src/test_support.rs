@@ -8,14 +8,15 @@ use outbe_validatorset::{
     contract::ValidatorSet, delegation::ValidatorDelegateRole, StakeProjection,
 };
 
-/// Valid `HyperlaneController.submitCheckpoint` calldata.
+/// Valid `HyperlaneController.submitReport` calldata.
 pub(crate) fn checkpoint_calldata() -> Bytes {
-    IHyperlaneController::submitCheckpointCall {
+    IHyperlaneController::submitReportCall {
         domain: 54_322_345,
-        root: B256::repeat_byte(1),
         index: 7,
-        messageId: B256::repeat_byte(2),
-        signature: Bytes::from(vec![3u8; 65]),
+        root: B256::repeat_byte(1),
+        latestIndex: 0,
+        notServing: Vec::new(),
+        notDelivered: Vec::new(),
     }
     .abi_encode()
     .into()

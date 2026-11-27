@@ -379,7 +379,7 @@ exec {} --config {}\n",
     )
 }
 
-/// Render the non-secret Hyperlane validator configuration for one host.
+/// Render the non-secret Hyperlane agent configuration for one host.
 pub fn hyperlane_public_config(config: &Value, index: usize) -> Result<String, GenesisError> {
     let public_url = config
         .get("hyperlane_public_urls")

@@ -1,5 +1,5 @@
-# outbe-hyperlane-validator: example configuration for the Outbe testnet.
-# Copy this file to hyperlane-validator.toml and replace the placeholders.
+# outbe-hyperlane-agent: example configuration for the Outbe testnet.
+# Copy this file to hyperlane-agent.toml and replace the placeholders.
 # The configuration has no contract addresses: the daemon reads them from the
 # HyperlaneController and the origin chains. Unknown fields are errors.
 
@@ -18,7 +18,7 @@ validator_address = "0x0000000000000000000000000000000000000000"
 [hyperlane]
 # Interval of the controller poll and of the liveness loop, in seconds.
 poll_interval_secs = 30
-# Send submitCheckpoint with zero priority fee (ZeroFee txpool policy).
+# Send submitReport with zero priority fee (ZeroFee txpool policy).
 gasless = true
 
 [health]

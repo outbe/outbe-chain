@@ -61,7 +61,7 @@ fn log_range(start: u64, end: u64, chunk: u64) -> (u64, u64) {
 
 /// True when the RPC rejected a log request because of its size. A rate
 /// limit is not a range error: the next tick reads the same range again.
-fn is_range_error(message: &str) -> bool {
+pub fn is_range_error(message: &str) -> bool {
     let message = message.to_lowercase();
     let rate_limit = ["429", "rate limit", "too many requests"]
         .iter()
@@ -168,7 +168,7 @@ pub fn connect(url: &str) -> Result<DynProvider> {
 }
 
 /// The finalized block of one endpoint.
-async fn finalized_block(provider: &DynProvider, period: ReorgPeriod) -> Result<u64> {
+pub async fn finalized_block(provider: &DynProvider, period: ReorgPeriod) -> Result<u64> {
     match period {
         ReorgPeriod::Blocks(blocks) => {
             Ok(provider.get_block_number().await?.saturating_sub(blocks))
@@ -221,6 +221,8 @@ pub struct DomainSync {
     cursor: u64,
     /// The last block that the log reads covered.
     scanned: u64,
+    /// The last final block that the log source returned.
+    head: u64,
     chunk: u64,
     /// Compares replayed leaves with the stored leaves.
     store: Arc<Store>,
@@ -261,6 +263,7 @@ impl DomainSync {
             pending: Vec::new(),
             cursor,
             scanned: cursor,
+            head: 0,
             chunk: MAX_LOG_RANGE,
             store,
             waiting: 0,
@@ -277,6 +280,19 @@ impl DomainSync {
     /// reorg below the stored cursor gives this: the replay does not see it.
     pub fn stalled(&self) -> bool {
         self.rewinds >= MAX_REWINDS
+    }
+
+    /// The last final block of the origin chain and the last block that the
+    /// sync read, for the status. The head is 0 before the first read.
+    pub fn progress(&self) -> (u64, u64) {
+        (self.head, self.scanned)
+    }
+
+    /// True when the sync read up to the last final block and every leaf
+    /// that it read is verified. The store then has the newest leaf, once
+    /// the caller committed the last batch.
+    pub fn caught_up(&self) -> bool {
+        self.head > 0 && self.scanned >= self.head && self.pending.is_empty()
     }
 
     fn rotate_source(&mut self) {
@@ -419,6 +435,7 @@ impl DomainSync {
     async fn read_leaves(&mut self) -> Result<()> {
         let source = self.endpoints[self.source].clone();
         let finalized = finalized_block(&source, self.period).await?;
+        self.head = finalized;
         let mut start = self.scanned + 1;
         while start <= finalized {
             let (from, to) = log_range(start, finalized, self.chunk);

@@ -330,7 +330,7 @@ fn validate_bundle(root: &Path) -> Result<()> {
         "outbe-cli",
         "outbe-keygen",
         "outbe-feeder",
-        "outbe-hyperlane-validator",
+        "outbe-hyperlane-agent",
         "outbe-radicle",
     ] {
         required_executable(&root.join(name))?;
@@ -638,7 +638,7 @@ mod tests {
             "outbe-cli",
             "outbe-keygen",
             "outbe-feeder",
-            "outbe-hyperlane-validator",
+            "outbe-hyperlane-agent",
             "outbe-radicle",
         ] {
             let path = root.path().join(name);

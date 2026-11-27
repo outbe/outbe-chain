@@ -25,7 +25,7 @@ enum Command {
     VmBoot(BinDirArgs),
     /// Render feeder configuration and exec `outbe-feeder`.
     Feeder(BinDirArgs),
-    /// Render Hyperlane configuration and exec `outbe-hyperlane-validator`.
+    /// Render Hyperlane configuration and exec `outbe-hyperlane-agent`.
     Hyperlane(BinDirArgs),
     /// Wait for the local JSON-RPC endpoint to respond.
     WaitRpc(WaitArgs),

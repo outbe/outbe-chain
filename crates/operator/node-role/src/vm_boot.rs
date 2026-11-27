@@ -20,20 +20,19 @@ use crate::{
 const DEFAULT_VM_BIN_DIR: &str = "/usr/local/bin";
 
 /// Exact systemd service units started by `vm-boot` for each VM node role.
-///
 pub fn vm_role_services(role: NodeRole) -> &'static [&'static str] {
     match role {
         NodeRole::Founder => &[
             "outbe-radicle.service",
             "outbe-validator.service",
             "outbe-feeder.service",
-            "outbe-hyperlane-validator.service",
+            "outbe-hyperlane-agent.service",
         ],
         NodeRole::JoiningValidator => &[
             "outbe-radicle.service",
             "outbe-joining-validator.service",
             "outbe-feeder.service",
-            "outbe-hyperlane-validator.service",
+            "outbe-hyperlane-agent.service",
         ],
         NodeRole::FullNode => &["outbe-full-node.service"],
     }

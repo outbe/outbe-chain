@@ -147,7 +147,7 @@ fn fail_if_service_failed(
     let logs = capture_founder(
         exec,
         founder,
-        "journalctl --no-pager -n 30 -u outbe-radicle.service -u outbe-feeder.service -u outbe-hyperlane-validator.service -u outbe-validator.service",
+        "journalctl --no-pager -n 30 -u outbe-radicle.service -u outbe-feeder.service -u outbe-hyperlane-agent.service -u outbe-validator.service",
     )
     .unwrap_or_else(|error| format!("could not read journal: {error}"));
     bail!("{} failed during network start:\n{logs}", failed.name);

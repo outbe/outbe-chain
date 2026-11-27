@@ -1,12 +1,12 @@
 [package]
-name = "outbe-hyperlane-validator"
+name = "outbe-hyperlane-agent"
 version.workspace = true
 edition.workspace = true
 license = "MIT AND Apache-2.0"
 publish.workspace = true
 
 [[bin]]
-name = "outbe-hyperlane-validator"
+name = "outbe-hyperlane-agent"
 path = "src/main.rs"
 
 [dependencies]

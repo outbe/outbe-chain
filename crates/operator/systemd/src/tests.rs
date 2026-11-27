@@ -27,7 +27,7 @@ fn joining_and_founding_share_service_policy() {
         "outbe-radicle.service",
         "outbe-validator.service",
         "outbe-feeder.service",
-        "outbe-hyperlane-validator.service",
+        "outbe-hyperlane-agent.service",
     ] {
         let joining = unit(&joining, name);
         let founding = unit(&founding, name);
@@ -95,8 +95,8 @@ fn units_are_concrete_and_flow_specific_only_where_required() {
     assert!(unit(&founding, "outbe-validator.service")
         .contains("/opt/outbe-chain/validator-2/run-node.sh"));
 
-    let joining_hyperlane = unit(&joining, "outbe-hyperlane-validator.service");
-    let founding_hyperlane = unit(&founding, "outbe-hyperlane-validator.service");
+    let joining_hyperlane = unit(&joining, "outbe-hyperlane-agent.service");
+    let founding_hyperlane = unit(&founding, "outbe-hyperlane-agent.service");
     assert!(joining_hyperlane.contains("OUTBE_HYPERLANE_WAIT_FOR_ACTIVE=1"));
     assert!(!founding_hyperlane.contains("OUTBE_HYPERLANE_WAIT_FOR_ACTIVE"));
     for hyperlane in [joining_hyperlane, founding_hyperlane] {
@@ -163,7 +163,7 @@ fn joining_units_match_pinned_output() {
             ),
         ),
         (
-            "outbe-hyperlane-validator.service",
+            "outbe-hyperlane-agent.service",
             concat!(
                 "[Unit]\n",
                 "Description=Outbe Hyperlane validator\n",
@@ -177,7 +177,7 @@ fn joining_units_match_pinned_output() {
                 "User=outbe\n",
                 "Group=outbe\n",
                 "EnvironmentFile=/opt/outbe-chain/validator.env\n",
-                "RuntimeDirectory=outbe-hyperlane-validator\n",
+                "RuntimeDirectory=outbe-hyperlane-agent\n",
                 "RuntimeDirectoryMode=0700\n",
                 "Environment=STATE_DIRECTORY=/opt/outbe-chain/state/hyperlane\n",
                 "Environment=OUTBE_HYPERLANE_WAIT_FOR_ACTIVE=1\n",
@@ -332,10 +332,10 @@ fn joining_units_match_pinned_output() {
                 "Wants=outbe-radicle.service\n",
                 "Wants=outbe-validator.service\n",
                 "Wants=outbe-feeder.service\n",
-                "Wants=outbe-hyperlane-validator.service\n",
+                "Wants=outbe-hyperlane-agent.service\n",
                 "After=outbe-radicle.service\n",
                 "After=outbe-validator.service outbe-feeder.service\n",
-                "After=outbe-hyperlane-validator.service\n",
+                "After=outbe-hyperlane-agent.service\n",
                 "\n",
                 "[Install]\n",
                 "WantedBy=multi-user.target\n",
@@ -359,7 +359,7 @@ fn vm_units_share_service_policy_and_target() {
         vec![
             "outbe-feeder.service",
             "outbe-full-node.service",
-            "outbe-hyperlane-validator.service",
+            "outbe-hyperlane-agent.service",
             "outbe-joining-validator.service",
             "outbe-radicle.service",
             "outbe-validator.service",
@@ -374,7 +374,7 @@ fn vm_units_share_service_policy_and_target() {
         "outbe-joining-validator.service",
         "outbe-full-node.service",
         "outbe-feeder.service",
-        "outbe-hyperlane-validator.service",
+        "outbe-hyperlane-agent.service",
     ] {
         let content = unit(&vm, name);
         for directive in COMMON_POLICY {
@@ -431,7 +431,7 @@ fn vm_units_share_service_policy_and_target() {
     );
     assert!(!boot.contains("EnvironmentFile="));
 
-    let hyperlane = unit(&vm, "outbe-hyperlane-validator.service");
+    let hyperlane = unit(&vm, "outbe-hyperlane-agent.service");
     assert!(!hyperlane.contains("OUTBE_HYPERLANE_WAIT_FOR_ACTIVE"));
     assert!(!hyperlane.contains("Wants=outbe-validator.service"));
     let feeder = unit(&vm, "outbe-feeder.service");
@@ -452,7 +452,7 @@ fn vm_units_share_service_policy_and_target() {
     for name in [
         "outbe-radicle.service",
         "outbe-feeder.service",
-        "outbe-hyperlane-validator.service",
+        "outbe-hyperlane-agent.service",
     ] {
         assert!(unit(&vm, name).contains("TimeoutStartSec=150\n"), "{name}");
     }
@@ -532,7 +532,7 @@ fn vm_units_execute_only_image_binaries_and_write_only_under_data_root() {
     );
     assert!(unit(&vm, "outbe-feeder.service")
         .contains("ExecStart=/usr/local/bin/outbe-vm-agent feeder --bin-dir /usr/local/bin"));
-    assert!(unit(&vm, "outbe-hyperlane-validator.service")
+    assert!(unit(&vm, "outbe-hyperlane-agent.service")
         .contains("ExecStart=/usr/local/bin/outbe-vm-agent hyperlane --bin-dir /usr/local/bin"));
 }
 
@@ -717,7 +717,7 @@ fn vm_dev_dropins_bind_metrics_on_service_ip_and_preserve_prod_vm_units() {
             "dstack-guest-agent.service.d/20-outbe-dev.conf",
             "outbe-feeder.service.d/20-outbe-dev.conf",
             "outbe-full-node.service.d/20-outbe-dev.conf",
-            "outbe-hyperlane-validator.service.d/20-outbe-dev.conf",
+            "outbe-hyperlane-agent.service.d/20-outbe-dev.conf",
             "outbe-joining-validator.service.d/20-outbe-dev.conf",
             "outbe-radicle.service.d/20-outbe-dev.conf",
             "outbe-validator.service.d/20-outbe-dev.conf",
@@ -777,7 +777,7 @@ fn vm_dev_dropins_bind_metrics_on_service_ip_and_preserve_prod_vm_units() {
     for name in [
         "dstack-guest-agent.service.d/20-outbe-dev.conf",
         "outbe-feeder.service.d/20-outbe-dev.conf",
-        "outbe-hyperlane-validator.service.d/20-outbe-dev.conf",
+        "outbe-hyperlane-agent.service.d/20-outbe-dev.conf",
         "outbe-radicle.service.d/20-outbe-dev.conf",
     ] {
         let dropin = unit(&dropins, name);

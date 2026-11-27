@@ -12,8 +12,8 @@ use axum::Router;
 use serde_json::json;
 use tokio::net::TcpListener;
 
-use crate::signer::DomainSigner;
 use crate::store::Store;
+use crate::validator::signer::DomainSigner;
 
 /// The state of the HyperlaneController as the daemon saw it last.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -38,9 +38,19 @@ struct State {
     active: Option<bool>,
     /// `H` is not the checkpoint signer that the controller accepts.
     signer_error: Option<String>,
-    /// The error of the last failed `submitCheckpoint`. A success clears it.
+    /// The error of the last failed `submitReport`. A success clears it.
     submit_error: Option<String>,
     domains: BTreeMap<u32, DomainHealth>,
+    /// The last message that this relayer delivered.
+    last_delivery: Option<serde_json::Value>,
+    /// Native balance of `H` on each chain, in wei.
+    balances: BTreeMap<u32, alloy_primitives::U256>,
+    /// Why the relayer stopped the deliveries of a domain. The validator
+    /// role of that domain continues.
+    relay_errors: BTreeMap<u32, String>,
+    /// The last report that the controller accepted from this validator,
+    /// for each domain.
+    reports: BTreeMap<u32, serde_json::Value>,
 }
 
 pub struct ValidatorHealth {
@@ -49,6 +59,8 @@ pub struct ValidatorHealth {
     pub last_submit_time: AtomicU64,
     /// Consecutive liveness misses recorded on-chain for this validator.
     pub miss_count: AtomicU64,
+    /// `process` transactions of this relayer that a block included.
+    delivered: AtomicU64,
     store: Arc<Store>,
     state: Mutex<State>,
 }
@@ -60,6 +72,7 @@ impl ValidatorHealth {
             failed: AtomicU64::new(0),
             last_submit_time: AtomicU64::new(0),
             miss_count: AtomicU64::new(0),
+            delivered: AtomicU64::new(0),
             store,
             state: Mutex::default(),
         }
@@ -78,6 +91,52 @@ impl ValidatorHealth {
     pub fn record_failure(&self, error: String) {
         self.failed.fetch_add(1, Ordering::Relaxed);
         self.state().submit_error = Some(redact_urls(&error));
+    }
+
+    /// Records a `process` transaction of this relayer that a block included.
+    pub fn record_delivery(
+        &self,
+        origin: u32,
+        index: u32,
+        destination: u32,
+        tx: alloy_primitives::B256,
+    ) {
+        self.delivered.fetch_add(1, Ordering::Relaxed);
+        self.state().last_delivery = Some(json!({
+            "origin": origin,
+            "index": index,
+            "destination": destination,
+            "tx": tx,
+            "time": unix_now(),
+        }));
+    }
+
+    /// Records the native balance of `H` on the chain of `domain`.
+    pub fn set_balance(&self, domain: u32, wei: alloy_primitives::U256) {
+        self.state().balances.insert(domain, wei);
+    }
+
+    /// Records why the relayer stopped the deliveries of `domain`. This does
+    /// not stop the checkpoint submission of the domain.
+    pub fn set_relay_error(&self, domain: u32, error: String) {
+        self.state().relay_errors.insert(domain, error);
+    }
+
+    /// Records the report of `round` that the controller accepted for
+    /// `domain`: the validators that this agent named.
+    pub fn set_report(
+        &self,
+        domain: u32,
+        round: u64,
+        not_serving: &[alloy_primitives::Address],
+        not_delivered: &[alloy_primitives::Address],
+    ) {
+        let report = json!({
+            "round": round,
+            "not_serving": not_serving,
+            "not_delivered": not_delivered,
+        });
+        self.state().reports.insert(domain, report);
     }
 
     pub fn set_signer_error(&self, error: Option<String>) {
@@ -116,7 +175,11 @@ impl ValidatorHealth {
 
     /// Removes the domains that the controller does not list.
     pub fn retain_domains(&self, keep: impl Fn(u32) -> bool) {
-        self.state().domains.retain(|d, _| keep(*d));
+        let mut state = self.state();
+        state.domains.retain(|d, _| keep(*d));
+        state.balances.retain(|d, _| keep(*d));
+        state.relay_errors.retain(|d, _| keep(*d));
+        state.reports.retain(|d, _| keep(*d));
     }
 
     /// The signer of a started domain, also after a stop.
@@ -145,13 +208,24 @@ impl ValidatorHealth {
         let state = self.state();
         self.miss_count.load(Ordering::Relaxed) == 0
             && state.signer_error.is_none()
+            && state.relay_errors.is_empty()
             && state.domains.values().all(|d| {
                 d.error.is_none() && !d.signer.as_ref().is_some_and(|s| s.halted() || s.stalled())
             })
     }
 
     pub fn status_json(&self) -> serde_json::Value {
-        let (controller, active, signer_error, submit_error, domains) = {
+        let (
+            controller,
+            active,
+            signer_error,
+            submit_error,
+            last_delivery,
+            balances,
+            relay_errors,
+            reports,
+            domains,
+        ) = {
             let state = self.state();
             let domains: Vec<_> = state
                 .domains
@@ -163,6 +237,10 @@ impl ValidatorHealth {
                 state.active,
                 state.signer_error.clone(),
                 state.submit_error.clone(),
+                state.last_delivery.clone(),
+                state.balances.clone(),
+                state.relay_errors.clone(),
+                state.reports.clone(),
                 domains,
             )
         };
@@ -175,13 +253,38 @@ impl ValidatorHealth {
                     })
                 });
                 let store = &self.store;
-                let value = json!({
+                let progress = signer.as_ref().and_then(|s| s.progress());
+                let mut value = json!({
                     "leaves": store.leaf_count(domain).ok(),
                     "latest_signed_index": store.latest_checkpoint_index(domain).ok().flatten(),
                     "cursor": store.cursor(domain).ok().flatten(),
+                    // The last final block of the origin chain and the blocks
+                    // that the sync did not read yet.
+                    "head": progress.map(|(head, _)| head),
+                    "behind": progress.map(|(_, behind)| behind),
                     "reorg": signer.is_some_and(|s| s.halted()),
                     "error": error,
                 });
+                {
+                    let rows = store.relay_rows(domain).unwrap_or_default();
+                    let dropped = rows.iter().filter(|(_, row)| row.dropped).count();
+                    // A string: the value does not fit a JSON number.
+                    value["balance_wei"] = json!(balances.get(&domain).map(|wei| wei.to_string()));
+                    value["relay"] = json!({
+                        // The next leaf that the relayer takes in.
+                        "cursor": store.relay_cursor(domain).ok().flatten(),
+                        // Older leaves below this index wait for the take-in.
+                        "backlog": store.relay_back_cursor(domain).ok(),
+                        // Messages on the way, and messages after the last attempt.
+                        "queue": rows.len() - dropped,
+                        "dropped": dropped,
+                        // Why the relayer stopped the deliveries of the domain.
+                        "error": relay_errors.get(&domain),
+                    });
+                    // The last liveness report of this validator: its round
+                    // and the validators that it named.
+                    value["report"] = json!(reports.get(&domain));
+                }
                 (domain.to_string(), value)
             })
             .collect();
@@ -199,6 +302,10 @@ impl ValidatorHealth {
             "failed": self.failed.load(Ordering::Relaxed),
             "last_submit_time": self.last_submit_time.load(Ordering::Relaxed),
             "last_submit_error": submit_error,
+            "relayer": {
+                "delivered": self.delivered.load(Ordering::Relaxed),
+                "last_delivery": last_delivery,
+            },
             "domains": domains,
         })
     }

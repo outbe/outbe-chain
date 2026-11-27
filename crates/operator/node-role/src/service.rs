@@ -90,9 +90,9 @@ pub(crate) fn hyperlane(bin_dir: Option<&Path>) -> Result<()> {
 
     let runtime = env::var_os("RUNTIME_DIRECTORY")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/run/outbe-hyperlane-validator"));
+        .unwrap_or_else(|| PathBuf::from("/run/outbe-hyperlane-agent"));
     fs::create_dir_all(&runtime)?;
-    let config = runtime.join("hyperlane-validator.toml");
+    let config = runtime.join("hyperlane-agent.toml");
     let mut content = format!(
         concat!(
             "[chain]\n",
@@ -112,9 +112,9 @@ pub(crate) fn hyperlane(bin_dir: Option<&Path>) -> Result<()> {
         content.push('\n');
     }
     process::write_file(&config, content.as_bytes(), 0o600)?;
-    let mut command = Command::new(binary_path(bin_dir, "outbe-hyperlane-validator"));
+    let mut command = Command::new(binary_path(bin_dir, "outbe-hyperlane-agent"));
     command.args(["--config", &config.to_string_lossy()]);
-    Err(command.exec()).wrap_err("failed to exec outbe-hyperlane-validator")
+    Err(command.exec()).wrap_err("failed to exec outbe-hyperlane-agent")
 }
 
 fn binary_path(bin_dir: Option<&Path>, name: &str) -> PathBuf {
@@ -319,11 +319,8 @@ mod tests {
             PathBuf::from("/usr/local/bin/outbe-feeder")
         );
         assert_eq!(
-            binary_path(
-                Some(Path::new("/usr/local/bin")),
-                "outbe-hyperlane-validator"
-            ),
-            PathBuf::from("/usr/local/bin/outbe-hyperlane-validator")
+            binary_path(Some(Path::new("/usr/local/bin")), "outbe-hyperlane-agent"),
+            PathBuf::from("/usr/local/bin/outbe-hyperlane-agent")
         );
     }
 

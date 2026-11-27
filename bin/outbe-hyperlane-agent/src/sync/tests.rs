@@ -273,6 +273,31 @@ pub(crate) async fn mock_rpc(chain: Arc<std::sync::Mutex<MockChain>>) -> String 
     serve_json_rpc(respond).await
 }
 
+/// The receipt of the transaction 0xabab…ab from `from` to `to` in `block`.
+pub(crate) fn receipt_json(
+    from: Address,
+    to: Address,
+    block: u64,
+    success: bool,
+) -> serde_json::Value {
+    serde_json::json!({
+        "transactionHash": B256::repeat_byte(0xab),
+        "transactionIndex": "0x0",
+        "blockHash": B256::repeat_byte(3),
+        "blockNumber": format!("{block:#x}"),
+        "from": from,
+        "to": to,
+        "cumulativeGasUsed": "0x5208",
+        "gasUsed": "0x5208",
+        "effectiveGasPrice": "0x1",
+        "contractAddress": null,
+        "logs": [],
+        "logsBloom": format!("0x{}", "00".repeat(256)),
+        "status": if success { "0x1" } else { "0x0" },
+        "type": "0x2",
+    })
+}
+
 /// A JSON-RPC server over HTTP. `respond` maps a request to a response.
 pub(crate) async fn serve_json_rpc(
     respond: impl Fn(&serde_json::Value) -> serde_json::Value + Send + Sync + 'static,
