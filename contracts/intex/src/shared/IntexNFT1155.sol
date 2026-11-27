@@ -329,22 +329,22 @@ contract IntexNFT1155 is ERC1155Upgradeable, OwnableUpgradeable, UUPSUpgradeable
     }
 
     /// @inheritdoc IIntexNFT1155
-    function burnIntex(address holder, bytes14 seriesId, uint256 units) external onlyFrom(INTEX_FACTORY) {
-        _burnIssued(holder, seriesId, units);
+    function burnIntex(address owner, bytes14 seriesId, uint256 units) external onlyFrom(INTEX_FACTORY) {
+        _burnIssued(owner, seriesId, units);
     }
 
     /// @inheritdoc IIntexNFT1155
-    function sendIntexToGemFactory(address holder, bytes14 seriesId, uint256 units, uint256 gemFactoryPositionId)
+    function sendIntexToGemFactory(address owner, bytes14 seriesId, uint256 units, uint256 gemFactoryPositionId)
         external
         onlyFrom(GEM_FACTORY)
     {
-        uint256 intexId = _burnIssued(holder, seriesId, units);
+        uint256 intexId = _burnIssued(owner, seriesId, units);
         // forge-lint: disable-next-line(unsafe-typecast) -- _burnIssued bounded units by the uint32 supply
-        emit IntexSentToGemFactory(intexId, holder, gemFactoryPositionId, uint32(units));
+        emit IntexSentToGemFactory(intexId, owner, gemFactoryPositionId, uint32(units));
     }
 
-    function _burnIssued(address holder, bytes14 seriesId, uint256 units) private returns (uint256 intexId) {
-        if (holder == address(0)) revert ZeroAddress("holder", holder);
+    function _burnIssued(address owner, bytes14 seriesId, uint256 units) private returns (uint256 intexId) {
+        if (owner == address(0)) revert ZeroAddress("owner", owner);
         if (units == 0) revert ZeroUnits();
 
         intexId = _issuedIntexId(seriesId);
@@ -353,11 +353,11 @@ contract IntexNFT1155 is ERC1155Upgradeable, OwnableUpgradeable, UUPSUpgradeable
 
         // forge-lint: disable-next-line(unsafe-typecast) -- units <= balance <= totalSupply (uint32); _burn reverts otherwise
         data.totalSupply -= uint32(units);
-        _burn(holder, intexId, units);
+        _burn(owner, intexId, units);
     }
 
     /// @inheritdoc IIntexNFT1155
-    function burnForfeited(address holder, bytes14 seriesId) external {
+    function burnForfeited(address owner, bytes14 seriesId) external {
         uint256 intexId = _issuedIntexId(seriesId);
         IIntexNFT1155.SeriesData storage data = _s().seriesData[intexId];
         if (data.issuedAt == 0) revert IntexNotFound(intexId);
@@ -365,14 +365,14 @@ contract IntexNFT1155 is ERC1155Upgradeable, OwnableUpgradeable, UUPSUpgradeable
         if (state != IIntexNFT1155.IntexState.Forfeited) {
             revert InvalidState(uint8(IIntexNFT1155.IntexState.Forfeited), uint8(state));
         }
-        uint256 units = balanceOf(holder, intexId);
+        uint256 units = balanceOf(owner, intexId);
         if (units == 0) revert ZeroUnits();
 
         // forge-lint: disable-next-line(unsafe-typecast) -- units <= totalSupply (uint32)
         uint32 burned = uint32(units);
         data.totalSupply -= burned;
-        _burn(holder, intexId, units);
-        emit IntexForfeited(intexId, holder, data.issuanceCurrency, data.referenceCurrency, burned);
+        _burn(owner, intexId, units);
+        emit IntexForfeited(intexId, owner, data.issuanceCurrency, data.referenceCurrency, burned);
     }
 
     /// @inheritdoc IIntexNFT1155

@@ -256,7 +256,7 @@ fn send_intex_to_gem_factory(
         INTEX_NFT1155_ADDRESS,
         U256::ZERO,
         IIntexNFT1155::sendIntexToGemFactoryCall {
-            holder: owner,
+            owner,
             seriesId: series_id.into(),
             units,
             gemFactoryPositionId: gem_factory_position_id,

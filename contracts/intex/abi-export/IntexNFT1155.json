@@ -96,7 +96,7 @@
     "name": "burnForfeited",
     "inputs": [
       {
-        "name": "holder",
+        "name": "owner",
         "type": "address",
         "internalType": "address"
       },
@@ -114,7 +114,7 @@
     "name": "burnIntex",
     "inputs": [
       {
-        "name": "holder",
+        "name": "owner",
         "type": "address",
         "internalType": "address"
       },
@@ -784,7 +784,7 @@
     "name": "sendIntexToGemFactory",
     "inputs": [
       {
-        "name": "holder",
+        "name": "owner",
         "type": "address",
         "internalType": "address"
       },

@@ -356,7 +356,7 @@ contract IntexNFT1155Router is
         uint32 srcChainId,
         bytes32 receiveId,
         uint256 idx,
-        address holder,
+        address owner,
         address to,
         uint256 intexId,
         uint256 units
@@ -365,7 +365,7 @@ contract IntexNFT1155Router is
             minted = true;
         } catch (bytes memory reason) {
             _bs().failedCrosschainReceives[receiveId][idx] = FailedCrosschainReceive({
-                to: to, srcChainId: srcChainId, exists: true, intexId: intexId, units: units, owner: holder
+                to: to, srcChainId: srcChainId, exists: true, intexId: intexId, units: units, owner: owner
             });
             emit IntexCrosschainReceiveFailed(receiveId, srcChainId, idx, to, intexId, _units32(units), reason);
         }

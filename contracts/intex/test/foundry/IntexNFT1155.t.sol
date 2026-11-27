@@ -785,7 +785,7 @@ contract IntexNFT1155Test is Test {
 
     function test_BurnIntex_RevertsOnZeroHolder() public {
         _openSeries(SERIES_ID_1_DAY, 0);
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.ZeroAddress.selector, "holder", address(0)));
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.ZeroAddress.selector, "owner", address(0)));
         nft.burnIntex(address(0), SERIES_ID_1, 1);
     }
 

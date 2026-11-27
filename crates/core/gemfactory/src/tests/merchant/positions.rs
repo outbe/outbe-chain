@@ -310,7 +310,7 @@ fn intex_units_sent_to_the_gem_factory_end_with_their_event() {
             crate::sol_ext::IIntexNFT1155::sendIntexToGemFactoryCall::abi_decode(&input.calldata)
                 .ok()
         })
-        .map(|call| (call.holder, call.units, call.gemFactoryPositionId))
+        .map(|call| (call.owner, call.units, call.gemFactoryPositionId))
         .collect();
     assert_eq!(sends, vec![(ALICE, U256::from(SENT_UNITS), id)]);
 
