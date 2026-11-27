@@ -780,54 +780,6 @@ fn settle_item(storage: &StorageHandle<'_>, nod_id: U256) {
     nod_api::record_settled(storage, item, group).unwrap();
 }
 
-fn clean_as(
-    storage: &StorageHandle<'_>,
-    caller: Address,
-    nod_id: U256,
-) -> Result<(), PrecompileError> {
-    outbe_nod::precompile::dispatch(
-        storage.clone(),
-        &INod::cleanCall { nodId: nod_id }.abi_encode(),
-        caller,
-        U256::ZERO,
-    )
-    .map(|_| ())
-}
-
-#[test]
-fn any_account_cleans_a_forfeited_unsettled_nod() {
-    let _enclave = outbe_nod::test_support::scope();
-    let stranger = Address::repeat_byte(0x99);
-    let mut world = World::new();
-    world.enter(|storage| {
-        let unsettled = issue_offered(&storage, Address::repeat_byte(0x71), 840, 30);
-        let settled = issue_offered(&storage, Address::repeat_byte(0x72), 840, 10);
-        settle_item(&storage, settled);
-        let group = group_of(&storage, unsettled);
-        assert!(
-            clean_as(&storage, stranger, unsettled).is_err(),
-            "a Nod that is not forfeited stays"
-        );
-        let (_, deadline) = call(&storage, group);
-        close_at(&storage, 10, deadline + 86_400, 100);
-        assert!(
-            clean_as(&storage, stranger, settled).is_err(),
-            "a settled Nod stays"
-        );
-        clean_as(&storage, stranger, unsettled).unwrap();
-        assert!(nod_api::get_item(&storage, unsettled).unwrap().is_none());
-        assert!(nod_api::get_item(&storage, settled).unwrap().is_some());
-    });
-    let forfeited: Vec<_> = world
-        .provider
-        .get_events(NOD_ADDRESS)
-        .iter()
-        .filter_map(|log| INod::NodForfeited::decode_log_data(log).ok())
-        .map(|event| event.owner)
-        .collect();
-    assert_eq!(forfeited, [Address::repeat_byte(0x71)]);
-}
-
 /// The forfeit credits the Promis Limit with the exact sum of the forfeited loads, once. A
 /// settled Nod that is not mined yet gets no credit and stays.
 #[test]

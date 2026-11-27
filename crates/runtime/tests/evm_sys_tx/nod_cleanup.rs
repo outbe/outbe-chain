@@ -90,35 +90,6 @@ fn nod_factory_end_block_deletes_a_forfeited_nod() {
 }
 
 #[test]
-fn user_clean_then_cleanup_processing_deletes_the_rest() {
-    let mut provider = provider_at_cleanup();
-    let (left, right) = provider.enter(|storage| {
-        let left = issue(&storage, Address::repeat_byte(0x41));
-        let right = issue(&storage, Address::repeat_byte(0x42));
-        queue_forfeited(&storage, left);
-        let data = INod::cleanCall { nodId: left }.abi_encode();
-        outbe_nod::precompile::dispatch(
-            storage.clone(),
-            &data,
-            Address::repeat_byte(0x41),
-            U256::ZERO,
-        )
-        .unwrap();
-        assert!(outbe_nod::api::get_item(&storage, left).unwrap().is_none());
-        assert!(outbe_nod::api::get_item(&storage, right).unwrap().is_some());
-        (left, right)
-    });
-
-    provider.enter(|storage| {
-        run_cleanup(storage.clone());
-        assert!(outbe_nod::api::get_item(&storage, left).unwrap().is_none());
-        assert!(outbe_nod::api::get_item(&storage, right).unwrap().is_none());
-        assert_eq!(reserve(&storage), U256::ZERO);
-    });
-    assert_eq!(burn_count(&provider), 2);
-}
-
-#[test]
 fn idle_cleanup_processing_leaves_the_nod_queue_empty() {
     let mut provider = provider_at_cleanup();
     provider.enter(|storage| {

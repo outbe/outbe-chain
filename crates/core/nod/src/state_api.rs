@@ -72,21 +72,6 @@ pub fn add_item(
     storage
         .with_checkpoint(|| NodContract::new(storage.clone()).record_nod_issued_state(item, terms))
 }
-pub fn clean_item(storage: &StorageHandle<'_>, nod_id: U256) -> Result<()> {
-    storage.with_checkpoint(|| {
-        let item = load_item(storage, nod_id)?.ok_or(NodError::NodNotFound)?;
-        if item.body().is_settled {
-            return Err(NodError::NodAlreadySettled.into());
-        }
-        let group_key = item.body().group_key;
-        let contract = NodContract::new(storage.clone());
-        if !contract.group_is_closed.read(&group_key)? {
-            return Err(NodError::NodNotForfeited.into());
-        }
-        let group = load_group(storage, group_key)?.ok_or(NodError::GroupNotFound)?;
-        NodContract::new(storage.clone()).record_nod_removed_state(item, group)
-    })
-}
 /// Closes `group_key` when it holds no Nod and was never called. Returns whether it did.
 pub fn close_empty_group(storage: &StorageHandle<'_>, group_key: B256) -> Result<bool> {
     storage.with_checkpoint(|| {

@@ -28,8 +28,6 @@ interface INod {
     error AmountReadFailed(string reason);
     error NodStateChangedAfterLoading();
     error DateStep(uint8 kind, uint32 dateKey);
-    error NodNotForfeited();
-    error NodAlreadySettled();
     error SuHashAlreadyUsed();
     error SuHashRingSeqOverflow();
     error OfferAlreadyMade();
@@ -137,5 +135,4 @@ interface INod {
 
     // outbe-specific
     function getNod(uint256 nodId) external view returns (NodData memory);
-    function clean(uint256 nodId) external;
 }

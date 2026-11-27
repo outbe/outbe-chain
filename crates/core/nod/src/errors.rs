@@ -92,12 +92,6 @@ pub enum NodError {
     #[error("date step kind {kind} from date key {date_key}")]
     DateStep { kind: u8, date_key: u32 },
 
-    #[error("nod is not forfeited")]
-    NodNotForfeited,
-
-    #[error("nod is already settled")]
-    NodAlreadySettled,
-
     #[error("SU hash already used")]
     SuHashAlreadyUsed,
 
@@ -200,8 +194,6 @@ impl From<NodError> for PrecompileError {
                 kind,
                 dateKey: date_key,
             }),
-            NodError::NodNotForfeited => revert_with(I::NodNotForfeited {}),
-            NodError::NodAlreadySettled => revert_with(I::NodAlreadySettled {}),
             NodError::SuHashAlreadyUsed => revert_with(I::SuHashAlreadyUsed {}),
             NodError::SuHashRingSeqOverflow => revert_with(I::SuHashRingSeqOverflow {}),
             NodError::OfferAlreadyMade => revert_with(I::OfferAlreadyMade {}),
