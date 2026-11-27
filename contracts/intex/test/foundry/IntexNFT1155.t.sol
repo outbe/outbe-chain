@@ -129,11 +129,8 @@ contract IntexNFT1155Test is Test {
         _openSeries(SERIES_ID_1_DAY, 0);
         _openSeries(SERIES_ID_2_DAY, 0);
 
-        assertEq(nft.emissionDayOf(SERIES_ID_1), SERIES_ID_1_DAY);
-        bytes14[] memory ids = nft.seriesIdsByEmissionDay(SERIES_ID_1_DAY);
-        assertEq(ids.length, 1);
-        assertEq(ids[0], SERIES_ID_1);
-        assertEq(nft.seriesIdsByEmissionDay(SERIES_ID_2_DAY)[0], SERIES_ID_2);
+        assertEq(nft.getIntexSeries(SERIES_ID_1).emissionDay, SERIES_ID_1_DAY);
+        assertEq(nft.getIntexSeries(SERIES_ID_2).emissionDay, SERIES_ID_2_DAY);
     }
 
     function test_OpenSeries_IndexesTheDayCurrencyPair() public {
@@ -162,11 +159,7 @@ contract IntexNFT1155Test is Test {
         vm.prank(bridger);
         nft.openSeries(p);
 
-        assertEq(nft.emissionDayOf(seriesId), emissionDay, "day stored verbatim");
-        bytes14[] memory ids = nft.seriesIdsByEmissionDay(emissionDay);
-        assertEq(ids.length, 1);
-        assertEq(ids[0], seriesId, "day indexes the series id");
-        assertEq(nft.seriesIdsByEmissionDay(20250505).length, 0, "the id's own day is not a provenance key");
+        assertEq(nft.getIntexSeries(seriesId).emissionDay, emissionDay, "day stored verbatim");
     }
 
     function test_Issue() public {
@@ -773,26 +766,6 @@ contract IntexNFT1155Test is Test {
         vm.prank(bridger);
         nft.issueIntex(user2, 4, SERIES_ID_1);
         assertEq(nft.totalSupply(INTEX_ID_1), 10);
-    }
-
-    // --- Series enumeration ---
-
-    function test_SeriesAtListsSeriesInCreationOrder() public {
-        assertEq(nft.totalSeries(), 0);
-
-        _openSeries(SERIES_ID_1_DAY, 0);
-        _openSeries(SERIES_ID_2_DAY, 0);
-
-        assertEq(nft.totalSeries(), 2);
-        assertEq(nft.seriesAt(0), SERIES_ID_1);
-        assertEq(nft.seriesAt(1), SERIES_ID_2);
-    }
-
-    function test_SeriesAtPastTheEndReverts() public {
-        _openSeries(SERIES_ID_1_DAY, 0);
-
-        vm.expectRevert(IIntexNFT1155.SeriesIndexOutOfRange.selector);
-        nft.seriesAt(1);
     }
 
     /// @dev A batch that names one token id twice must move the whole amount. The hook walks the

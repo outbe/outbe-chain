@@ -97,9 +97,6 @@ pub fn dispatch(
                 powDifficulty(_) => metadata::<IIntexFactory::powDifficultyCall>(|| {
                     Ok(outbe_core_common::pow::POW_DIFFICULTY)
                 }),
-                ownerBalances(c) => view(c, |c| {
-                    runtime::owner_balances(&storage, series_of(&storage, c.intexId)?, c.owner)
-                }),
                 getCallState(c) => view(c, |c| crate::call_state::call_state(&storage, c.intexId)),
                 targetChains(_) => metadata::<IIntexFactory::targetChainsCall>(|| {
                     let (chain_ids, modes) = crate::targets::target_chains(&storage)?

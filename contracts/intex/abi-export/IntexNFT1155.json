@@ -255,25 +255,6 @@
   },
   {
     "type": "function",
-    "name": "emissionDayOf",
-    "inputs": [
-      {
-        "name": "seriesId",
-        "type": "bytes14",
-        "internalType": "bytes14"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "getIntex",
     "inputs": [
       {
@@ -873,25 +854,6 @@
   },
   {
     "type": "function",
-    "name": "seriesAt",
-    "inputs": [
-      {
-        "name": "index",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bytes14",
-        "internalType": "bytes14"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "seriesExists",
     "inputs": [
       {
@@ -934,25 +896,6 @@
         "name": "",
         "type": "bytes14",
         "internalType": "bytes14"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "seriesIdsByEmissionDay",
-    "inputs": [
-      {
-        "name": "emissionDay",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bytes14[]",
-        "internalType": "bytes14[]"
       }
     ],
     "stateMutability": "view"
@@ -1006,19 +949,6 @@
       }
     ],
     "stateMutability": "pure"
-  },
-  {
-    "type": "function",
-    "name": "totalSeries",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -1795,11 +1725,6 @@
   {
     "type": "error",
     "name": "NotInitializing",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "SeriesIndexOutOfRange",
     "inputs": []
   },
   {

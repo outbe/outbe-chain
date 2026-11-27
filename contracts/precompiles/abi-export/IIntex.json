@@ -464,25 +464,6 @@
   },
   {
     "type": "function",
-    "name": "seriesExists",
-    "inputs": [
-      {
-        "name": "intexId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "setApprovalForAll",
     "inputs": [
       {

@@ -182,14 +182,12 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @notice An `issueIntex` or `crosschainMint` would push `totalSupply` past
     ///         `type(uint32).max`.
     error SupplyCapExceeded(bytes14 seriesId, uint256 attempted, uint256 cap);
-    /// @notice Series index past the end of the series list.
-    error SeriesIndexOutOfRange();
 
     // --- Writes ---
 
     /// @notice Identity inputs for a new series, set once at `openSeries`.
-    /// @dev `emissionDay` is the day the series was derived from. It is the provenance key
-    ///      (`seriesOfDay`), stored verbatim rather than inferred from `seriesId`.
+    /// @dev `emissionDay` is the day the series was derived from, stored verbatim rather than
+    ///      inferred from `seriesId`.
     struct OpenSeriesParams {
         bytes14 seriesId;
         uint32 emissionDay;
@@ -255,16 +253,6 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @return The Issued token id.
     function issuedIntexId(bytes14 seriesId) external pure returns (uint256);
 
-    /// @notice Emission day whose auction issued the series (0 if the series does not exist).
-    /// @param seriesId Series identifier.
-    /// @return The emission day (yyyymmdd).
-    function emissionDayOf(bytes14 seriesId) external view returns (uint32);
-
-    /// @notice Series ids issued for an emission day.
-    /// @param emissionDay Emission day (yyyymmdd).
-    /// @return The series ids of that day.
-    function seriesIdsByEmissionDay(uint32 emissionDay) external view returns (bytes14[] memory);
-
     /// @notice Series a day's currency pair was created under.
     /// @param emissionDay Emission day (yyyymmdd).
     /// @param issuanceCurrency Issuance currency (ISO numeric).
@@ -306,15 +294,4 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @notice Collection-level metadata as an on-chain JSON data URI (ERC-7572).
     /// @return The collection metadata URI.
     function contractURI() external view returns (string memory);
-
-    // --- Series reads ---
-
-    /// @notice Number of series ever created on this chain; a series stays listed after its supply reaches zero.
-    /// @return The count of created series.
-    function totalSeries() external view returns (uint256);
-
-    /// @notice The series id at an index of the creation-ordered series list.
-    /// @param index Position in the list, below `totalSeries()`.
-    /// @return The series id.
-    function seriesAt(uint256 index) external view returns (bytes14);
 }

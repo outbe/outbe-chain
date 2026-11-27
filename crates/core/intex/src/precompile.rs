@@ -65,7 +65,6 @@ pub fn dispatch(
                     forfeitedUnits: counts.forfeited,
                 })
             }),
-            seriesExists(c) => view(c, |c| registry.series.exists(c.intexId)),
             totalSeries(_) => metadata::<IIntex::totalSeriesCall>(|| {
                 Ok(U256::from(registry.read_total_series()?))
             }),

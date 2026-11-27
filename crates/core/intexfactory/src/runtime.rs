@@ -204,31 +204,6 @@ pub fn to_wire_price(price_minor: U256) -> Result<u64> {
     u64::try_from(price_minor).map_err(|_| IntexFactoryError::PriceExceedsWireType.into())
 }
 
-/// One owner's units of `series_id`: its current balances, Issued ones only until the
-/// series is forfeited, and its own mining and Gem Factory history.
-pub(crate) fn owner_balances(
-    storage: &StorageHandle<'_>,
-    series_id: SeriesId,
-    owner: Address,
-) -> Result<crate::precompile::IIntexFactory::OwnerBalances> {
-    let series = outbe_intex::api::get_series(storage, series_id)?;
-    let issued = if outbe_intex::api::state(storage, &series)? == IntexState::Forfeited {
-        0
-    } else {
-        nft_units_of(storage, owner, outbe_intex::intex_id(series_id))?
-    };
-    let settled = outbe_intex::api::owner_settled_units(storage, series_id, owner)?;
-    Ok(crate::precompile::IIntexFactory::OwnerBalances {
-        issuedUnits: issued,
-        settledUnits: settled,
-        minedUnits: outbe_intex::api::owner_mined_units(storage, series_id, owner)?,
-        gemFactoryUnits: outbe_intex::api::owner_gem_factory_units(storage, series_id, owner)?,
-        ownerUnits: issued
-            .checked_add(settled)
-            .ok_or(IntexFactoryError::OwnerUnitsExceedU32)?,
-    })
-}
-
 /// Units of one series that one owner holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OwnerUnits {
@@ -324,11 +299,6 @@ fn require_settleable(storage: &StorageHandle<'_>, series: &SeriesRecord) -> Res
 }
 
 // --- storage.call helpers (localnet-exercised) ---
-
-fn nft_units_of(storage: &StorageHandle<'_>, account: Address, id: U256) -> Result<u32> {
-    u32::try_from(nft_balance_of(storage, account, id)?)
-        .map_err(|_| IntexFactoryError::NftBalanceExceedsU32.into())
-}
 
 fn nft_balance_of(storage: &StorageHandle<'_>, account: Address, id: U256) -> Result<U256> {
     let ret = storage.staticcall(

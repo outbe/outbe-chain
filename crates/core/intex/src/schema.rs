@@ -199,19 +199,10 @@ pub struct IntexContract {
     #[attribute(order = 29)]
     pub mined_units: outbe_primitives::storage::dsl::Map<U256, u32>,
 
-    // Per-owner ledgers. The owner's Issued units are its token balance, so the
-    // registry keeps the Settled balance and what left the token.
+    // The owner's Issued units are its token balance, so the registry keeps the Settled balance.
     /// `owner_units_key` -> units this owner settled and has not mined yet.
     #[attribute(order = 78)]
     pub owner_settled_units: outbe_primitives::storage::dsl::Map<B256, u32>,
-
-    /// `owner_units_key` -> units this owner mined in the series.
-    #[attribute(order = 30)]
-    pub owner_mined_units: outbe_primitives::storage::dsl::Map<B256, u32>,
-
-    /// `owner_units_key` -> units this owner sent to the Gem Factory.
-    #[attribute(order = 31)]
-    pub owner_gem_factory_units: outbe_primitives::storage::dsl::Map<B256, u32>,
 
     // --- Call lifecycle: the price bins the daily scan walks and the called groups ---
     // Call-price bin index the daily Called scan walks. A series enters it at issuance.

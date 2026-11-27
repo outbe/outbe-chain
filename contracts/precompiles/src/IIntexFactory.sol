@@ -31,9 +31,7 @@ interface IIntexFactory {
     error IntexSeriesPageCountExceedsU16();
     error PriceExceedsWireType();
     error MarkedUpPriceOverflow();
-    error OwnerUnitsExceedU32();
     error SettledUnitsExceedU32();
-    error NftBalanceExceedsU32();
     error NftBalanceOfUndecodable();
     error PromisOverflow();
     error MiningSequenceOverflow();
@@ -106,23 +104,6 @@ interface IIntexFactory {
     /// @notice IntexAuctionTargetRouter on Outbe hands over the proceeds of one page of winners: the factory
     ///         takes `amount` WCOEN that the router approved and burns it with code 43.
     function receiveLocalProceeds(uint32 emissionDay, uint32 pageIndex, uint256 amount) external;
-
-    /// @notice One owner's units of a series. `issuedUnits` and `settledUnits` are the
-    ///         owner's current balances on this, the origin chain, with Issued units counted
-    ///         only while the series is not Forfeited. Units held on a target chain are not
-    ///         counted. `minedUnits` and `gemFactoryUnits` are the owner's history across
-    ///         chains, since both happen only here, and do not move with a transfer.
-    ///         `ownerUnits` is `issuedUnits + settledUnits`, derived on every call, never stored.
-    struct OwnerBalances {
-        uint32 issuedUnits;
-        uint32 settledUnits;
-        uint32 minedUnits;
-        uint32 gemFactoryUnits;
-        uint32 ownerUnits;
-    }
-
-    /// @notice Read `owner`'s units of `intexId`. Reverts if the series does not exist.
-    function ownerBalances(uint256 intexId, address owner) external view returns (OwnerBalances memory);
 
     /// @notice How close a right is to its group's call. The window ends at the last
     ///         finalized UTC day. Prices are COEN in `referenceCurrency` at scale 1e6.

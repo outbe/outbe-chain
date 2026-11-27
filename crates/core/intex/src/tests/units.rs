@@ -31,7 +31,7 @@ fn expiry_forfeits_only_what_was_left_unrealized() {
     with_registry(|s| {
         let id = called_series(&s, 41);
         api::record_settled_units(&s, id, owner(), 30).unwrap();
-        api::record_gem_factory_units(&s, id, owner(), 25).unwrap();
+        api::record_gem_factory_units(&s, id, 25).unwrap();
 
         assert_eq!(api::settled_units(&s, id).unwrap(), 30);
         assert_eq!(api::gem_factory_units(&s, id).unwrap(), 25);
@@ -49,7 +49,7 @@ fn a_fully_realized_series_forfeits_nothing() {
     with_registry(|s| {
         let id = called_series(&s, 42);
         api::record_settled_units(&s, id, owner(), 60).unwrap();
-        api::record_gem_factory_units(&s, id, owner(), 40).unwrap();
+        api::record_gem_factory_units(&s, id, 40).unwrap();
 
         assert_eq!(
             api::forfeitable_units(&s, &api::get_series(&s, id).unwrap())
@@ -66,7 +66,7 @@ fn the_view_carries_the_whole_split() {
         let id = called_series(&s, 46);
         api::record_settled_units(&s, id, owner(), 30).unwrap();
         api::record_mined_units(&s, id, owner(), 5).unwrap();
-        api::record_gem_factory_units(&s, id, owner(), 25).unwrap();
+        api::record_gem_factory_units(&s, id, 25).unwrap();
 
         // Every class the series record can answer for, without a second call.
         let data = dispatch_series_data(&s, id);
@@ -148,7 +148,7 @@ fn realized_units_can_never_exceed_the_issued_count() {
         api::record_settled_units(&s, id, owner(), 100).unwrap();
         // One unit past the cap means the two ledgers disagree. The forfeit
         // arithmetic would underflow later, so this call refuses it here instead.
-        assert!(api::record_gem_factory_units(&s, id, owner(), 1).is_err());
+        assert!(api::record_gem_factory_units(&s, id, 1).is_err());
         assert_eq!(
             api::forfeitable_units(&s, &api::get_series(&s, id).unwrap())
                 .unwrap()
@@ -163,7 +163,7 @@ fn the_unit_classes_are_disjoint_and_sum_to_the_issued_count() {
     with_registry(|s| {
         let id = called_series(&s, 50);
         api::record_settled_units(&s, id, owner(), 30).unwrap();
-        api::record_gem_factory_units(&s, id, owner(), 25).unwrap();
+        api::record_gem_factory_units(&s, id, 25).unwrap();
         api::record_mined_units(&s, id, owner(), 15).unwrap();
 
         let counts = api::unit_counts(&s, id).unwrap();
@@ -185,7 +185,7 @@ fn expiry_moves_the_active_units_into_forfeited() {
     with_registry_at(TRANSIT_CLOSE + 1, |s| {
         let id = called_series(&s, 51);
         api::record_settled_units(&s, id, owner(), 30).unwrap();
-        api::record_gem_factory_units(&s, id, owner(), 25).unwrap();
+        api::record_gem_factory_units(&s, id, 25).unwrap();
         api::record_mined_units(&s, id, owner(), 30).unwrap();
 
         let counts = api::unit_counts(&s, id).unwrap();
@@ -264,7 +264,7 @@ fn the_unpaid_remainder_excludes_settled_mined_and_gem_factory_units() {
         let id = called_series(&s, 55);
         api::record_settled_units(&s, id, owner(), 30).unwrap();
         api::record_mined_units(&s, id, owner(), 10).unwrap();
-        api::record_gem_factory_units(&s, id, owner(), 15).unwrap();
+        api::record_gem_factory_units(&s, id, 15).unwrap();
 
         let counts = api::unit_counts(&s, id).unwrap();
         assert_eq!(counts.settled, 20);
@@ -278,28 +278,5 @@ fn the_unpaid_remainder_excludes_settled_mined_and_gem_factory_units() {
                 .units,
             55
         );
-    });
-}
-
-/// Burning erases who held the units, so the two per-owner ledgers are written at
-/// the moment of the burn. Nothing reads them on chain yet. A later reader cannot
-/// reconstruct them.
-#[test]
-fn the_per_owner_ledgers_record_who_burned_the_units() {
-    with_registry(|s| {
-        let other = Address::repeat_byte(0xB2);
-        let id = called_series(&s, 56);
-        api::record_settled_units(&s, id, owner(), 40).unwrap();
-        api::record_mined_units(&s, id, owner(), 10).unwrap();
-        api::record_gem_factory_units(&s, id, other, 5).unwrap();
-
-        assert_eq!(api::owner_mined_units(&s, id, owner()).unwrap(), 10);
-        assert_eq!(api::owner_gem_factory_units(&s, id, owner()).unwrap(), 0);
-        assert_eq!(api::owner_mined_units(&s, id, other).unwrap(), 0);
-        assert_eq!(api::owner_gem_factory_units(&s, id, other).unwrap(), 5);
-
-        // Each owner's share adds up to the series totals.
-        assert_eq!(api::mined_units(&s, id).unwrap(), 10);
-        assert_eq!(api::gem_factory_units(&s, id).unwrap(), 5);
     });
 }

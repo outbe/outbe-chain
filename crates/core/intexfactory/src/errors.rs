@@ -53,14 +53,8 @@ pub enum IntexFactoryError {
     #[error("marked-up price overflow")]
     MarkedUpPriceOverflow,
 
-    #[error("owner units exceed u32")]
-    OwnerUnitsExceedU32,
-
     #[error("settled units exceed u32")]
     SettledUnitsExceedU32,
-
-    #[error("NFT balance exceeds u32")]
-    NftBalanceExceedsU32,
 
     #[error("NFT balanceOf undecodable")]
     NftBalanceOfUndecodable,
@@ -147,9 +141,7 @@ impl From<IntexFactoryError> for PrecompileError {
             }
             IntexFactoryError::PriceExceedsWireType => revert_with(I::PriceExceedsWireType {}),
             IntexFactoryError::MarkedUpPriceOverflow => revert_with(I::MarkedUpPriceOverflow {}),
-            IntexFactoryError::OwnerUnitsExceedU32 => revert_with(I::OwnerUnitsExceedU32 {}),
             IntexFactoryError::SettledUnitsExceedU32 => revert_with(I::SettledUnitsExceedU32 {}),
-            IntexFactoryError::NftBalanceExceedsU32 => revert_with(I::NftBalanceExceedsU32 {}),
             IntexFactoryError::NftBalanceOfUndecodable => {
                 revert_with(I::NftBalanceOfUndecodable {})
             }

@@ -78,9 +78,6 @@ interface IIntex {
     /// @notice Read the disjoint unit counts of `intexId`.
     function intexUnitCounts(uint256 intexId) external view returns (UnitCounts memory);
 
-    /// @notice Whether a series exists.
-    function seriesExists(uint256 intexId) external view returns (bool);
-
     /// @notice Number of live series (dense-enumeration length).
     function totalSeries() external view returns (uint256);
 

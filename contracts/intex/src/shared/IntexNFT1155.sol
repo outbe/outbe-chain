@@ -37,10 +37,6 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     struct IntexNFT1155Storage {
         /// @dev Series-level data, stored once per series under its token id.
         mapping(uint256 intexId => IIntexNFT1155.SeriesData) seriesData;
-        /// @dev Every series ever created on this chain, in creation order.
-        bytes14[] allSeries;
-        /// @dev Series ids issued per emission day.
-        mapping(uint32 emissionDay => bytes14[] seriesIds) seriesOfDay;
         /// @dev The series a day's currency pair was created under.
         mapping(
             uint32 emissionDay
@@ -76,16 +72,6 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     /// @dev The admin role gates upgrades.
     /// @param newImplementation Address of the implementation the proxy switches to.
     function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
-
-    /// @inheritdoc IIntexNFT1155
-    function emissionDayOf(bytes14 seriesId) external view returns (uint32) {
-        return _s().seriesData[_issuedIntexId(seriesId)].emissionDay;
-    }
-
-    /// @inheritdoc IIntexNFT1155
-    function seriesIdsByEmissionDay(uint32 emissionDay) external view returns (bytes14[] memory) {
-        return _s().seriesOfDay[emissionDay];
-    }
 
     /// @inheritdoc IIntexNFT1155
     function seriesIdOf(uint32 emissionDay, uint16 issuanceCurrency, uint16 referenceCurrency)
@@ -136,10 +122,6 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         });
         $.seriesData[intexId] = seed;
 
-        // Series remain in allSeries permanently even after supply reaches 0. This
-        // preserves the historical record and avoids O(n) removal.
-        $.allSeries.push(params.seriesId);
-        $.seriesOfDay[params.emissionDay].push(params.seriesId);
         $.seriesOfPair[params.emissionDay][params.issuanceCurrency][params.referenceCurrency] = params.seriesId;
 
         emit IntexSeriesOpened(
@@ -436,20 +418,6 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         }
 
         super._update(from, to, ids, values);
-    }
-
-    // --- Series view functions ---
-
-    /// @inheritdoc IIntexNFT1155
-    function totalSeries() external view returns (uint256) {
-        return _s().allSeries.length;
-    }
-
-    /// @inheritdoc IIntexNFT1155
-    function seriesAt(uint256 index) external view returns (bytes14) {
-        bytes14[] storage allSeries = _s().allSeries;
-        if (index >= allSeries.length) revert SeriesIndexOutOfRange();
-        return allSeries[index];
     }
 
     /// @notice ERC-165 interface detection.
