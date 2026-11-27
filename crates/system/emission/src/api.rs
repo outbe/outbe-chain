@@ -333,3 +333,101 @@ fn complete_if_ended(record: &mut EmissionDay) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use outbe_primitives::storage::hashmap::HashMapStorageProvider;
+
+    const DAY: u32 = 20261022;
+
+    /// A started day whose four pools gave out 40, 39, 40 and 0 of their 40 each.
+    fn started_day(storage: StorageHandle<'_>) {
+        let record = EmissionDay::new(
+            DAY,
+            WorldwideDay::new(20261021),
+            compute_metadosis_start(DAY).unwrap(),
+            1_000,
+            [40, 40, 40, 40, 840],
+        );
+        put_emission_day(storage.clone(), &record).unwrap();
+        record_day_started(storage.clone(), DAY).unwrap();
+        for (pool, allocated) in [
+            (RewardPool::Validator, 40),
+            (RewardPool::Waa, 39),
+            (RewardPool::Sra, 40),
+            (RewardPool::Cca, 0),
+        ] {
+            record_reward_pool(storage.clone(), DAY, pool, U256::from(allocated)).unwrap();
+        }
+    }
+
+    fn metadosis_amounts() -> MetadosisAmounts {
+        MetadosisAmounts {
+            nominal_amount: U256::from(1_000),
+            lysis_limit: U256::from(320),
+            nods: U256::from(320),
+            desis_limit: U256::from(900),
+        }
+    }
+
+    #[test]
+    fn the_record_completes_when_desis_ends_after_metadosis() {
+        let mut provider = HashMapStorageProvider::new(1);
+        let storage = StorageHandle::new(&mut provider);
+        started_day(storage.clone());
+
+        let record = record_metadosis_completed(storage.clone(), DAY, metadosis_amounts()).unwrap();
+        assert_eq!(record.state, emission_day_state::PROCESSING);
+        assert_eq!(record.promis_limit, 41 + 520);
+
+        // The Desis limit took the Promis Limit of older days, so the net of the day is negative.
+        let record = record_desis_completed(storage, DAY, U256::from(700)).unwrap();
+        assert_eq!(record.state, emission_day_state::COMPLETED);
+        assert_eq!(record.desis_state, desis_state::COMPLETED);
+        assert_eq!(record.intexes, 700);
+        assert_eq!(record.promis_limit, 41 + 520 - 700);
+        check_conservation(&record).unwrap();
+    }
+
+    #[test]
+    fn a_desis_that_ended_first_completes_the_record_at_the_end_of_metadosis() {
+        for end in [record_desis_canceled, record_desis_failed] {
+            let mut provider = HashMapStorageProvider::new(1);
+            let storage = StorageHandle::new(&mut provider);
+            started_day(storage.clone());
+
+            let record = end(storage.clone(), DAY).unwrap();
+            assert_eq!(record.state, emission_day_state::PROCESSING);
+            assert_eq!(record.intexes, 0);
+            assert!(end(storage.clone(), DAY).is_err(), "Desis ends once");
+
+            let (record, rest) =
+                record_metadosis_failed(storage.clone(), DAY, metadosis_amounts()).unwrap();
+            assert_eq!(rest, U256::from(520));
+            assert_eq!(record.state, emission_day_state::COMPLETED);
+            assert_eq!(record.desis_limit, 0);
+            assert_eq!(record.promis_limit, 41 + 520);
+            check_conservation(&record).unwrap();
+            assert!(record_desis_completed(storage, DAY, U256::ZERO).is_err());
+        }
+    }
+
+    #[test]
+    fn a_record_that_breaks_the_rule_cannot_complete() {
+        let mut provider = HashMapStorageProvider::new(1);
+        let storage = StorageHandle::new(&mut provider);
+        started_day(storage.clone());
+        record_metadosis_completed(storage.clone(), DAY, metadosis_amounts()).unwrap();
+        let mut record = get_emission_day(storage.clone(), DAY).unwrap().unwrap();
+        record.cca = 1;
+        put_emission_day(storage.clone(), &record).unwrap();
+
+        let err = record_desis_completed(storage.clone(), DAY, U256::from(700)).unwrap_err();
+        assert!(err.to_string().contains("onservation"), "{err}");
+        assert_eq!(
+            get_emission_day(storage, DAY).unwrap().unwrap().state,
+            emission_day_state::PROCESSING
+        );
+    }
+}
