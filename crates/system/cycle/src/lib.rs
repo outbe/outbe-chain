@@ -13,7 +13,7 @@
 //! UTC day, opens the WWDs of the day with the records of their emission days. It starts the
 //! oldest emission day not started (`start_day_emission_limit`) and, when the offering of a
 //! started day ends at 12:00 UTC after it, sets the WAA and SRA rewards and runs its Metadosis.
-//! Until the votes of the day are sealed it answers not ready, and its dependents wait.
+//! Until the votes of the day are complete it answers not ready, and its dependents wait.
 //! A completed handler emits `CycleTaskCompleted`. A handler revert rolls its atomic
 //! work-budget scope back, records the slot, logs the cause, and the walk continues.
 //! A revert of ProcessEmissionDay fails the block.

@@ -27,7 +27,7 @@ pub fn cycle_tick_entitlements(
     let Some(active_utc_day) = cycle_active_utc_day else {
         return entitlements;
     };
-    if handler::day_to_allocate(active_utc_day, timestamp_to_date_key(timestamp)).is_err() {
+    if handler::day_to_start(active_utc_day, timestamp_to_date_key(timestamp)).is_err() {
         return entitlements;
     }
     entitlements

@@ -367,14 +367,14 @@ fn a_pool_with_no_weight_sends_its_limit_to_the_promis_limit() {
 }
 
 /// Day-1 voters of the dispatch scenario.
-const TOPUP_VOTERS: [Address; 3] = [
+const DAY_VOTERS: [Address; 3] = [
     Address::repeat_byte(0x61),
     Address::repeat_byte(0x62),
     Address::repeat_byte(0x63),
 ];
 
 /// Block time of the first settlement dispatch on day 2.
-const TOPUP_FIRE_TS: u64 = GENESIS_TS + SECONDS_PER_DAY + 60;
+const DAY_START_TS: u64 = GENESIS_TS + SECONDS_PER_DAY + 60;
 
 /// Anchors with a bonded CCA and runs the first settlement dispatch, with `before_dispatch` run
 /// after the fixture writes, and returns its result.
@@ -391,10 +391,10 @@ fn terminal_dispatch_after(
     storage.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 0);
     storage.set_block_number(2);
     let dispatched = storage.enter(|handle| {
-        let fire = runtime_context(block_ctx(2, TOPUP_FIRE_TS), handle);
+        let fire = runtime_context(block_ctx(2, DAY_START_TS), handle);
         account_parent(&fire, 2);
         seed_fresh_reward_oracle(&fire);
-        seed_daily_voters(&fire, 20_240_101, &TOPUP_VOTERS.map(|voter| (voter, 1)));
+        seed_daily_voters(&fire, 20_240_101, &DAY_VOTERS.map(|voter| (voter, 1)));
         before_dispatch(&fire);
         run_due_tasks(&fire)
     });
@@ -448,7 +448,7 @@ fn invalid_active_utc_day_does_not_consume_the_slot_or_emit_failure() {
                 block_gas_limit: 0,
                 user_gas_used: 0,
                 block_number: 2,
-                timestamp: TOPUP_FIRE_TS,
+                timestamp: DAY_START_TS,
                 chain_id: CHAIN_ID,
                 genesis_hash: alloy_primitives::B256::ZERO,
                 genesis_timestamp: 0,
@@ -470,7 +470,7 @@ fn storage_error_from_the_handler_does_not_consume_the_slot() {
     let mut storage = prepared_settlement_storage();
     storage.fail_mutation_at(0);
     storage.enter(|handle| {
-        let fire = runtime_context(block_ctx(2, TOPUP_FIRE_TS), handle);
+        let fire = runtime_context(block_ctx(2, DAY_START_TS), handle);
         let err = run_due_tasks(&fire).expect_err("storage failure must fail the block");
         assert!(matches!(err, PrecompileError::Storage(_)));
         assert_eq!(last_executed_at(&fire), GENESIS_TS + 60);
@@ -488,10 +488,10 @@ fn prepared_settlement_storage() -> HashMapStorageProvider {
     });
     storage.set_block_number(2);
     storage.enter(|handle| {
-        let fire = runtime_context(block_ctx(2, TOPUP_FIRE_TS), handle);
+        let fire = runtime_context(block_ctx(2, DAY_START_TS), handle);
         account_parent(&fire, 2);
         seed_fresh_reward_oracle(&fire);
-        seed_daily_voters(&fire, 20_240_101, &TOPUP_VOTERS.map(|voter| (voter, 1)));
+        seed_daily_voters(&fire, 20_240_101, &DAY_VOTERS.map(|voter| (voter, 1)));
     });
     storage
 }

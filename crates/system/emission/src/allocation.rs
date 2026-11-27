@@ -22,7 +22,8 @@ pub struct EmissionShares {
 }
 
 impl EmissionShares {
-    pub fn total(&self) -> Option<U256> {
+    #[cfg(test)]
+    fn total(&self) -> Option<U256> {
         self.validators
             .checked_add(self.cca)?
             .checked_add(self.waa)?

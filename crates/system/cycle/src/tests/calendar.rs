@@ -1,7 +1,7 @@
 //! UTC-day calendar transitions: contiguous settlement and one-day-per-hourly-run catch-up (`OIP-00343`).
 
 use super::*;
-use crate::handler::MAX_REWARD_CATCHUP_DAYS;
+use outbe_system_common::emission::MAX_CATCH_UP_DAYS;
 
 #[test]
 fn process_emission_day_catches_up_one_oldest_day_per_hourly_run_after_a_multi_day_halt() {
@@ -134,8 +134,8 @@ fn catchup_horizon_bounds_backward_scan_to_max_reward_catchup_days() {
     });
     storage.set_block_number(2);
     storage.enter(|handle| {
-        // 70 completed days pass with no block (> MAX_REWARD_CATCHUP_DAYS = 64).
-        let halt_days = u64::from(MAX_REWARD_CATCHUP_DAYS) + 6;
+        // 70 completed days pass with no block (> MAX_CATCH_UP_DAYS = 64).
+        let halt_days = u64::from(MAX_CATCH_UP_DAYS) + 6;
         let restart_ts = GENESIS_TS + halt_days * SECONDS_PER_DAY + 3_600;
         let ctx = runtime_context(block_ctx(2, restart_ts), handle.clone());
         let yesterday = outbe_system_common::time::previous_date_key(
@@ -144,7 +144,7 @@ fn catchup_horizon_bounds_backward_scan_to_max_reward_catchup_days() {
         .unwrap();
         let expected_floor = outbe_system_common::time::timestamp_to_date_key(
             outbe_system_common::time::date_key_to_utc_timestamp(yesterday).unwrap()
-                - u64::from(MAX_REWARD_CATCHUP_DAYS - 1) * SECONDS_PER_DAY,
+                - u64::from(MAX_CATCH_UP_DAYS - 1) * SECONDS_PER_DAY,
         );
         assert_eq!(active_utc_day(&ctx), expected_floor);
         account_parent(&ctx, 2);

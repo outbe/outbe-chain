@@ -257,7 +257,7 @@ pub const fn active_tasks() -> core::result::Result<[TaskSpec; 7], CycleError> {
             spec.isolates_panic = true;
             spec
         },
-        // Gated like `process_emission_day`, so the brief it writes and this start
+        // Gated like `process_emission_day`, so the day it starts and this auction start
         // land in the same slot.
         // A poll, not a calendar slot. The handler reads the block clock and
         // sweeps every scheduled day. So replaying a missed slot does nothing

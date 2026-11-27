@@ -2,6 +2,7 @@ use super::clearing::{clearing_run_gas, fetch_targets};
 use super::*;
 use outbe_emission::schema::emission_day_state;
 use outbe_primitives::error::PrecompileError;
+use outbe_system_common::emission::MAX_CATCH_UP_DAYS;
 use outbe_system_common::time::{
     date_key_to_utc_timestamp, next_date_key, timestamp_to_date_key, SECONDS_PER_DAY,
 };
@@ -24,9 +25,6 @@ pub(crate) fn advance_intex_auctions_at(storage: &StorageHandle<'_>, now: u64) -
     storage.with_checkpoint(|| poll_schedule(storage, now))
 }
 
-/// The days of the last `CATCH_UP_DAYS` that the Cycle catches up after a stop.
-const CATCH_UP_DAYS: u64 = 64;
-
 /// Takes each emission day, in order, whose auction start has come and whose step of 00:00
 /// after it ran. A day the Cycle no longer catches up has no auction.
 pub(crate) fn take_due_days(storage: &StorageHandle<'_>, genesis_day: u32, now: u64) -> Result<()> {
@@ -35,7 +33,7 @@ pub(crate) fn take_due_days(storage: &StorageHandle<'_>, genesis_day: u32, now: 
     let floor = timestamp_to_date_key(
         date_key_to_utc_timestamp(today)
             .map_err(crate::errors::date_step_error)?
-            .saturating_sub(CATCH_UP_DAYS * SECONDS_PER_DAY),
+            .saturating_sub(u64::from(MAX_CATCH_UP_DAYS) * SECONDS_PER_DAY),
     )
     .max(genesis_day);
     let stored = contract.next_auction_day.read()?;

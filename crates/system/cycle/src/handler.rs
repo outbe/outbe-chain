@@ -18,12 +18,9 @@ use outbe_system_common::time::{
 };
 
 use crate::{errors::CycleError, tasks::Readiness};
+use outbe_system_common::emission::MAX_CATCH_UP_DAYS;
 
-/// Maximum number of completed UTC days that `derive_active_utc_day` scans backward
-/// and catches up (one oldest unallocated day per hourly run, OIP-00343).
-pub const MAX_REWARD_CATCHUP_DAYS: u32 = 64;
-
-fn latest_allocated_day_through(
+fn latest_started_day_through(
     storage: StorageHandle<'_>,
     from_day: u32,
     start_date: u32,
@@ -47,7 +44,7 @@ fn latest_allocated_day_through(
 /// Derives the active UTC calendar day without a stored cursor (OIP-00343).
 ///
 /// Scans backward from `yesterday = previous_date_key(block_utc_day)` down to
-/// `max(start_date, yesterday - 63)` (`MAX_REWARD_CATCHUP_DAYS = 64`), stopping at the first
+/// `max(start_date, yesterday - 63)` (`MAX_CATCH_UP_DAYS = 64`), stopping at the first
 /// `EmissionDay` whose `state` is `PROCESSING` or `COMPLETED` (pre-linked future
 /// shells have `state == PENDING` and do not stop the scan).
 pub fn derive_active_utc_day(
@@ -68,23 +65,23 @@ pub fn derive_active_utc_day(
     }
     let yesterday = previous_date_key(block_utc_day).map_err(calendar_step_error)?;
     let yesterday_ts = date_key_to_utc_timestamp(yesterday).map_err(calendar_step_error)?;
-    let catchup_span_secs = u64::from(MAX_REWARD_CATCHUP_DAYS.saturating_sub(1))
-        * outbe_system_common::time::SECONDS_PER_DAY;
+    let catchup_span_secs =
+        u64::from(MAX_CATCH_UP_DAYS.saturating_sub(1)) * outbe_system_common::time::SECONDS_PER_DAY;
     let catchup_floor = timestamp_to_date_key(yesterday_ts.saturating_sub(catchup_span_secs));
     let floor_day = start_date.max(catchup_floor);
-    let d_allocated = latest_allocated_day_through(storage, yesterday, floor_day)?;
-    match d_allocated {
-        Some(allocated) => next_date_key(allocated).map_err(calendar_step_error),
+    let d_started = latest_started_day_through(storage, yesterday, floor_day)?;
+    match d_started {
+        Some(started) => next_date_key(started).map_err(calendar_step_error),
         None => Ok(floor_day),
     }
 }
 
-/// Returns the day that an hourly ProcessEmissionDay execution allocates, if any.
+/// Returns the day that an hourly ProcessEmissionDay execution starts, if any.
 ///
-/// If `active_utc_day < block_utc_day`, it is the single oldest unallocated UTC day
-/// `active_utc_day` (`E_next`), catching up at most one day per hourly run within `MAX_REWARD_CATCHUP_DAYS`.
+/// If `active_utc_day < block_utc_day`, it is the single oldest UTC day not started,
+/// `active_utc_day`, catching up at most one day per hourly run within `MAX_CATCH_UP_DAYS`.
 /// The executor shares this decision, so it derives command authority from the same calendar.
-pub fn day_to_allocate(active_utc_day: u32, block_utc_day: u32) -> Result<Option<u32>> {
+pub fn day_to_start(active_utc_day: u32, block_utc_day: u32) -> Result<Option<u32>> {
     if !is_valid_utc_day(active_utc_day) {
         return Err(CycleError::InvalidActiveUtcDay {
             active: active_utc_day,
@@ -322,7 +319,7 @@ fn record_failed_metadosis_fallback(ctx: &BlockRuntimeContext, day: u32) -> Resu
         .with_checkpoint(|| outbe_metadosis::commands::fail_metadosis(ctx, day))
 }
 
-/// Runs the hourly emission day entry point. Until the votes of the day to start are sealed, it
+/// Runs the hourly emission day entry point. Until the votes of the day to start are complete, it
 /// starts nothing, and with no Metadosis due it changes nothing and answers not ready.
 /// 1. The WWD step: seals each WWD whose offering ended, and once a UTC day opens the WWDs of the
 ///    day with the records of their emission days, in its own checkpoint.
@@ -351,7 +348,7 @@ fn process_emission_day_steps(ctx: &BlockRuntimeContext) -> Result<Readiness> {
         ctx.block.genesis_timestamp,
         ctx.block.timestamp,
     )?;
-    let day = day_to_allocate(active_utc_day, block_utc_day)?;
+    let day = day_to_start(active_utc_day, block_utc_day)?;
     let due_metadosis = match previous_date_key(active_utc_day) {
         Ok(latest_started) => metadosis_due(ctx, latest_started)?,
         Err(_) => None,

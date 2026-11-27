@@ -5,6 +5,10 @@
 //! `FLOOR_DAY_EMISSION`.
 
 use crate::units::SCALE_1E6_U256;
+
+/// The completed UTC days that the Cycle catches up after a stop, one day per hourly run.
+/// Older days are not started, and Desis takes no auction for them.
+pub const MAX_CATCH_UP_DAYS: u32 = 64;
 use alloy_primitives::{uint, U256};
 use std::sync::LazyLock;
 
