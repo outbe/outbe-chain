@@ -59,7 +59,6 @@ fn each_add_and_subtract_emits_its_code_from_the_promis_limit() {
     use crate::runtime::{LimitSource, LimitTarget};
 
     let sources = [
-        LimitSource::DayEmissionLimit,
         LimitSource::MetadosisLimit,
         LimitSource::DesisLimit,
         LimitSource::RewardLimit,
@@ -79,7 +78,7 @@ fn each_add_and_subtract_emits_its_code_from_the_promis_limit() {
         assert!(contract
             .subtract(LimitTarget::DesisLimit, U256::from(10u64))
             .unwrap());
-        assert_eq!(contract.promis_limit().unwrap(), U256::from(45u64));
+        assert_eq!(contract.promis_limit().unwrap(), U256::from(35u64));
     });
 
     let mut expected: Vec<_> = sources

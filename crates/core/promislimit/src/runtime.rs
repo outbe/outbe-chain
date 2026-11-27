@@ -22,7 +22,6 @@ sol! {
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LimitSource {
-    DayEmissionLimit = 11,
     MetadosisLimit = 12,
     DesisLimit = 13,
     RewardLimit = 14,
