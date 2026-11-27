@@ -65,7 +65,7 @@ contract IntexNFT1155UupsTest is Test {
         uint256 intexId = nft.issuedIntexId(OpenSeriesLib.seriesId(7));
         assertEq(nft.balanceOf(stranger, intexId), 3);
         assertEq(nft.totalSupply(intexId), 3);
-        assertEq(nft.targetRouter(), bridger);
+        assertEq(nft.intexAuctionTargetRouter(), bridger);
         assertEq(nft.owner(), admin);
     }
 

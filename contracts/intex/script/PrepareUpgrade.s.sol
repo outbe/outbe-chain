@@ -30,7 +30,7 @@ contract PrepareUpgrade is IntexScript, UpgradeProposal {
             IntexNFT1155 nft = IntexNFT1155(proxy);
             return address(
                 new IntexNFT1155(
-                    nft.targetRouter(),
+                    nft.intexAuctionTargetRouter(),
                     nft.intexNFT1155Router(),
                     nft.intexAuction(),
                     nft.intexFactory(),
@@ -44,12 +44,16 @@ contract PrepareUpgrade is IntexScript, UpgradeProposal {
         }
         if (index == 2) {
             EscrowAdapter escrow = EscrowAdapter(payable(proxy));
-            return address(new EscrowAdapter(escrow.intexAuction(), escrow.targetRouter()));
+            return address(new EscrowAdapter(escrow.intexAuction(), escrow.intexAuctionTargetRouter()));
         }
         if (index == 3) {
             IntexAuction auction = IntexAuction(proxy);
             return address(
-                new IntexAuction(auction.targetRouter(), address(auction.escrow()), address(auction.intexContract()))
+                new IntexAuction(
+                    auction.intexAuctionTargetRouter(),
+                    address(auction.escrowAdapter()),
+                    address(auction.intexNFT1155())
+                )
             );
         }
         IntexAuctionTargetRouter router = IntexAuctionTargetRouter(payable(proxy));
@@ -59,8 +63,8 @@ contract PrepareUpgrade is IntexScript, UpgradeProposal {
                 router.OUTBE_CHAIN_ID(),
                 address(router.erc20Router()),
                 address(router.intexAuction()),
-                address(router.intexContract()),
-                address(router.escrow()),
+                address(router.intexNFT1155()),
+                address(router.escrowAdapter()),
                 router.outbeIca()
             )
         );

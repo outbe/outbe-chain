@@ -19,7 +19,7 @@ library IntexCreate3 {
         address intexNFT1155Router;
         address escrowAdapter;
         address intexAuction;
-        address targetRouter;
+        address intexAuctionTargetRouter;
     }
 
     /// @dev The factory namespaces this with the caller, so the salt omits the deployer.
@@ -41,11 +41,11 @@ library IntexCreate3 {
             intexNFT1155Router: predict(factory, deployer, INTEX_NFT1155_ROUTER, version),
             escrowAdapter: predict(factory, deployer, ESCROW_ADAPTER, version),
             intexAuction: predict(factory, deployer, INTEX_AUCTION, version),
-            targetRouter: predict(factory, deployer, INTEX_AUCTION_TARGET_ROUTER, version)
+            intexAuctionTargetRouter: predict(factory, deployer, INTEX_AUCTION_TARGET_ROUTER, version)
         });
     }
 
     function proxies(Stack memory s) internal pure returns (address[5] memory) {
-        return [s.intexNFT1155, s.intexNFT1155Router, s.escrowAdapter, s.intexAuction, s.targetRouter];
+        return [s.intexNFT1155, s.intexNFT1155Router, s.escrowAdapter, s.intexAuction, s.intexAuctionTargetRouter];
     }
 }

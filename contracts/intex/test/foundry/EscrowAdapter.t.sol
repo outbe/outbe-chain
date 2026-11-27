@@ -77,13 +77,13 @@ contract EscrowAdapterTest is Test {
     function test_Constructor() public view {
         assertEq(escrow.owner(), admin);
         assertEq(escrow.intexAuction(), auction);
-        assertEq(escrow.targetRouter(), bridger);
+        assertEq(escrow.intexAuctionTargetRouter(), bridger);
     }
 
     function test_Constructor_ZeroLinks() public {
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroAddress.selector, "intexAuction"));
         new EscrowAdapter(address(0), bridger);
-        vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroAddress.selector, "targetRouter"));
+        vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroAddress.selector, "intexAuctionTargetRouter"));
         new EscrowAdapter(auction, address(0));
     }
 

@@ -232,7 +232,7 @@ interface IIntexAuction {
     // --- Links ---
 
     /// @notice IntexAuctionTargetRouter, the only caller of the stage entry points.
-    function targetRouter() external view returns (address);
+    function intexAuctionTargetRouter() external view returns (address);
 
     // --- Lifecycle ---
 

@@ -26,7 +26,7 @@ import {IntexMetadata} from "./libs/IntexMetadata.sol";
  */
 contract IntexNFT1155 is ERC1155Upgradeable, OwnableUpgradeable, UUPSUpgradeable, IIntexNFT1155 {
     /// @dev Opens and calls the series: IntexAuctionTargetRouter.
-    address private immutable TARGET_ROUTER;
+    address private immutable INTEX_AUCTION_TARGET_ROUTER;
     /// @dev Burns and mints the units that cross chains: IntexNFT1155Router.
     address private immutable INTEX_NFT1155_ROUTER;
     /// @dev Issues the units of a winner: IntexAuction.
@@ -62,16 +62,18 @@ contract IntexNFT1155 is ERC1155Upgradeable, OwnableUpgradeable, UUPSUpgradeable
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor(
-        address targetRouter_,
+        address intexAuctionTargetRouter_,
         address intexNFT1155Router_,
         address intexAuction_,
         address intexFactory_,
         address gemFactory_
     ) {
-        if (targetRouter_ == address(0)) revert ZeroAddress("targetRouter", targetRouter_);
+        if (intexAuctionTargetRouter_ == address(0)) {
+            revert ZeroAddress("intexAuctionTargetRouter", intexAuctionTargetRouter_);
+        }
         if (intexNFT1155Router_ == address(0)) revert ZeroAddress("intexNFT1155Router", intexNFT1155Router_);
         if (intexAuction_ == address(0)) revert ZeroAddress("intexAuction", intexAuction_);
-        TARGET_ROUTER = targetRouter_;
+        INTEX_AUCTION_TARGET_ROUTER = intexAuctionTargetRouter_;
         INTEX_NFT1155_ROUTER = intexNFT1155Router_;
         INTEX_AUCTION = intexAuction_;
         INTEX_FACTORY = intexFactory_;
@@ -98,8 +100,8 @@ contract IntexNFT1155 is ERC1155Upgradeable, OwnableUpgradeable, UUPSUpgradeable
     }
 
     /// @inheritdoc IIntexNFT1155
-    function targetRouter() external view returns (address) {
-        return TARGET_ROUTER;
+    function intexAuctionTargetRouter() external view returns (address) {
+        return INTEX_AUCTION_TARGET_ROUTER;
     }
 
     /// @inheritdoc IIntexNFT1155
@@ -142,7 +144,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, OwnableUpgradeable, UUPSUpgradeable
     }
 
     /// @inheritdoc IIntexNFT1155
-    function openSeries(IIntexNFT1155.OpenSeriesParams calldata params) external onlyFrom(TARGET_ROUTER) {
+    function openSeries(IIntexNFT1155.OpenSeriesParams calldata params) external onlyFrom(INTEX_AUCTION_TARGET_ROUTER) {
         IntexNFT1155Storage storage $ = _s();
         uint256 intexId = _issuedIntexId(params.seriesId);
 
@@ -246,7 +248,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, OwnableUpgradeable, UUPSUpgradeable
     }
 
     /// @inheritdoc IIntexNFT1155
-    function callSeries(bytes14 seriesId, uint64 calledAt) external onlyFrom(TARGET_ROUTER) {
+    function callSeries(bytes14 seriesId, uint64 calledAt) external onlyFrom(INTEX_AUCTION_TARGET_ROUTER) {
         uint256 intexId = _issuedIntexId(seriesId);
         IIntexNFT1155.SeriesData storage data = _s().seriesData[intexId];
         if (data.issuedAt == 0) {

@@ -28,7 +28,7 @@
         "internalType": "address"
       },
       {
-        "name": "escrow_",
+        "name": "escrowAdapter_",
         "type": "address",
         "internalType": "address"
       },
@@ -116,7 +116,7 @@
   },
   {
     "type": "function",
-    "name": "escrow",
+    "name": "escrowAdapter",
     "inputs": [],
     "outputs": [
       {
@@ -303,7 +303,7 @@
   },
   {
     "type": "function",
-    "name": "intexContract",
+    "name": "intexNFT1155",
     "inputs": [],
     "outputs": [
       {

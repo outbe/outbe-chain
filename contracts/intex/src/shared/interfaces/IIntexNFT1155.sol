@@ -248,7 +248,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     // --- Links ---
 
     /// @notice The IntexAuctionTargetRouter, the only caller of `openSeries` and `callSeries`.
-    function targetRouter() external view returns (address);
+    function intexAuctionTargetRouter() external view returns (address);
 
     /// @notice The IntexNFT1155Router, the only caller of `crosschainBurn` and `crosschainMint`.
     function intexNFT1155Router() external view returns (address);

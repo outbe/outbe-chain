@@ -21,6 +21,6 @@ contract PredictAddresses is IntexScript {
         console.log(IntexCreate3.INTEX_NFT1155_ROUTER, s.intexNFT1155Router);
         console.log(IntexCreate3.ESCROW_ADAPTER, s.escrowAdapter);
         console.log(IntexCreate3.INTEX_AUCTION, s.intexAuction);
-        console.log(IntexCreate3.INTEX_AUCTION_TARGET_ROUTER, s.targetRouter);
+        console.log(IntexCreate3.INTEX_AUCTION_TARGET_ROUTER, s.intexAuctionTargetRouter);
     }
 }

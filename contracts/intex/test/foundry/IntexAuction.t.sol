@@ -570,16 +570,16 @@ contract AuctionTest is Test {
 
     // --- Access Control Tests ---
     function test_Constructor_SetsTheLinks() public view {
-        assertEq(auction.targetRouter(), bridger);
-        assertEq(address(auction.escrow()), address(escrow));
-        assertEq(address(auction.intexContract()), INTEX);
+        assertEq(auction.intexAuctionTargetRouter(), bridger);
+        assertEq(address(auction.escrowAdapter()), address(escrow));
+        assertEq(address(auction.intexNFT1155()), INTEX);
         assertEq(auction.owner(), admin);
     }
 
     function test_Constructor_RejectsZeroLinks() public {
-        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroAddress.selector, "targetRouter"));
+        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroAddress.selector, "intexAuctionTargetRouter"));
         new IntexAuction(address(0), address(escrow), INTEX);
-        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroAddress.selector, "escrow"));
+        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroAddress.selector, "escrowAdapter"));
         new IntexAuction(bridger, address(0), INTEX);
         vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroAddress.selector, "intexNFT1155"));
         new IntexAuction(bridger, address(escrow), address(0));

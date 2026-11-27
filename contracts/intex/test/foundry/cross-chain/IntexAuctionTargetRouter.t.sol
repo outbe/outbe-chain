@@ -76,8 +76,8 @@ contract IntexAuctionTargetRouterTest is CrossChainTest {
 
     function test_wire() public view {
         assertEq(address(targetRouter.intexAuction()), address(auction));
-        assertEq(address(targetRouter.intexContract()), address(intex));
-        assertEq(address(targetRouter.escrow()), admin);
+        assertEq(address(targetRouter.intexNFT1155()), address(intex));
+        assertEq(address(targetRouter.escrowAdapter()), admin);
         assertEq(targetRouter.outbeIca(), outbeIca);
         assertEq(address(targetRouter.erc20Router()), DeployProxy.WCOEN_BRIDGE);
     }
@@ -99,7 +99,7 @@ contract IntexAuctionTargetRouterTest is CrossChainTest {
     }
 
     function test_constructor_revert_zero_escrowAdapter() public {
-        vm.expectRevert(abi.encodeWithSelector(IIntexAuctionTargetRouter.ZeroAddress.selector, "escrow"));
+        vm.expectRevert(abi.encodeWithSelector(IIntexAuctionTargetRouter.ZeroAddress.selector, "escrowAdapter"));
         _newRouter(address(auction), address(intex), address(0), outbeIca);
     }
 

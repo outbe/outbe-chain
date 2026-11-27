@@ -82,7 +82,7 @@ contract IntexNFT1155Test is Test {
 
     function test_InitialState() public view {
         assertEq(nft.owner(), admin);
-        assertEq(nft.targetRouter(), bridger);
+        assertEq(nft.intexAuctionTargetRouter(), bridger);
         assertEq(nft.intexNFT1155Router(), bridger);
         assertEq(nft.intexAuction(), bridger);
         assertEq(nft.intexFactory(), address(this));
@@ -90,7 +90,9 @@ contract IntexNFT1155Test is Test {
     }
 
     function test_Constructor_RejectsZeroLinksButTheFactories() public {
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.ZeroAddress.selector, "targetRouter", address(0)));
+        vm.expectRevert(
+            abi.encodeWithSelector(IIntexNFT1155.ZeroAddress.selector, "intexAuctionTargetRouter", address(0))
+        );
         new IntexNFT1155(address(0), bridger, bridger, address(0), address(0));
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.ZeroAddress.selector, "intexNFT1155Router", address(0)));
         new IntexNFT1155(bridger, address(0), bridger, address(0), address(0));

@@ -71,8 +71,8 @@ contract RoutersUupsTest is CrossChainTest {
         bytes32 implSlot = vm.load(address(target), ERC1967Utils.IMPLEMENTATION_SLOT);
         assertEq(address(uint160(uint256(implSlot))), address(newImpl));
         assertEq(address(target.intexAuction()), auction);
-        assertEq(address(target.intexContract()), intex);
-        assertEq(address(target.escrow()), escrow);
+        assertEq(address(target.intexNFT1155()), intex);
+        assertEq(address(target.escrowAdapter()), escrow);
         assertEq(target.outbeIca(), ica);
         assertEq(target.owner(), address(this));
         assertEq(address(target.BRIDGE()), address(bridge));

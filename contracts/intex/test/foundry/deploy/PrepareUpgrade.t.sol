@@ -65,11 +65,11 @@ contract PrepareUpgradeTest is Test {
     function test_GovernanceOwned_PrintsOnePayloadWithTheLiveLinks() public {
         _handOver();
         script.setSourceCommit("abc123");
-        address oldImpl = _implementation(s.targetRouter);
+        address oldImpl = _implementation(s.intexAuctionTargetRouter);
 
         script.prepareChain(PK);
 
-        assertEq(_implementation(s.targetRouter), oldImpl, "nothing upgraded");
+        assertEq(_implementation(s.intexAuctionTargetRouter), oldImpl, "nothing upgraded");
         string memory payload = script.proposal();
         assertEq(vm.parseJsonString(payload, ".operation"), "upgradeContracts");
         assertTrue(vm.keyExistsJson(payload, ".upgrades[4]"), "five upgrades");
@@ -98,9 +98,9 @@ contract PrepareUpgradeTest is Test {
 
     function test_RevertWhen_OwnershipIsMixed() public {
         vm.prank(vm.addr(PK));
-        Ownable(s.targetRouter).transferOwnership(GOVERNANCE);
+        Ownable(s.intexAuctionTargetRouter).transferOwnership(GOVERNANCE);
 
-        vm.expectRevert(abi.encodeWithSelector(UpgradeProposal.MixedOwnership.selector, s.targetRouter));
+        vm.expectRevert(abi.encodeWithSelector(UpgradeProposal.MixedOwnership.selector, s.intexAuctionTargetRouter));
         script.prepareChain(PK);
     }
 

@@ -84,9 +84,9 @@ contract IntexAuctionUupsTest is Test {
         bytes32 implSlot = vm.load(address(auction), ERC1967Utils.IMPLEMENTATION_SLOT);
         assertEq(address(uint160(uint256(implSlot))), address(newImpl));
         assertEq(auction.committedIntexAuctionBidsByHash(20260612, bidder), keccak256("commit"));
-        assertEq(address(auction.escrow()), escrow);
+        assertEq(address(auction.escrowAdapter()), escrow);
         assertEq(uint8(auction.auctionStage(20260612)), uint8(IIntexAuction.AuctionStage.CommittingBids));
-        assertEq(auction.targetRouter(), bridger);
+        assertEq(auction.intexAuctionTargetRouter(), bridger);
         assertEq(auction.owner(), admin);
     }
 }

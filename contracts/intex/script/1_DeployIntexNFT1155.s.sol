@@ -34,7 +34,7 @@ contract DeployIntexNFT1155 is IntexScript {
             s.intexNFT1155,
             address(
                 new IntexNFT1155(
-                    s.targetRouter,
+                    s.intexAuctionTargetRouter,
                     s.intexNFT1155Router,
                     s.intexAuction,
                     outbe ? INTEX_FACTORY : address(0),

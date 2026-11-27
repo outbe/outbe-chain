@@ -79,14 +79,14 @@ contract DeployAllTest is Test {
         IntexCreate3.Stack memory s = script.stack(deployer);
 
         IntexNFT1155 nft = IntexNFT1155(s.intexNFT1155);
-        assertEq(nft.targetRouter(), s.targetRouter);
+        assertEq(nft.intexAuctionTargetRouter(), s.intexAuctionTargetRouter);
         assertEq(nft.intexNFT1155Router(), s.intexNFT1155Router);
         assertEq(nft.intexAuction(), s.intexAuction);
         assertEq(nft.intexFactory(), address(0), "nothing burns the settled units off Outbe");
         assertEq(nft.gemFactory(), address(0), "no Gem Factory off Outbe");
-        assertEq(EscrowAdapter(payable(s.escrowAdapter)).targetRouter(), s.targetRouter);
-        assertEq(address(IntexAuction(s.intexAuction).escrow()), s.escrowAdapter);
-        assertEq(IntexAuctionTargetRouter(payable(s.targetRouter)).outbeIca(), OUTBE_ICA);
+        assertEq(EscrowAdapter(payable(s.escrowAdapter)).intexAuctionTargetRouter(), s.intexAuctionTargetRouter);
+        assertEq(address(IntexAuction(s.intexAuction).escrowAdapter()), s.escrowAdapter);
+        assertEq(IntexAuctionTargetRouter(payable(s.intexAuctionTargetRouter)).outbeIca(), OUTBE_ICA);
     }
 
     function test_DeployAll_OnOutbeTheFactoriesBurnTheUnits() public {
@@ -149,7 +149,7 @@ contract DeployAllTest is Test {
         c.transport.outbeIca = address(0xBAD);
 
         IntexCreate3.Stack memory s = script.stack(deployer);
-        vm.expectRevert(abi.encodeWithSelector(DeployAll.LinkMismatch.selector, s.targetRouter, "outbeIca"));
+        vm.expectRevert(abi.encodeWithSelector(DeployAll.LinkMismatch.selector, s.intexAuctionTargetRouter, "outbeIca"));
         script.checkLinks(s, c);
     }
 

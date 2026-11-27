@@ -75,7 +75,7 @@ contract DeployAll is
         console.log("IntexNFT1155Router:", s.intexNFT1155Router);
         console.log("EscrowAdapter:", s.escrowAdapter);
         console.log("IntexAuction:", s.intexAuction);
-        console.log("IntexAuctionTargetRouter:", s.targetRouter);
+        console.log("IntexAuctionTargetRouter:", s.intexAuctionTargetRouter);
         console.log("=== DeployAll complete ===");
     }
 
@@ -101,7 +101,7 @@ contract DeployAll is
     /// @dev Reverts unless every proxy of `s` holds the links `c` asks for.
     function checkLinks(IntexCreate3.Stack memory s, Config memory c) public view {
         IntexNFT1155 nft = IntexNFT1155(s.intexNFT1155);
-        _check(s.intexNFT1155, nft.targetRouter() == s.targetRouter, "targetRouter");
+        _check(s.intexNFT1155, nft.intexAuctionTargetRouter() == s.intexAuctionTargetRouter, "intexAuctionTargetRouter");
         _check(s.intexNFT1155, nft.intexNFT1155Router() == s.intexNFT1155Router, "intexNFT1155Router");
         _check(s.intexNFT1155, nft.intexAuction() == s.intexAuction, "intexAuction");
         _check(s.intexNFT1155, nft.intexFactory() == (c.outbe ? INTEX_FACTORY : address(0)), "intexFactory");
@@ -124,23 +124,27 @@ contract DeployAll is
 
         EscrowAdapter escrow = EscrowAdapter(payable(s.escrowAdapter));
         _check(s.escrowAdapter, escrow.intexAuction() == s.intexAuction, "intexAuction");
-        _check(s.escrowAdapter, escrow.targetRouter() == s.targetRouter, "targetRouter");
+        _check(
+            s.escrowAdapter, escrow.intexAuctionTargetRouter() == s.intexAuctionTargetRouter, "intexAuctionTargetRouter"
+        );
         _check(s.escrowAdapter, address(escrow.compact()) == c.compact, "compact");
         _check(s.escrowAdapter, address(escrow.intexAuctionAsset()) == c.wcoen, "intexAuctionAsset");
 
         IntexAuction auction = IntexAuction(s.intexAuction);
-        _check(s.intexAuction, auction.targetRouter() == s.targetRouter, "targetRouter");
-        _check(s.intexAuction, address(auction.escrow()) == s.escrowAdapter, "escrow");
-        _check(s.intexAuction, address(auction.intexContract()) == s.intexNFT1155, "intexContract");
+        _check(
+            s.intexAuction, auction.intexAuctionTargetRouter() == s.intexAuctionTargetRouter, "intexAuctionTargetRouter"
+        );
+        _check(s.intexAuction, address(auction.escrowAdapter()) == s.escrowAdapter, "escrowAdapter");
+        _check(s.intexAuction, address(auction.intexNFT1155()) == s.intexNFT1155, "intexNFT1155");
 
-        IntexAuctionTargetRouter router = IntexAuctionTargetRouter(payable(s.targetRouter));
-        _check(s.targetRouter, address(router.intexAuction()) == s.intexAuction, "intexAuction");
-        _check(s.targetRouter, address(router.intexContract()) == s.intexNFT1155, "intexContract");
-        _check(s.targetRouter, address(router.escrow()) == s.escrowAdapter, "escrow");
-        _check(s.targetRouter, router.outbeIca() == c.transport.outbeIca, "outbeIca");
-        _check(s.targetRouter, address(router.erc20Router()) == c.transport.wcoenBridge, "erc20Router");
-        _check(s.targetRouter, address(router.BRIDGE()) == c.transport.bridge, "BRIDGE");
-        _check(s.targetRouter, router.OUTBE_CHAIN_ID() == c.transport.outbeChainId, "OUTBE_CHAIN_ID");
+        IntexAuctionTargetRouter router = IntexAuctionTargetRouter(payable(s.intexAuctionTargetRouter));
+        _check(s.intexAuctionTargetRouter, address(router.intexAuction()) == s.intexAuction, "intexAuction");
+        _check(s.intexAuctionTargetRouter, address(router.intexNFT1155()) == s.intexNFT1155, "intexNFT1155");
+        _check(s.intexAuctionTargetRouter, address(router.escrowAdapter()) == s.escrowAdapter, "escrowAdapter");
+        _check(s.intexAuctionTargetRouter, router.outbeIca() == c.transport.outbeIca, "outbeIca");
+        _check(s.intexAuctionTargetRouter, address(router.erc20Router()) == c.transport.wcoenBridge, "erc20Router");
+        _check(s.intexAuctionTargetRouter, address(router.BRIDGE()) == c.transport.bridge, "BRIDGE");
+        _check(s.intexAuctionTargetRouter, router.OUTBE_CHAIN_ID() == c.transport.outbeChainId, "OUTBE_CHAIN_ID");
     }
 
     function _check(address proxy, bool holds, string memory link) private pure {

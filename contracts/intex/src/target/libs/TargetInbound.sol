@@ -211,8 +211,8 @@ library TargetInbound {
             return;
         }
 
-        (, bool finalized,) = links.escrow.auctionStatus(emissionDay);
-        if (!finalized) links.escrow.chargeIntexAuctionAsset(emissionDay, new address[](0), 0, 0, 0, 0, true);
+        (, bool finalized,) = links.escrowAdapter.auctionStatus(emissionDay);
+        if (!finalized) links.escrowAdapter.chargeIntexAuctionAsset(emissionDay, new address[](0), 0, 0, 0, 0, true);
     }
 
     /// @dev Whether the auction this chain holds for `emissionDay` was opened under the START's terms. The reveal
@@ -309,7 +309,7 @@ library TargetInbound {
                 _ignoreMessage(BridgeMsgCodec.MSG_INTEX_SERIES, emissionDay, InboundReason.INVALID);
                 return;
             }
-            known[s] = links.intexContract.seriesExists(series[s].seriesId);
+            known[s] = links.intexNFT1155.seriesExists(series[s].seriesId);
             bool conflict = known[s] && !_sameSeries(links, series[s]);
             for (uint256 j = 0; !conflict && j < s; j++) {
                 if (series[j].seriesId != series[s].seriesId) continue;
@@ -345,7 +345,7 @@ library TargetInbound {
     ) private {
         // Create-if-absent: any of a day's chunks may be the first to name a series.
         if (!seriesKnown) {
-            links.intexContract
+            links.intexNFT1155
                 .openSeries(
                     IIntexNFT1155.OpenSeriesParams({
                         seriesId: payload.seriesId,
@@ -389,7 +389,7 @@ library TargetInbound {
         view
         returns (bool)
     {
-        IIntexNFT1155.SeriesData memory d = links.intexContract.getIntexSeries(payload.seriesId);
+        IIntexNFT1155.SeriesData memory d = links.intexNFT1155.getIntexSeries(payload.seriesId);
         return d.emissionDay == payload.emissionDay && d.issuanceCurrency == payload.issuanceCurrency
             && d.referenceCurrency == payload.referenceCurrency && d.issuedUnits == payload.issuedUnits
             && d.promisLoadMinor == payload.promisLoadMinor && d.entryPriceMinor == payload.entryPriceMinor
@@ -436,7 +436,7 @@ library TargetInbound {
             _ignoreMessage(BridgeMsgCodec.MSG_INTEX_AUCTION_WINNERS, emissionDay, InboundReason.CONFLICT);
             return;
         }
-        (, bool finalized,) = links.escrow.auctionStatus(emissionDay);
+        (, bool finalized,) = links.escrowAdapter.auctionStatus(emissionDay);
         if (finalized || _failed(links, emissionDay)) {
             _ignoreMessage(BridgeMsgCodec.MSG_INTEX_AUCTION_WINNERS, emissionDay, InboundReason.OBSOLETE);
             return;
@@ -448,7 +448,7 @@ library TargetInbound {
         // `>=` rather than `==`: an overshoot would otherwise never close the day in the escrow.
         bool completesDay = seen >= totalPages;
 
-        uint128 totalPaid = links.escrow
+        uint128 totalPaid = links.escrowAdapter
             .chargeIntexAuctionAsset(emissionDay, winners, partialIndex, partialWon, clearingRate, basis, completesDay);
         $.intexAuctionReturnState[emissionDay] = IntexAuctionReturnState({totalPages: totalPages, pagesSeen: seen});
         // Each chunk sends its own payments, so a chunk that never lands holds back no other.
@@ -491,7 +491,7 @@ library TargetInbound {
         bytes14 seriesId,
         uint64 calledAt
     ) private {
-        if (!links.intexContract.seriesExists(seriesId)) {
+        if (!links.intexNFT1155.seriesExists(seriesId)) {
             _slotIntexSeriesCallNotice($, srcChainId, seriesId, calledAt, "");
             return;
         }

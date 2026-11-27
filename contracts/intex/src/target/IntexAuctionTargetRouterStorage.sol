@@ -28,8 +28,8 @@ struct IntexAuctionReturnState {
 /// @notice The contracts the router drives, implementation immutables passed to its inbound handlers.
 struct TargetLinks {
     IIntexAuction intexAuction;
-    IIntexNFT1155 intexContract;
-    IEscrowAdapter escrow;
+    IIntexNFT1155 intexNFT1155;
+    IEscrowAdapter escrowAdapter;
 }
 
 /// @custom:storage-location erc7201:outbe.intex.IntexAuctionTargetRouter

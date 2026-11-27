@@ -29,9 +29,9 @@ contract IntexAuction is
     IIntexAuction
 {
     /// @dev Drives the stages of each day: IntexAuctionTargetRouter.
-    address private immutable TARGET_ROUTER;
+    address private immutable INTEX_AUCTION_TARGET_ROUTER;
     /// @dev Holds the locks and bonds of the bidders: EscrowAdapter.
-    IEscrowAdapter private immutable ESCROW;
+    IEscrowAdapter private immutable ESCROW_ADAPTER;
     /// @dev The collection winners' units are issued on: IntexNFT1155.
     IIntexNFT1155 private immutable INTEX_NFT1155;
 
@@ -80,12 +80,12 @@ contract IntexAuction is
     }
 
     /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor(address targetRouter_, address escrow_, address intexNFT1155_) {
-        if (targetRouter_ == address(0)) revert ZeroAddress("targetRouter");
-        if (escrow_ == address(0)) revert ZeroAddress("escrow");
+    constructor(address intexAuctionTargetRouter_, address escrowAdapter_, address intexNFT1155_) {
+        if (intexAuctionTargetRouter_ == address(0)) revert ZeroAddress("intexAuctionTargetRouter");
+        if (escrowAdapter_ == address(0)) revert ZeroAddress("escrowAdapter");
         if (intexNFT1155_ == address(0)) revert ZeroAddress("intexNFT1155");
-        TARGET_ROUTER = targetRouter_;
-        ESCROW = IEscrowAdapter(escrow_);
+        INTEX_AUCTION_TARGET_ROUTER = intexAuctionTargetRouter_;
+        ESCROW_ADAPTER = IEscrowAdapter(escrowAdapter_);
         INTEX_NFT1155 = IIntexNFT1155(intexNFT1155_);
         _disableInitializers();
     }
@@ -104,20 +104,20 @@ contract IntexAuction is
     function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
 
     modifier onlyTargetRouter() {
-        if (msg.sender != TARGET_ROUTER) revert UnauthorizedCaller(msg.sender);
+        if (msg.sender != INTEX_AUCTION_TARGET_ROUTER) revert UnauthorizedCaller(msg.sender);
         _;
     }
 
     /// @inheritdoc IIntexAuction
-    function targetRouter() external view returns (address) {
-        return TARGET_ROUTER;
+    function intexAuctionTargetRouter() external view returns (address) {
+        return INTEX_AUCTION_TARGET_ROUTER;
     }
 
     // --- Storage getters ---
     /// @notice Escrow contract for bid processing.
     /// @return The wired escrow adapter.
-    function escrow() external view returns (IEscrowAdapter) {
-        return ESCROW;
+    function escrowAdapter() external view returns (IEscrowAdapter) {
+        return ESCROW_ADAPTER;
     }
 
     /// @notice Live bid counters tracked while the auction runs.
@@ -162,7 +162,7 @@ contract IntexAuction is
 
     /// @notice Intex collection winners' units are issued on.
     /// @return The wired collection.
-    function intexContract() external view returns (IIntexNFT1155) {
+    function intexNFT1155() external view returns (IIntexNFT1155) {
         return INTEX_NFT1155;
     }
 
@@ -318,7 +318,7 @@ contract IntexAuction is
         // lock revert reverts the whole tx. Requires prior payment-token approval on the escrow.
         uint128 bond = a.params.bidBondMinor;
         if (bond > 0) {
-            ESCROW.lockIntexAuctionBidBond(emissionDay, msg.sender, bond);
+            ESCROW_ADAPTER.lockIntexAuctionBidBond(emissionDay, msg.sender, bond);
         }
     }
 
@@ -340,7 +340,7 @@ contract IntexAuction is
 
         // Interactions: an un-committed bid owes no bond. Return it immediately.
         if (a.params.bidBondMinor > 0) {
-            ESCROW.unlockIntexAuctionBidBond(emissionDay, msg.sender, BOND_UNLOCK_REVEAL_OR_CANCEL);
+            ESCROW_ADAPTER.unlockIntexAuctionBidBond(emissionDay, msg.sender, BOND_UNLOCK_REVEAL_OR_CANCEL);
         }
     }
 
@@ -405,9 +405,9 @@ contract IntexAuction is
         // Interactions
         // Return the commit bond first so it can fund the bid escrow in the same transaction.
         if (a.params.bidBondMinor > 0) {
-            ESCROW.unlockIntexAuctionBidBond(emissionDay, msg.sender, BOND_UNLOCK_REVEAL_OR_CANCEL);
+            ESCROW_ADAPTER.unlockIntexAuctionBidBond(emissionDay, msg.sender, BOND_UNLOCK_REVEAL_OR_CANCEL);
         }
-        ESCROW.lockIntexAuctionAsset(emissionDay, msg.sender, a.params.promisLoadMinor, bidRate, quantity);
+        ESCROW_ADAPTER.lockIntexAuctionAsset(emissionDay, msg.sender, a.params.promisLoadMinor, bidRate, quantity);
     }
 
     /// @inheritdoc IIntexAuction
@@ -415,7 +415,7 @@ contract IntexAuction is
         IntexAuctionStorage storage $ = _s();
         uint256 position = $.revealedBidIndex[emissionDay][bidder];
         if (position == 0) revert IntexAuctionBidNotFound();
-        (bool closed, bool finalized) = ESCROW.returnIntexAuctionAsset(emissionDay, bidder);
+        (bool closed, bool finalized) = ESCROW_ADAPTER.returnIntexAuctionAsset(emissionDay, bidder);
         if (closed && finalized) {
             delete $.revealedBids[emissionDay][position - 1];
             delete $.revealedBidIndex[emissionDay][bidder];
@@ -438,7 +438,7 @@ contract IntexAuction is
         delete $.revealedBids[emissionDay][position - 1];
         delete $.revealedBidIndex[emissionDay][bidder];
 
-        uint16 units = ESCROW.redeemWinNote(emissionDay, bidder);
+        uint16 units = ESCROW_ADAPTER.redeemWinNote(emissionDay, bidder);
         // A forfeited series took the units with it.
         if (intex.getIntexSeries(seriesId).state == IIntexNFT1155.IntexState.Forfeited) {
             emit IntexAuctionWinNoteExpired(emissionDay, bidder, seriesId);
@@ -463,10 +463,10 @@ contract IntexAuction is
                 revert IntexAuctionBidBondNotYetUnlockable(unlockableAt, uint32(block.timestamp));
             }
             // Pays the stored bidder. Reverts IntexAuctionBidBondNotFound in the escrow when no bond is live.
-            ESCROW.unlockIntexAuctionBidBond(emissionDay, bidder, BOND_UNLOCK_NO_REVEAL);
+            ESCROW_ADAPTER.unlockIntexAuctionBidBond(emissionDay, bidder, BOND_UNLOCK_NO_REVEAL);
             return;
         }
-        ESCROW.unlockIntexAuctionBidBond(emissionDay, bidder, BOND_UNLOCK_REVEAL_OR_CANCEL);
+        ESCROW_ADAPTER.unlockIntexAuctionBidBond(emissionDay, bidder, BOND_UNLOCK_REVEAL_OR_CANCEL);
     }
 
     /// @dev Reverts unless the day carries a price for `isoCode`.

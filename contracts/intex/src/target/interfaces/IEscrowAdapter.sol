@@ -264,7 +264,7 @@ interface IEscrowAdapter {
 
     /// @notice IntexAuctionTargetRouter: the only caller of `chargeIntexAuctionAsset` and the
     ///         recipient of the proceeds it charges.
-    function targetRouter() external view returns (address);
+    function intexAuctionTargetRouter() external view returns (address);
 
     // --- Bridge Finalization ---
 

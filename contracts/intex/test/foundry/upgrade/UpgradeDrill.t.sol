@@ -72,7 +72,7 @@ contract UpgradeDrillTest is CrossChainTest {
         IIntexNFT1155.SeriesData memory data = nft.getIntexSeries(OpenSeriesLib.seriesId(7));
         assertGt(data.issuedAt, 0, "series record lost");
         assertEq(uint8(data.state), uint8(IIntexNFT1155.IntexState.Issued), "state lost");
-        assertEq(nft.targetRouter(), admin, "link lost");
+        assertEq(nft.intexAuctionTargetRouter(), admin, "link lost");
         assertEq(nft.owner(), admin, "owner lost");
     }
 
@@ -133,7 +133,7 @@ contract UpgradeDrillTest is CrossChainTest {
         auction.upgradeToAndCall(address(newImpl), "");
 
         _assertUpgraded(address(auction), address(newImpl));
-        assertEq(address(auction.escrow()), escrow, "escrow wiring lost");
+        assertEq(address(auction.escrowAdapter()), escrow, "escrow wiring lost");
         assertEq(auction.committedIntexAuctionBidsByHash(20260614, bidder), keccak256("commit"), "commit lost");
         assertEq(uint8(auction.auctionStage(20260614)), uint8(IIntexAuction.AuctionStage.CommittingBids), "stage lost");
     }
@@ -175,7 +175,7 @@ contract UpgradeDrillTest is CrossChainTest {
 
         _assertUpgraded(address(target), address(newImpl));
         assertEq(address(target.intexAuction()), auction, "auction wiring lost");
-        assertEq(address(target.escrow()), escrow, "escrow wiring lost");
+        assertEq(address(target.escrowAdapter()), escrow, "escrow wiring lost");
         assertEq(target.outbeIca(), ica, "ICA lost");
         assertEq(target.owner(), admin, "owner lost");
         assertEq(address(target.erc20Router()), erc20Router, "erc20Router immutable lost");

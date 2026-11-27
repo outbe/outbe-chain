@@ -70,7 +70,7 @@ contract EscrowAdapterUupsTest is Test {
         bytes32 implSlot = vm.load(address(escrow), ERC1967Utils.IMPLEMENTATION_SLOT);
         assertEq(address(uint160(uint256(implSlot))), address(newImpl));
         assertEq(escrow.intexAuction(), auction);
-        assertEq(escrow.targetRouter(), bridger);
+        assertEq(escrow.intexAuctionTargetRouter(), bridger);
         assertEq(address(escrow.compact()), address(compactMock));
         assertEq(address(escrow.intexAuctionAsset()), address(token));
         assertEq(escrow.allocatorId(), allocatorIdBefore);

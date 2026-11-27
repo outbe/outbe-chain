@@ -30,7 +30,7 @@ contract DeployEscrowAdapter is IntexScript {
         _deployProxy(
             IntexCreate3.ESCROW_ADAPTER,
             s.escrowAdapter,
-            address(new EscrowAdapter(s.intexAuction, s.targetRouter)),
+            address(new EscrowAdapter(s.intexAuction, s.intexAuctionTargetRouter)),
             abi.encodeCall(EscrowAdapter.initialize, (deployer, compact, asset))
         );
     }

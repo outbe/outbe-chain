@@ -30,7 +30,7 @@ contract DeployIntexAuctionTargetRouter is IntexScript {
         deployIntexAuctionTargetRouter(vm.addr(pk), s, t);
         vm.stopBroadcast();
 
-        console.log("IntexAuctionTargetRouter:", s.targetRouter);
+        console.log("IntexAuctionTargetRouter:", s.intexAuctionTargetRouter);
         console.log("  Interchain Account of Outbe:", t.outbeIca);
     }
 
@@ -46,10 +46,10 @@ contract DeployIntexAuctionTargetRouter is IntexScript {
 
     /// @dev Requires an active broadcast from `deployer`.
     function deployIntexAuctionTargetRouter(address deployer, IntexCreate3.Stack memory s, Transport memory t) public {
-        if (s.targetRouter.code.length != 0) return;
+        if (s.intexAuctionTargetRouter.code.length != 0) return;
         _deployProxy(
             IntexCreate3.INTEX_AUCTION_TARGET_ROUTER,
-            s.targetRouter,
+            s.intexAuctionTargetRouter,
             address(
                 new IntexAuctionTargetRouter(
                     t.bridge, t.outbeChainId, t.wcoenBridge, s.intexAuction, s.intexNFT1155, s.escrowAdapter, t.outbeIca

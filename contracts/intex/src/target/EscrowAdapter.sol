@@ -54,7 +54,7 @@ contract EscrowAdapter is OwnableUpgradeable, ReentrancyGuardTransient, UUPSUpgr
     /// @dev Locks, bonds and redeems for its bidders: IntexAuction.
     address private immutable INTEX_AUCTION;
     /// @dev Charges the winners and takes the proceeds: IntexAuctionTargetRouter.
-    address private immutable TARGET_ROUTER;
+    address private immutable INTEX_AUCTION_TARGET_ROUTER;
 
     /// @custom:storage-location erc7201:outbe.intex.EscrowAdapter
     struct EscrowAdapterStorage {
@@ -94,11 +94,11 @@ contract EscrowAdapter is OwnableUpgradeable, ReentrancyGuardTransient, UUPSUpgr
     }
 
     /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor(address intexAuction_, address targetRouter_) {
+    constructor(address intexAuction_, address intexAuctionTargetRouter_) {
         if (intexAuction_ == address(0)) revert ZeroAddress("intexAuction");
-        if (targetRouter_ == address(0)) revert ZeroAddress("targetRouter");
+        if (intexAuctionTargetRouter_ == address(0)) revert ZeroAddress("intexAuctionTargetRouter");
         INTEX_AUCTION = intexAuction_;
-        TARGET_ROUTER = targetRouter_;
+        INTEX_AUCTION_TARGET_ROUTER = intexAuctionTargetRouter_;
         _disableInitializers();
     }
 
@@ -129,8 +129,8 @@ contract EscrowAdapter is OwnableUpgradeable, ReentrancyGuardTransient, UUPSUpgr
     }
 
     /// @inheritdoc IEscrowAdapter
-    function targetRouter() external view override returns (address) {
-        return TARGET_ROUTER;
+    function intexAuctionTargetRouter() external view override returns (address) {
+        return INTEX_AUCTION_TARGET_ROUTER;
     }
 
     /// @notice The Compact contract address.
@@ -352,7 +352,7 @@ contract EscrowAdapter is OwnableUpgradeable, ReentrancyGuardTransient, UUPSUpgr
         uint64 clearingRate,
         uint128 basis,
         bool completesDay
-    ) external override onlyFrom(TARGET_ROUTER) nonReentrant returns (uint128 totalPaid) {
+    ) external override onlyFrom(INTEX_AUCTION_TARGET_ROUTER) nonReentrant returns (uint128 totalPaid) {
         EscrowAdapterStorage storage $ = _s();
         AuctionEscrowState storage state = $.auctionEscrowState[emissionDay];
         if (state.finalized) revert AlreadyFinalized();
@@ -411,7 +411,7 @@ contract EscrowAdapter is OwnableUpgradeable, ReentrancyGuardTransient, UUPSUpgr
         if (totalPaid > 0) {
             uint8 version = state.assetVersion;
             _withdrawFromCompact(version, totalPaid);
-            _tokenOf(version).safeTransfer(TARGET_ROUTER, totalPaid);
+            _tokenOf(version).safeTransfer(INTEX_AUCTION_TARGET_ROUTER, totalPaid);
         }
     }
 

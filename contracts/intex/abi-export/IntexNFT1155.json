@@ -3,7 +3,7 @@
     "type": "constructor",
     "inputs": [
       {
-        "name": "targetRouter_",
+        "name": "intexAuctionTargetRouter_",
         "type": "address",
         "internalType": "address"
       },
@@ -490,6 +490,19 @@
   },
   {
     "type": "function",
+    "name": "intexAuctionTargetRouter",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "intexFactory",
     "inputs": [],
     "outputs": [
@@ -942,19 +955,6 @@
       }
     ],
     "stateMutability": "pure"
-  },
-  {
-    "type": "function",
-    "name": "targetRouter",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
   },
   {
     "type": "function",

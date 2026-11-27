@@ -64,7 +64,7 @@ contract IntexAuctionTargetRouter is
     /// @dev The collection the series messages apply to.
     IIntexNFT1155 private immutable INTEX_NFT1155;
     /// @dev The escrow the winners pages charge.
-    IEscrowAdapter private immutable ESCROW;
+    IEscrowAdapter private immutable ESCROW_ADAPTER;
     /// @dev The Interchain Account of Outbe on this chain, the only caller of `receiveFromOutbe`.
     address private immutable OUTBE_ICA;
 
@@ -84,19 +84,19 @@ contract IntexAuctionTargetRouter is
         address erc20Router_,
         address intexAuction_,
         address intexNFT1155_,
-        address escrow_,
+        address escrowAdapter_,
         address outbeIca_
     ) ERC7786Sender(bridge_) {
         if (erc20Router_ == address(0)) revert ZeroAddress("erc20Router");
         if (intexAuction_ == address(0)) revert ZeroAddress("intexAuction");
         if (intexNFT1155_ == address(0)) revert ZeroAddress("intexNFT1155");
-        if (escrow_ == address(0)) revert ZeroAddress("escrow");
+        if (escrowAdapter_ == address(0)) revert ZeroAddress("escrowAdapter");
         if (outbeIca_ == address(0)) revert ZeroAddress("outbeIca");
         OUTBE_CHAIN_ID = outbeChainId_;
         ERC20_ROUTER = IERC7786TokenBridge(erc20Router_);
         INTEX_AUCTION = IIntexAuction(intexAuction_);
         INTEX_NFT1155 = IIntexNFT1155(intexNFT1155_);
-        ESCROW = IEscrowAdapter(escrow_);
+        ESCROW_ADAPTER = IEscrowAdapter(escrowAdapter_);
         OUTBE_ICA = outbeIca_;
         _disableInitializers();
     }
@@ -119,13 +119,13 @@ contract IntexAuctionTargetRouter is
     }
 
     /// @notice IntexNFT1155 contract that issuance and mark-called messages apply to.
-    function intexContract() external view returns (IIntexNFT1155) {
+    function intexNFT1155() external view returns (IIntexNFT1155) {
         return INTEX_NFT1155;
     }
 
     /// @notice EscrowAdapter contract that refund instructions are forwarded to for finalization.
-    function escrow() external view returns (IEscrowAdapter) {
-        return ESCROW;
+    function escrowAdapter() external view returns (IEscrowAdapter) {
+        return ESCROW_ADAPTER;
     }
 
     /// @notice The ERC20Router of WCOEN that carries the proceeds to Outbe.
@@ -195,7 +195,7 @@ contract IntexAuctionTargetRouter is
     // --- Receive ---
     /// @inheritdoc IIntexAuctionTargetRouter
     /// @dev nonReentrant guards against re-entry through downstream
-    ///      `intexAuction`/`escrow`/`intexContract` calls.
+    ///      `intexAuction`/`escrowAdapter`/`intexNFT1155` calls.
     function receiveFromOutbe(bytes calldata message) external nonReentrant {
         if (msg.sender != OUTBE_ICA) revert UnauthorizedCaller(msg.sender);
         _dispatch(message);
@@ -207,7 +207,7 @@ contract IntexAuctionTargetRouter is
     function _dispatch(bytes calldata message) private {
         uint32 srcChainId = OUTBE_CHAIN_ID;
         TargetLinks memory links =
-            TargetLinks({intexAuction: INTEX_AUCTION, intexContract: INTEX_NFT1155, escrow: ESCROW});
+            TargetLinks({intexAuction: INTEX_AUCTION, intexNFT1155: INTEX_NFT1155, escrowAdapter: ESCROW_ADAPTER});
         uint8 msgType = BridgeMsgCodec.readHeader(message);
         BridgeMsgCodec.assertMinLength(message, msgType);
 
@@ -422,7 +422,7 @@ contract IntexAuctionTargetRouter is
 
     /// @dev The WCOEN the escrow paid out for the day; the token bridge carries only its own token.
     function _proceedsToken(uint32 emissionDay) private view returns (IERC20 token) {
-        token = ESCROW.dayIntexAuctionAsset(emissionDay);
+        token = ESCROW_ADAPTER.dayIntexAuctionAsset(emissionDay);
         IERC20 bridgeToken = ERC20_ROUTER.token();
         if (token != bridgeToken) revert ProceedsTokenNotBridged(address(token), address(bridgeToken));
     }

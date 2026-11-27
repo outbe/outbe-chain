@@ -28,7 +28,7 @@ contract DeployIntexAuction is IntexScript {
         _deployProxy(
             IntexCreate3.INTEX_AUCTION,
             s.intexAuction,
-            address(new IntexAuction(s.targetRouter, s.escrowAdapter, s.intexNFT1155)),
+            address(new IntexAuction(s.intexAuctionTargetRouter, s.escrowAdapter, s.intexNFT1155)),
             abi.encodeCall(IntexAuction.initialize, (deployer))
         );
     }
