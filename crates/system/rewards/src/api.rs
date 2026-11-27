@@ -86,13 +86,6 @@ pub fn take_validator_weight(
     Ok(U256::from(weight))
 }
 
-/// Deletes the seal block of the sealed `day` once its validator reward is set.
-pub fn clear_day_seal(storage: &StorageHandle<'_>, day: u32) -> Result<()> {
-    let rewards = Rewards::new(storage.clone());
-    require_sealed(&rewards, day)?;
-    rewards.day_votes_sealed_at_block.write(&day, 0)
-}
-
 /// Deletes the validator count and the vote sum of the sealed `day` with its last weight.
 pub fn clear_validator_day(storage: &StorageHandle<'_>, day: u32) -> Result<()> {
     let rewards = Rewards::new(storage.clone());

@@ -143,7 +143,7 @@ pub struct Rewards {
     /// Last inclusion-window close height for each day's finalized blocks.
     /// LateFinalizeCredits runs before CycleTick in the same block.
     /// Day sealing still requires a height above this close. This is a readiness
-    /// boundary, not a record that fee transfer has already run.
+    /// boundary, not a record that fee transfer has already run. Cleared when the day is sealed.
     pub day_votes_sealed_at_block: Mapping<u32, u64>,
 
     /// All calendar days at or below this watermark are immutable. Zero means

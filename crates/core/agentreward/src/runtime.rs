@@ -232,9 +232,6 @@ impl AgentRewardContract<'_> {
         )?;
         let receivers = if total_weight.is_zero() { 0 } else { receivers };
         let deadline = self.store_pool_day(pool, day, (rate, allocated), receivers)?;
-        if pool == RewardPool::Validator {
-            outbe_rewards::api::clear_day_seal(&self.storage, day)?;
-        }
         self.emit(IAgentReward::AgentRewardRateSet {
             emissionDay: day,
             pool: pool as u8,

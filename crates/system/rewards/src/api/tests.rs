@@ -258,10 +258,8 @@ fn a_claim_takes_the_weight_and_the_last_one_clears_the_day() {
         record_reward_participation(&ctx, FB_HASH_A, day, VAL_Y).unwrap();
         let rewards = ctx.storage.contract::<Rewards>();
         assert!(take_validator_weight(&ctx.storage, day, VAL_X).is_err());
-        assert!(clear_day_seal(&ctx.storage, day).is_err());
+        rewards.day_votes_sealed_at_block.write(&day, 19).unwrap();
         seal_votes_and_fees(&ctx, day).unwrap();
-
-        clear_day_seal(&ctx.storage, day).unwrap();
         assert_eq!(rewards.day_votes_sealed_at_block.read(&day).unwrap(), 0);
         assert_eq!(
             take_validator_weight(&ctx.storage, day, VAL_X).unwrap(),

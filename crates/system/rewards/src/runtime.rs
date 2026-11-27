@@ -34,6 +34,7 @@ pub(crate) fn seal_votes_and_fees(ctx: &BlockRuntimeContext, day: u32) -> Result
     if day <= rewards.last_sealed_day.read()? {
         return Err(RewardsError::DayAlreadySealed.into());
     }
+    rewards.day_votes_sealed_at_block.write(&day, 0)?;
     rewards.last_sealed_day.write(day)
 }
 
