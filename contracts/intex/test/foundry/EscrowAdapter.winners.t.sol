@@ -289,7 +289,7 @@ contract EscrowAdapterWinnersTest is Test {
         _apply(new address[](0), 0, 0, true);
 
         vm.prank(alice);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.UnauthorizedCaller.selector, alice));
         escrow.returnIntexAuctionAsset(DAY, alice);
     }
 
@@ -324,7 +324,7 @@ contract EscrowAdapterWinnersTest is Test {
         _apply(_one(alice), 0, 0, true);
 
         vm.prank(alice);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.UnauthorizedCaller.selector, alice));
         escrow.redeemWinNote(DAY, alice);
     }
 

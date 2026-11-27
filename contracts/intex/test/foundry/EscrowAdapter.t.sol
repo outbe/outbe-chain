@@ -225,11 +225,11 @@ contract EscrowAdapterTest is Test {
         vm.prank(outsider);
         escrow.lockIntexAuctionAsset(emissionDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
 
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.UnauthorizedCaller.selector, admin));
         vm.prank(admin);
         escrow.lockIntexAuctionAsset(emissionDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
 
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.UnauthorizedCaller.selector, bridger));
         vm.prank(bridger);
         escrow.lockIntexAuctionAsset(emissionDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
     }
@@ -489,11 +489,11 @@ contract EscrowAdapterTest is Test {
         vm.prank(outsider);
         escrow.chargeIntexAuctionAsset(emissionDay1, winners, 0, 0, CLEARING_RATE, BASIS, true);
 
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.UnauthorizedCaller.selector, admin));
         vm.prank(admin);
         escrow.chargeIntexAuctionAsset(emissionDay1, winners, 0, 0, CLEARING_RATE, BASIS, true);
 
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.UnauthorizedCaller.selector, auction));
         vm.prank(auction);
         escrow.chargeIntexAuctionAsset(emissionDay1, winners, 0, 0, CLEARING_RATE, BASIS, true);
     }

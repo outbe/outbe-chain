@@ -529,8 +529,8 @@ contract AuctionTest is Test {
         vm.stopPrank();
     }
 
-    function test_CancelAuction_RevertWhen_NotRelayer() public {
-        vm.expectRevert();
+    function test_CancelAuction_RevertWhen_NotTargetRouter() public {
+        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.UnauthorizedCaller.selector, iba1));
         vm.prank(iba1);
         auction.cancelAuction(20250143, 1);
     }
@@ -605,7 +605,7 @@ contract AuctionTest is Test {
         vm.prank(admin);
         auction.startAuction(emissionDay, _schedule(), _params(10, 1));
 
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.UnauthorizedCaller.selector, iba1));
         vm.prank(iba1);
         auction.startAuction(emissionDay, _schedule(), _params(10, 1));
     }
@@ -616,11 +616,11 @@ contract AuctionTest is Test {
         _start(emissionDay, 10, 1);
         _enterRevealStage(emissionDay, startTs);
 
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.UnauthorizedCaller.selector, admin));
         vm.prank(admin);
         auction.startAuctionClearing(emissionDay);
 
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.UnauthorizedCaller.selector, iba1));
         vm.prank(iba1);
         auction.startAuctionClearing(emissionDay);
     }
@@ -633,11 +633,11 @@ contract AuctionTest is Test {
         vm.prank(bridger);
         auction.startAuctionClearing(emissionDay);
 
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.UnauthorizedCaller.selector, admin));
         vm.prank(admin);
         auction.completeAuction(emissionDay, 0, 1, 100, 75, 0);
 
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.UnauthorizedCaller.selector, iba1));
         vm.prank(iba1);
         auction.completeAuction(emissionDay, 0, 1, 100, 75, 0);
     }

@@ -84,9 +84,9 @@ contract EscrowAdapterBondTest is Test {
         escrow.lockIntexAuctionBidBond(emissionDay1, bidder1, BOND_UNITS);
     }
 
-    function test_LockCommitBond_OnlyAuctionRole() public {
+    function test_LockCommitBond_OnlyAuction() public {
         vm.prank(outsider);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.UnauthorizedCaller.selector, outsider));
         escrow.lockIntexAuctionBidBond(emissionDay1, bidder1, BOND_UNITS);
     }
 
@@ -112,10 +112,10 @@ contract EscrowAdapterBondTest is Test {
         escrow.unlockIntexAuctionBidBond(emissionDay1, bidder1, 0);
     }
 
-    function test_ReleaseCommitBond_OnlyAuctionRole() public {
+    function test_ReleaseCommitBond_OnlyAuction() public {
         _lockBond();
         vm.prank(outsider);
-        vm.expectRevert();
+        vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.UnauthorizedCaller.selector, outsider));
         escrow.unlockIntexAuctionBidBond(emissionDay1, bidder1, 0);
     }
 
