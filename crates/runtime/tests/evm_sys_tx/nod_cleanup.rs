@@ -1,6 +1,6 @@
 use super::fixtures::GENESIS_HASH;
 use super::*;
-use alloy_sol_types::{SolCall, SolEvent};
+use alloy_sol_types::SolEvent;
 use outbe_nod::precompile::INod;
 use outbe_nod::NodContract;
 use outbe_primitives::time::SECONDS_PER_DAY;
