@@ -1666,6 +1666,7 @@ fn delivered_proposal_counts_self_finalization_once_via_shared_continuity() {
             let reply = super::dispatch::ProposalReply {
                 response,
                 propose_start: ctx.current(),
+                floor: super::dispatch::start_min_block_time_floor(&ctx),
                 outcome,
             };
             shared.complete_propose_message(&ctx, reply).await;

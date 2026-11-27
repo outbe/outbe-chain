@@ -46,9 +46,9 @@ pub(crate) fn validate_startup_authority_and_pruning(
         })?
         .unwrap_or(outbe_consensus::config::DEFAULT_DKG_PREPARE_WINDOW_BLOCKS);
     outbe_consensus::stack::block_timing_from_chain_spec(config.chain.as_ref())?;
-    // Fixed nominal block cadence for TeeRenewalScheduleV1 (preserves its > 0
-    // validation contract and JSON-RPC schema).
-    let minimum_block_time_millis = outbe_consensus::timing::DEFAULT_PAYLOAD_WARMUP_MS;
+    // Nominal block cadence for TeeRenewalScheduleV1: the proposer-side minimum
+    // block time. The schedule forecasts wall-clock time from block counts.
+    let minimum_block_time_millis = outbe_consensus::timing::MIN_BLOCK_TIME_MS;
     info!(
         attestation_mode = ?initial_tee_policy.attestation_mode,
         activation_height = tee_activation.manifest.activation_height,
@@ -304,6 +304,7 @@ mod tests {
         enum Expected {
             Ok,
             LeaderZero,
+            LeaderAtFloor,
             CertZero,
             LeaderExceedsCert { leader_ms: u64, cert_ms: u64 },
             InvalidKey(&'static str),
@@ -322,6 +323,13 @@ mod tests {
             (
                 serde_json::json!({"leaderTimeoutMs": 0}),
                 Expected::LeaderZero,
+            ),
+            (
+                serde_json::json!({
+                    "leaderTimeoutMs": outbe_consensus::timing::MIN_BLOCK_TIME_MS,
+                    "certificationTimeoutMs": 5000,
+                }),
+                Expected::LeaderAtFloor,
             ),
             (
                 serde_json::json!({"certificationTimeoutMs": 0}),
@@ -345,7 +353,22 @@ mod tests {
             let result = validate_startup_authority_and_pruning(&config);
             match expected {
                 Expected::Ok => {
-                    result.expect("valid timing config should pass startup authority");
+                    let authority =
+                        result.expect("valid timing config should pass startup authority");
+                    // The TEE renewal forecast uses the minimum block time.
+                    assert_eq!(
+                        authority.minimum_block_time_millis,
+                        outbe_consensus::timing::MIN_BLOCK_TIME_MS
+                    );
+                }
+                Expected::LeaderAtFloor => {
+                    let err = result
+                        .err()
+                        .expect("leaderTimeoutMs at the minimum block time must fail");
+                    assert!(matches!(
+                        err.downcast_ref::<StackStartupError>(),
+                        Some(StackStartupError::LeaderTimeoutNotAboveMinBlockTime { .. })
+                    ));
                 }
                 Expected::LeaderZero => {
                     let err = result.err().expect("leaderTimeoutMs=0 must fail");

@@ -72,6 +72,19 @@ pub const DEFAULT_LEADER_TIMEOUT_MS: u64 = 4000;
 /// `DEFAULT_CERTIFICATION_TIMEOUT_MS - DEFAULT_LEADER_TIMEOUT_MS`.
 pub const DEFAULT_CERTIFICATION_TIMEOUT_MS: u64 = 8000;
 
+/// Minimum block time (proposer-side pacing floor), in milliseconds.
+///
+/// The elected leader starts a timer of this length when it begins to prepare a
+/// proposal. It gives the sealed block to Simplex only after the timer ends. A
+/// block that takes longer goes out at once, and `leaderTimeoutMs` is its only
+/// limit. The floor gives every validator the time to finish the previous block
+/// before the next vote round starts.
+///
+/// This is a code constant, not a genesis value and not a CLI flag: the whole
+/// network must keep one pace. It is liveness pacing only. It is not in the
+/// block bytes and it is not a validity rule.
+pub const MIN_BLOCK_TIME_MS: u64 = 1000;
+
 /// Default payload warm-up before the first `resolve_kind`, in milliseconds.
 ///
 /// Mirrors the existing payload-resolve preparation window. It stays here so

@@ -320,6 +320,11 @@ fn validate_timing_rejects_invalid_combinations() {
         "error: {zero_cert}"
     );
     assert!(validate_timing(9000, 8000).is_err()); // leader > cert
+                                                   // The leader timeout must exceed the minimum block time.
+    let floor = outbe_consensus::timing::MIN_BLOCK_TIME_MS;
+    let at_floor = validate_timing(floor, 8000).unwrap_err().to_string();
+    assert!(at_floor.contains("minimum block time"), "error: {at_floor}");
+    assert!(validate_timing(floor + 1, 8000).is_ok());
 }
 
 /// Shipped defaults and equal timeouts satisfy `0 < leader <= cert`.

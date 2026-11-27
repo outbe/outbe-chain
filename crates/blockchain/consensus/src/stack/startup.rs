@@ -73,10 +73,22 @@ pub fn read_ms<E: std::fmt::Display>(
 }
 
 /// Startup invariants for the consensus-sync timing pair (structured error, no
-/// panic): `0 < leader <= cert`.
+/// panic): `MIN_BLOCK_TIME_MS < leader <= cert`.
+///
+/// The leader holds a sealed block until the minimum block time ends. A leader
+/// timeout at or below that floor would nullify every view.
 pub fn validate_timing(leader_ms: u64, cert_ms: u64) -> Result<()> {
     if leader_ms == 0 {
         return Err(crate::errors::StackStartupError::LeaderTimeoutMsZero.into());
+    }
+    if leader_ms <= crate::timing::MIN_BLOCK_TIME_MS {
+        return Err(
+            crate::errors::StackStartupError::LeaderTimeoutNotAboveMinBlockTime {
+                leader_ms,
+                min_block_time_ms: crate::timing::MIN_BLOCK_TIME_MS,
+            }
+            .into(),
+        );
     }
     if cert_ms == 0 {
         return Err(crate::errors::StackStartupError::CertificationTimeoutMsZero.into());

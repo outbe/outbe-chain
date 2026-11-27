@@ -3,9 +3,26 @@ use crate::application::handler::verification::VerifyTask;
 use crate::metrics::propose::{record_proposal_outcome, ProposalOutcomeLabel};
 use commonware_utils::channel::oneshot;
 
+/// Timer that ends when the minimum block time has passed since proposal start.
+pub(super) type MinBlockTimeFloor = std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>;
+
+/// Start the minimum-block-time timer. Call this when the proposal task starts.
+///
+/// The runtime fixes the deadline in this call, not at the first poll. The
+/// production timer uses a monotonic clock, so a wall-clock step cannot shorten
+/// the floor. Tests use the virtual clock of the deterministic runtime.
+pub(super) fn start_min_block_time_floor(
+    clock: &impl commonware_runtime::Clock,
+) -> MinBlockTimeFloor {
+    Box::pin(clock.sleep(std::time::Duration::from_millis(
+        crate::timing::MIN_BLOCK_TIME_MS,
+    )))
+}
+
 pub(super) struct ProposalReply {
     pub(super) response: oneshot::Sender<Digest>,
     pub(super) propose_start: std::time::SystemTime,
+    pub(super) floor: MinBlockTimeFloor,
     pub(super) outcome: eyre::Result<ProposeOutcome>,
 }
 impl ApplicationHandler {
@@ -57,6 +74,7 @@ impl ApplicationShared {
         let payload_trace = ProposalPayloadTrace::default();
         // Task start covers the whole build and marshal path for proposer pacing.
         let propose_start = clock.current();
+        let floor = start_min_block_time_floor(clock);
         let handle = Box::pin(self.handle_propose(
             clock,
             ProposalRequest {
@@ -79,6 +97,7 @@ impl ApplicationShared {
             ProposalReply {
                 response,
                 propose_start,
+                floor,
                 outcome,
             },
         )
@@ -128,8 +147,9 @@ async fn complete_proposal(
     self_proposed: &crate::reporter::SelfProposedDigests,
 ) -> eyre::Result<()> {
     let ProposalReply {
-        response,
+        mut response,
         propose_start,
+        floor,
         outcome,
     } = reply;
     match outcome {
@@ -142,6 +162,17 @@ async fn complete_proposal(
                 .duration_since(propose_start)
                 .unwrap_or_default();
             crate::metrics::record_block_build_time(elapsed.saturating_sub(resolve_pad));
+            // Proposer-side pacing only. Hold the sealed digest until the minimum
+            // block time ends. Simplex closes the response when it leaves the view.
+            // The select is biased: a cancelled view wins and sends nothing.
+            let view_open = commonware_macros::select! {
+                () = response.closed() => false,
+                () = floor => true,
+            };
+            if !view_open {
+                record_proposal_outcome(ProposalOutcomeLabel::Cancelled);
+                return Ok(());
+            }
             // Register before sending so an immediate finalization can consume it.
             self_proposed.record(digest);
             let delivered = response.send(digest).is_ok();
@@ -193,6 +224,140 @@ mod tests {
     use super::*;
     use metrics_util::debugging::{DebugValue, DebuggingRecorder};
 
+    const MIN_BLOCK_TIME: std::time::Duration =
+        std::time::Duration::from_millis(crate::timing::MIN_BLOCK_TIME_MS);
+
+    fn proposed() -> eyre::Result<ProposeOutcome> {
+        Ok(ProposeOutcome::Proposed {
+            digest: Digest::ZERO,
+            resolve_pad: std::time::Duration::ZERO,
+        })
+    }
+
+    /// A build that takes longer than the floor adds no wait: the timer deadline
+    /// is fixed at proposal start, not at the first poll.
+    #[test]
+    fn floor_adds_no_wait_when_the_build_is_longer_than_the_floor() {
+        use commonware_runtime::{Clock as _, Runner as _};
+        use std::time::Duration;
+
+        commonware_runtime::deterministic::Runner::timed(Duration::from_secs(30)).start(
+            |clock| async move {
+                let (response, receiver) = oneshot::channel();
+                let start = clock.current();
+                let floor = start_min_block_time_floor(&clock);
+                let build = MIN_BLOCK_TIME + Duration::from_millis(500);
+                clock.sleep(build).await;
+                let self_proposed = crate::reporter::SelfProposedDigests::default();
+                complete_proposal(
+                    &clock,
+                    ProposalReply {
+                        response,
+                        propose_start: start,
+                        floor,
+                        outcome: proposed(),
+                    },
+                    &self_proposed,
+                )
+                .await
+                .unwrap();
+                assert_eq!(receiver.await.unwrap(), Digest::ZERO);
+                assert_eq!(clock.current().duration_since(start).unwrap(), build);
+            },
+        );
+    }
+
+    /// A build shorter than the floor waits only for the remainder.
+    #[test]
+    fn floor_waits_only_for_the_remainder() {
+        use commonware_runtime::{Clock as _, Runner as _};
+        use std::time::Duration;
+
+        commonware_runtime::deterministic::Runner::timed(Duration::from_secs(30)).start(
+            |clock| async move {
+                let (response, receiver) = oneshot::channel();
+                let start = clock.current();
+                let floor = start_min_block_time_floor(&clock);
+                clock.sleep(Duration::from_millis(300)).await;
+                let self_proposed = crate::reporter::SelfProposedDigests::default();
+                complete_proposal(
+                    &clock,
+                    ProposalReply {
+                        response,
+                        propose_start: start,
+                        floor,
+                        outcome: proposed(),
+                    },
+                    &self_proposed,
+                )
+                .await
+                .unwrap();
+                assert_eq!(receiver.await.unwrap(), Digest::ZERO);
+                assert_eq!(
+                    clock.current().duration_since(start).unwrap(),
+                    MIN_BLOCK_TIME
+                );
+            },
+        );
+    }
+
+    /// Simplex leaves the view during the hold: nothing is sent, the digest is
+    /// not kept as self-proposed, and the outcome is `cancelled`.
+    #[test]
+    fn view_cancelled_during_the_floor_sends_nothing() {
+        use commonware_runtime::{Clock as _, Runner as _};
+        use std::time::Duration;
+
+        let recorder = DebuggingRecorder::new();
+        metrics::with_local_recorder(&recorder, || {
+            commonware_runtime::deterministic::Runner::timed(Duration::from_secs(30)).start(
+                |clock| async move {
+                    let (response, receiver) = oneshot::channel::<Digest>();
+                    let start = clock.current();
+                    let self_proposed = crate::reporter::SelfProposedDigests::default();
+                    let cancel_after = Duration::from_millis(300);
+                    let complete = complete_proposal(
+                        &clock,
+                        ProposalReply {
+                            response,
+                            propose_start: start,
+                            floor: start_min_block_time_floor(&clock),
+                            outcome: proposed(),
+                        },
+                        &self_proposed,
+                    );
+                    let cancel = async {
+                        clock.sleep(cancel_after).await;
+                        drop(receiver);
+                    };
+                    let (result, ()) = futures::join!(complete, cancel);
+                    result.unwrap();
+                    // The deterministic runtime needs one more step to see the close.
+                    let elapsed = clock.current().duration_since(start).unwrap();
+                    assert!(
+                        elapsed >= cancel_after && elapsed < MIN_BLOCK_TIME,
+                        "{elapsed:?}"
+                    );
+                    assert!(!self_proposed.take(&Digest::ZERO));
+                },
+            );
+        });
+        let snapshot = recorder.snapshotter().snapshot().into_vec();
+        let outcomes: Vec<_> = snapshot
+            .iter()
+            .filter(|(key, _, _, _)| key.key().name() == "outbe_consensus_proposal_outcomes_total")
+            .collect();
+        assert_eq!(outcomes.len(), 1);
+        let labels: Vec<_> = outcomes[0]
+            .0
+            .key()
+            .labels()
+            .map(|l| (l.key(), l.value()))
+            .collect();
+        assert_eq!(labels, [("result", "cancelled")]);
+        assert_eq!(outcomes[0].3, DebugValue::Counter(1));
+    }
+
     #[test]
     fn completion_records_the_dispatched_outcome_and_actual_delivery() {
         use commonware_runtime::{Clock as _, Runner as _};
@@ -236,6 +401,7 @@ mod tests {
                             ProposalReply {
                                 response,
                                 propose_start: start,
+                                floor: start_min_block_time_floor(&clock),
                                 outcome,
                             },
                             &self_proposed,
@@ -246,9 +412,10 @@ mod tests {
                         if let Some(receiver) = receiver {
                             if label == "proposed" {
                                 assert_eq!(receiver.await.unwrap(), Digest::ZERO);
+                                // A block that is ready at once waits the whole floor.
                                 assert_eq!(
                                     clock.current().duration_since(start).unwrap(),
-                                    Duration::ZERO
+                                    MIN_BLOCK_TIME
                                 );
                             } else {
                                 assert!(receiver.await.is_err());

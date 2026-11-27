@@ -57,7 +57,9 @@ impl StorageReader for StateReader<'_> {
     }
 }
 
-const EQUIVOCATION_RETRY_STEP: Duration = Duration::from_millis(500);
+/// One block interval. `pending::delay` multiplies it by two blocks for each rank.
+const EQUIVOCATION_RETRY_STEP: Duration =
+    Duration::from_millis(outbe_consensus::timing::MIN_BLOCK_TIME_MS);
 
 /// Starts the validator's execution-side evidence consumer until cancellation.
 pub fn spawn(
