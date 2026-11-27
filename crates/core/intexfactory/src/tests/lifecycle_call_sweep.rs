@@ -170,11 +170,11 @@ fn the_call_progress_counts_the_window_until_the_group_is_called() {
         assert_eq!(call::scan_and_call(&ctx).unwrap(), 1);
         assert_eq!(
             call_state(&s, intex_id).unwrap_err(),
-            IIntexFactory::SeriesNotIssued {}.abi_encode()
+            IIntexFactory::IntexNotIssued {}.abi_encode()
         );
         assert_eq!(
             call_state(&s, U256::from(1)).unwrap_err(),
-            IIntexFactory::SeriesNotFound {}.abi_encode()
+            IIntexFactory::IntexNotFound {}.abi_encode()
         );
     });
 }

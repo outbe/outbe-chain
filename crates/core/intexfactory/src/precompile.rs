@@ -151,5 +151,5 @@ pub fn dispatch(
 fn series_of(storage: &StorageHandle<'_>, intex_id: U256) -> Result<SeriesId> {
     outbe_intex::api::find_series_by_id(storage, intex_id)?
         .map(|record| record.series_id)
-        .ok_or_else(|| outbe_intex::IntexError::SeriesNotFound.into())
+        .ok_or_else(|| outbe_intex::IntexError::IntexNotFound.into())
 }

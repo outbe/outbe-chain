@@ -15,7 +15,7 @@ use outbe_primitives::error::Result;
 
 use crate::constants::{SETTLED_TOKEN_NAME, SETTLED_TOKEN_SYMBOL};
 use crate::errors::{date_step_error, IntexError};
-use crate::schema::{CallStamp, IntexContract, SeriesRecord};
+use crate::schema::{intex_id, CallStamp, IntexContract, SeriesId, SeriesRecord};
 
 const SUPPORTED_INTERFACES: [[u8; 4]; 3] = [
     ERC165_INTERFACE_ID,
@@ -49,16 +49,11 @@ pub fn dispatch(
         let registry = IntexContract::new(storage.clone());
         use IIntex::IIntexCalls::*;
         match call {
-            getIntex(c) => view(c, |c| {
-                let record = load_by_id(&registry, c.intexId)?;
-                let settled = registry.settled_units.read(&c.intexId)?;
-                let mined = registry.mined_units.read(&c.intexId)?;
-                let gem_factory = registry.gem_factory_units.read(&c.intexId)?;
-                let stamp = registry.call_stamp(&record)?;
-                let now = storage.now_secs()?;
-                to_abi_data(&record, [settled, mined, gem_factory], stamp, now)
+            getIntex(c) => view(c, |c| series_data(&storage, &registry, c.intexId)),
+            getIntexSeries(c) => view(c, |c| {
+                series_data(&storage, &registry, intex_id(SeriesId::from(c.seriesId)))
             }),
-            seriesUnitCounts(c) => view(c, |c| {
+            intexUnitCounts(c) => view(c, |c| {
                 let series_id = load_by_id(&registry, c.intexId)?.series_id;
                 let counts = crate::api::unit_counts(&storage, series_id)?;
                 Ok(IIntex::UnitCounts {
@@ -108,11 +103,25 @@ pub fn dispatch(
     })
 }
 
+fn series_data(
+    storage: &outbe_primitives::storage::StorageHandle<'_>,
+    registry: &IntexContract<'_>,
+    intex_id: U256,
+) -> Result<IIntex::SeriesData> {
+    let record = load_by_id(registry, intex_id)?;
+    let settled = registry.settled_units.read(&intex_id)?;
+    let mined = registry.mined_units.read(&intex_id)?;
+    let gem_factory = registry.gem_factory_units.read(&intex_id)?;
+    let stamp = registry.call_stamp(&record)?;
+    let now = storage.now_secs()?;
+    to_abi_data(&record, [settled, mined, gem_factory], stamp, now)
+}
+
 fn load_by_id(registry: &IntexContract<'_>, intex_id: U256) -> Result<SeriesRecord> {
     registry
         .series
         .get(intex_id)?
-        .ok_or_else(|| IntexError::SeriesNotFound.into())
+        .ok_or_else(|| IntexError::IntexNotFound.into())
 }
 
 /// An id no series has holds nothing.

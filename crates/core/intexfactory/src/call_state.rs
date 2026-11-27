@@ -12,9 +12,9 @@ use crate::precompile::IIntexFactory::CallState;
 
 pub(crate) fn call_state(storage: &StorageHandle<'_>, intex_id: U256) -> Result<CallState> {
     let record = outbe_intex::api::find_series_by_id(storage, intex_id)?
-        .ok_or(outbe_intex::IntexError::SeriesNotFound)?;
+        .ok_or(outbe_intex::IntexError::IntexNotFound)?;
     if outbe_intex::api::state(storage, &record)? != IntexState::Issued {
-        return Err(IntexFactoryError::SeriesNotIssued.into());
+        return Err(IntexFactoryError::IntexNotIssued.into());
     }
     let intex = IntexContract::new(storage.clone());
     let terms = breach_terms(

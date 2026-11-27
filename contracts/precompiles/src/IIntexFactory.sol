@@ -38,8 +38,8 @@ interface IIntexFactory {
     error PromisOverflow();
     error MiningSequenceOverflow();
     error MinedUnitsExceedSeries();
-    error SeriesNotFound();
-    error SeriesNotIssued();
+    error IntexNotFound();
+    error IntexNotIssued();
     error DateStep(uint8 kind, uint32 dateKey);
 
     /// @notice Settle `units` Issued Intexes of `seriesId` held by
@@ -142,8 +142,8 @@ interface IIntexFactory {
         uint256 lastDayPriceMinor;
     }
 
-    /// @notice Read the call progress of `intexId`. Reverts `SeriesNotFound`, or
-    ///         `SeriesNotIssued` once the series is Called or Forfeited.
+    /// @notice Read the call progress of `intexId`. Reverts `IntexNotFound`, or
+    ///         `IntexNotIssued` once the series is Called or Forfeited.
     function getCallState(uint256 intexId) external view returns (CallState memory);
 
     /// @notice The target chains that are not Off, with their modes: 1 Series, 2 Auctions.

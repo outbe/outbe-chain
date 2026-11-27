@@ -737,6 +737,16 @@
   },
   {
     "type": "error",
+    "name": "IntexNotFound",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "IntexNotIssued",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "IntexSeriesPageCountExceedsU16",
     "inputs": []
   },
@@ -794,16 +804,6 @@
   {
     "type": "error",
     "name": "PromisOverflow",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "SeriesNotFound",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "SeriesNotIssued",
     "inputs": []
   },
   {

@@ -29,7 +29,7 @@ impl IntexContract<'_> {
 
     pub(crate) fn load_series(&self, series_id: SeriesId) -> Result<SeriesRecord> {
         self.get_series(series_id)?
-            .ok_or_else(|| IntexError::SeriesNotFound.into())
+            .ok_or_else(|| IntexError::IntexNotFound.into())
     }
 
     /// Create a new series record and list it for enumeration.
