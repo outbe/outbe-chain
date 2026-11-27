@@ -675,15 +675,19 @@ fn vm_dev_dropins_bind_metrics_on_service_ip_and_preserve_prod_vm_units() {
     assert_eq!(
         names,
         vec![
-            "dstack-guest-agent.service.d/20-outbe-dev.conf",
-            "outbe-feeder.service.d/20-outbe-dev.conf",
             "outbe-full-node.service.d/20-outbe-dev.conf",
-            "outbe-hyperlane-validator.service.d/20-outbe-dev.conf",
             "outbe-joining-validator.service.d/20-outbe-dev.conf",
-            "outbe-radicle.service.d/20-outbe-dev.conf",
             "outbe-validator.service.d/20-outbe-dev.conf",
         ]
     );
+    // No dev drop-in sends service output to the serial console.
+    for dropin in &dropins {
+        assert!(
+            !dropin.content.contains("console"),
+            "{}: dev drop-in must not write to the console",
+            dropin.name
+        );
+    }
 
     // Prod base units must remain pinned on 127.0.0.1:9101 and without journal+console.
     for name in [
@@ -710,8 +714,8 @@ fn vm_dev_dropins_bind_metrics_on_service_ip_and_preserve_prod_vm_units() {
         );
 
         let dropin = unit(&dropins, &format!("{name}.d/20-outbe-dev.conf"));
-        assert!(dropin.contains("StandardOutput=journal+console\n"));
-        assert!(dropin.contains("StandardError=journal+console\n"));
+        assert!(!dropin.contains("StandardOutput="));
+        assert!(!dropin.contains("StandardError="));
         assert!(dropin.contains("\nExecStart=\nExecStart=/usr/local/bin/outbe-chain node \\"));
         assert!(dropin.contains("  --metrics ${OUTBE_VM_IP}:9101 \\"));
         assert!(dropin.contains("  --log.stdout.filter info,commonware_p2p=debug \\"));
@@ -733,18 +737,6 @@ fn vm_dev_dropins_bind_metrics_on_service_ip_and_preserve_prod_vm_units() {
             dev_tokens, expected_dev_tokens,
             "{name}: dev ExecStart must differ only in --metrics address and --log.stdout.filter"
         );
-    }
-
-    for name in [
-        "dstack-guest-agent.service.d/20-outbe-dev.conf",
-        "outbe-feeder.service.d/20-outbe-dev.conf",
-        "outbe-hyperlane-validator.service.d/20-outbe-dev.conf",
-        "outbe-radicle.service.d/20-outbe-dev.conf",
-    ] {
-        let dropin = unit(&dropins, name);
-        assert!(dropin.contains("StandardOutput=journal+console\n"));
-        assert!(dropin.contains("StandardError=journal+console\n"));
-        assert!(!dropin.contains("ExecStart"));
     }
 }
 

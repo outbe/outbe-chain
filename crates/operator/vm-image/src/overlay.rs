@@ -105,9 +105,11 @@ pub fn stage_overlay(
         0o644,
     )?;
 
-    // 7. Dev-only overlay: SSH, serial console log forwarding, service-IP metrics bind, and
-    //    periodic diagnostic snapshots. Everything here lives strictly under
-    //    `mkosi.profiles/dev/mkosi.skeleton`, so `prod` never receives any of it.
+    // 7. Dev-only overlay: SSH, service-IP metrics bind, and periodic diagnostic snapshots.
+    //    Everything here lives strictly under `mkosi.profiles/dev/mkosi.skeleton`, so `prod`
+    //    never receives any of it. Nothing here sends service output to the serial console.
+    //    A console write costs a hypervisor exit for each byte in a confidential VM and can
+    //    delay consensus votes. Service output stays in journald.
     //    SSH config is named `00-outbe-dev.conf` so OpenSSH first-match-wins overrides dstack's.
     write_overlay_file(
         &dev_only.join("etc/ssh/sshd_config.d/00-outbe-dev.conf"),
@@ -120,16 +122,7 @@ pub fn stage_overlay(
         0o644,
     )?;
 
-    // 7a. Forward journald info-and-higher logs to the serial console (`outbe-up vm logs`),
-    //     sorted after dstack's `dstack.conf`.
-    write_overlay_file(
-        &dev_only.join("etc/systemd/journald.conf.d/zz-outbe-dev.conf"),
-        &render_dev_journald_conf(),
-        0o644,
-    )?;
-
-    // 7b. Unit drop-ins for `outbe-*` services and `dstack-guest-agent.service`: console output
-    //     plus `${OUTBE_VM_IP}:9101` metrics binding on node units.
+    // 7b. Unit drop-ins for the node units: `${OUTBE_VM_IP}:9101` metrics binding.
     let dev_systemd_dir = dev_only.join("usr/lib/systemd/system");
     for dropin in vm_dev_dropins() {
         write_overlay_file(&dev_systemd_dir.join(dropin.name), &dropin.content, 0o644)?;
@@ -222,16 +215,6 @@ fn render_dev_sshd_conf() -> String {
     .to_owned()
 }
 
-fn render_dev_journald_conf() -> String {
-    concat!(
-        "# Outbe dev VM diagnostic logging: forward info-and-higher journal entries to serial console.\n",
-        "[Journal]\n",
-        "ForwardToConsole=yes\n",
-        "MaxLevelConsole=info\n",
-    )
-    .to_owned()
-}
-
 fn render_dev_diag_service() -> String {
     concat!(
         "[Unit]\n",
@@ -242,8 +225,8 @@ fn render_dev_diag_service() -> String {
         "Type=oneshot\n",
         "EnvironmentFile=-/opt/outbe-chain/validator.env\n",
         "ExecStart=/usr/local/bin/outbe-vm-diag.sh\n",
-        "StandardOutput=journal+console\n",
-        "StandardError=journal+console\n",
+        "StandardOutput=journal\n",
+        "StandardError=journal\n",
         "TimeoutStartSec=20\n",
     )
     .to_owned()
