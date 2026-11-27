@@ -75,7 +75,13 @@ impl AgentRewardContract<'_> {
             index.address_count.write(&day, next_addresses)?;
         }
         index.total.write(&day, next_total)?;
-        index.counts.write(&key, next_count)
+        index.counts.write(&key, next_count)?;
+        self.emit(IAgentReward::AgentRewardWeightAdded {
+            account: address,
+            pool: pool as u8,
+            emissionDay: day,
+            weight: U256::from(next_count),
+        })
     }
 
     /// The weight of `address` in `pool` of emission day `day`.

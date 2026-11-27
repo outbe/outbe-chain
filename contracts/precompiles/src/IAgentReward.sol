@@ -21,6 +21,11 @@ interface IAgentReward {
     error EntryPriceOverflow();
     error UnknownRewardPool(uint8 value);
 
+    /// @notice An offer of a Nod of `emissionDay` names `account` in the WAA or SRA pool; `weight` is
+    /// its weight in that pool and day after the offer.
+    event AgentRewardWeightAdded(
+        address indexed account, uint8 indexed pool, uint32 indexed emissionDay, uint256 weight
+    );
     event AgentRewardRateSet(
         uint32 indexed emissionDay, uint8 indexed pool, uint256 rate, uint256 allocatedMinor, uint64 deadline
     );

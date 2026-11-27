@@ -93,3 +93,40 @@ fn a_full_count_of_one_address_refuses_its_next_offer() {
         });
     }
 }
+
+#[test]
+fn each_offer_publishes_the_account_and_its_weight_of_the_day() {
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    provider.set_timestamp(U256::from(T_NOW));
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut contract = AgentRewardContract::new(storage);
+        for (pool, address) in [
+            (RewardPool::Waa, agent(1)),
+            (RewardPool::Waa, agent(1)),
+            (RewardPool::Sra, agent(2)),
+        ] {
+            increment(&mut contract, pool, address).unwrap();
+        }
+    });
+    let added: Vec<_> = provider
+        .get_ordered_events()
+        .iter()
+        .filter_map(|log| IAgentReward::AgentRewardWeightAdded::decode_log(log).ok())
+        .map(|log| {
+            (
+                log.data.account,
+                log.data.pool,
+                log.data.emissionDay,
+                log.data.weight,
+            )
+        })
+        .collect();
+    assert_eq!(
+        added,
+        vec![
+            (agent(1), RewardPool::Waa as u8, DAY, U256::from(1)),
+            (agent(1), RewardPool::Waa as u8, DAY, U256::from(2)),
+            (agent(2), RewardPool::Sra as u8, DAY, U256::from(1)),
+        ]
+    );
+}
