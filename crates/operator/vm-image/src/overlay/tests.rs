@@ -174,31 +174,17 @@ fn overlay_assembly_stages_binaries_units_libs_and_keeps_ssh_dev_only() {
     assert!(dev_ssh_dropin.contains("After=outbe-data-mount.service"));
     assert!(dev_ssh_dropin.contains("Wants=outbe-data-mount.service"));
 
-    // The dev image does not forward the journal to the serial console.
+    // journald does not forward its entries to the console: each service prints there one time.
     assert!(!dev_only.join("etc/systemd/journald.conf.d").exists());
 
-    // Dev-only unit drop-ins: service-IP metrics on node units, no console output.
+    // Dev-only unit drop-ins: console output, plus service-IP metrics on node units.
     let dev_systemd = dev_only.join("usr/lib/systemd/system");
     for dropin in vm_dev_dropins() {
         let path = dev_systemd.join(&dropin.name);
         assert!(path.is_file(), "missing dev drop-in {}", dropin.name);
         let content = fs::read_to_string(&path).unwrap();
-        assert!(
-            !content.contains("console"),
-            "{}: dev drop-in must not write to the console",
-            dropin.name
-        );
-    }
-    for service in [
-        "dstack-guest-agent.service",
-        "outbe-feeder.service",
-        "outbe-hyperlane-validator.service",
-        "outbe-radicle.service",
-    ] {
-        assert!(
-            !dev_systemd.join(format!("{service}.d")).exists(),
-            "{service}: dev image must not carry a console drop-in"
-        );
+        assert!(content.contains("StandardOutput=journal+console"));
+        assert!(content.contains("StandardError=journal+console"));
     }
     for node_unit in [
         "outbe-validator.service",
@@ -209,7 +195,7 @@ fn overlay_assembly_stages_binaries_units_libs_and_keeps_ssh_dev_only() {
             fs::read_to_string(dev_systemd.join(format!("{node_unit}.d/20-outbe-dev.conf")))
                 .unwrap();
         assert!(dropin.contains("--metrics ${OUTBE_VM_IP}:9101"));
-        assert!(dropin.contains("--log.stdout.filter info,commonware_p2p=debug"));
+        assert!(!dropin.contains("--log.stdout.filter"));
         assert!(!dropin.contains("127.0.0.1:9101"));
     }
 
@@ -223,8 +209,7 @@ fn overlay_assembly_stages_binaries_units_libs_and_keeps_ssh_dev_only() {
     let diag_service = fs::read_to_string(dev_systemd.join("outbe-vm-diag.service")).unwrap();
     assert!(diag_service.contains("EnvironmentFile=-/opt/outbe-chain/validator.env"));
     assert!(diag_service.contains("ExecStart=/usr/local/bin/outbe-vm-diag.sh"));
-    assert!(diag_service.contains("StandardOutput=journal\n"));
-    assert!(!diag_service.contains("console"));
+    assert!(diag_service.contains("StandardOutput=journal+console"));
     let diag_timer = fs::read_to_string(dev_systemd.join("outbe-vm-diag.timer")).unwrap();
     assert!(diag_timer.contains("OnBootSec=60s"));
     assert!(diag_timer.contains("OnUnitActiveSec=60s"));

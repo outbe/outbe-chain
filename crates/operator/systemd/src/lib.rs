@@ -84,18 +84,28 @@ const VM_NODE_SERVICES: &[&str] = &[
     "outbe-full-node.service",
 ];
 
+/// Services whose only dev override is console output.
+const VM_CONSOLE_ONLY_SERVICES: &[&str] = &[
+    "dstack-guest-agent.service",
+    "outbe-feeder.service",
+    "outbe-hyperlane-validator.service",
+    "outbe-radicle.service",
+];
+
 /// Render dev-flavor-only systemd drop-ins (`<unit>.d/20-outbe-dev.conf`).
 ///
-/// Never installed into the production image. Overrides `ExecStart` on `outbe-chain` node units
-/// (`outbe-validator.service`, `outbe-joining-validator.service`, `outbe-full-node.service`) so
-/// `--metrics` binds on `${OUTBE_VM_IP}:9101` instead of `127.0.0.1:9101` and stdout logging
-/// includes `--log.stdout.filter info,commonware_p2p=debug`, derived directly from [`vm_units`]
-/// so flags cannot drift.
+/// Never installed into the production image:
+/// - The standard output and standard error of the `outbe-*` services and of
+///   `dstack-guest-agent.service` go to the journal and to the serial console
+///   (`StandardOutput=journal+console`). The console shows what each process prints, one time.
+/// - `ExecStart` on the `outbe-chain` node units (`outbe-validator.service`,
+///   `outbe-joining-validator.service`, `outbe-full-node.service`) binds `--metrics` on
+///   `${OUTBE_VM_IP}:9101` instead of `127.0.0.1:9101`. It is derived from [`vm_units`] so
+///   flags cannot drift.
 ///
-/// No drop-in sends service output to the serial console. A console write is synchronous and
-/// costs a hypervisor exit for each byte in a confidential VM. That can delay consensus votes.
-/// Service output stays in journald. The node also writes its rotating log file under
-/// `--log.file.directory`.
+/// The node prints at its default stdout level. Detailed debug records go only to the rotating
+/// log file under `--log.file.directory`. journald does not forward its entries to the console:
+/// that would print each line a second time.
 pub fn vm_dev_dropins() -> Vec<UnitFile> {
     let base_units = vm_units();
     let mut dropins = Vec::new();
@@ -108,7 +118,7 @@ pub fn vm_dev_dropins() -> Vec<UnitFile> {
         let exec_start = extract_exec_start_block(&base.content)
             .unwrap_or_else(|| panic!("missing ExecStart in {service_name}"));
         let from = "  --metrics 127.0.0.1:9101 \\";
-        let to = "  --metrics ${OUTBE_VM_IP}:9101 \\\n  --log.stdout.filter info,commonware_p2p=debug \\";
+        let to = "  --metrics ${OUTBE_VM_IP}:9101 \\";
         assert_eq!(
             exec_start.matches(from).count(),
             1,
@@ -117,12 +127,26 @@ pub fn vm_dev_dropins() -> Vec<UnitFile> {
         let dev_exec_start = exec_start.replacen(from, to, 1);
         let content = format!(
             "[Service]\n\
+             StandardOutput=journal+console\n\
+             StandardError=journal+console\n\
              ExecStart=\n\
              {dev_exec_start}\n"
         );
         dropins.push(UnitFile {
             name: format!("{service_name}.d/{VM_DEV_DROPIN_NAME}"),
             content,
+        });
+    }
+
+    for service_name in VM_CONSOLE_ONLY_SERVICES {
+        dropins.push(UnitFile {
+            name: format!("{service_name}.d/{VM_DEV_DROPIN_NAME}"),
+            content: concat!(
+                "[Service]\n",
+                "StandardOutput=journal+console\n",
+                "StandardError=journal+console\n",
+            )
+            .to_owned(),
         });
     }
 

@@ -107,9 +107,9 @@ pub fn stage_overlay(
 
     // 7. Dev-only overlay: SSH, service-IP metrics bind, and periodic diagnostic snapshots.
     //    Everything here lives strictly under `mkosi.profiles/dev/mkosi.skeleton`, so `prod`
-    //    never receives any of it. Nothing here sends service output to the serial console.
-    //    A console write costs a hypervisor exit for each byte in a confidential VM and can
-    //    delay consensus votes. Service output stays in journald.
+    //    never receives any of it. Each service prints to the serial console one time, through
+    //    its unit drop-in. journald does not forward its entries to the console: that would
+    //    print each line a second time.
     //    SSH config is named `00-outbe-dev.conf` so OpenSSH first-match-wins overrides dstack's.
     write_overlay_file(
         &dev_only.join("etc/ssh/sshd_config.d/00-outbe-dev.conf"),
@@ -122,7 +122,8 @@ pub fn stage_overlay(
         0o644,
     )?;
 
-    // 7b. Unit drop-ins for the node units: `${OUTBE_VM_IP}:9101` metrics binding.
+    // 7b. Unit drop-ins for `outbe-*` services and `dstack-guest-agent.service`: console output,
+    //     plus `${OUTBE_VM_IP}:9101` metrics binding on node units.
     let dev_systemd_dir = dev_only.join("usr/lib/systemd/system");
     for dropin in vm_dev_dropins() {
         write_overlay_file(&dev_systemd_dir.join(dropin.name), &dropin.content, 0o644)?;
@@ -225,8 +226,8 @@ fn render_dev_diag_service() -> String {
         "Type=oneshot\n",
         "EnvironmentFile=-/opt/outbe-chain/validator.env\n",
         "ExecStart=/usr/local/bin/outbe-vm-diag.sh\n",
-        "StandardOutput=journal\n",
-        "StandardError=journal\n",
+        "StandardOutput=journal+console\n",
+        "StandardError=journal+console\n",
         "TimeoutStartSec=20\n",
     )
     .to_owned()

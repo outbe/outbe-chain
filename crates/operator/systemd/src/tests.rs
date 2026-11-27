@@ -675,16 +675,33 @@ fn vm_dev_dropins_bind_metrics_on_service_ip_and_preserve_prod_vm_units() {
     assert_eq!(
         names,
         vec![
+            "dstack-guest-agent.service.d/20-outbe-dev.conf",
+            "outbe-feeder.service.d/20-outbe-dev.conf",
             "outbe-full-node.service.d/20-outbe-dev.conf",
+            "outbe-hyperlane-validator.service.d/20-outbe-dev.conf",
             "outbe-joining-validator.service.d/20-outbe-dev.conf",
+            "outbe-radicle.service.d/20-outbe-dev.conf",
             "outbe-validator.service.d/20-outbe-dev.conf",
         ]
     );
-    // No dev drop-in sends service output to the serial console.
+    // Each dev drop-in sends the service output to the journal and the console, one time.
     for dropin in &dropins {
-        assert!(
-            !dropin.content.contains("console"),
-            "{}: dev drop-in must not write to the console",
+        assert_eq!(
+            dropin
+                .content
+                .matches("StandardOutput=journal+console\n")
+                .count(),
+            1,
+            "{}",
+            dropin.name
+        );
+        assert_eq!(
+            dropin
+                .content
+                .matches("StandardError=journal+console\n")
+                .count(),
+            1,
+            "{}",
             dropin.name
         );
     }
@@ -714,15 +731,13 @@ fn vm_dev_dropins_bind_metrics_on_service_ip_and_preserve_prod_vm_units() {
         );
 
         let dropin = unit(&dropins, &format!("{name}.d/20-outbe-dev.conf"));
-        assert!(!dropin.contains("StandardOutput="));
-        assert!(!dropin.contains("StandardError="));
         assert!(dropin.contains("\nExecStart=\nExecStart=/usr/local/bin/outbe-chain node \\"));
         assert!(dropin.contains("  --metrics ${OUTBE_VM_IP}:9101 \\"));
-        assert!(dropin.contains("  --log.stdout.filter info,commonware_p2p=debug \\"));
+        // The node prints at its default stdout level. Debug records go to the log file.
+        assert!(!dropin.contains("--log.stdout.filter"));
         assert!(!dropin.contains("127.0.0.1:9101"));
 
-        // Dev ExecStart differs from canonical prod unit ONLY in --metrics bind address and
-        // the appended --log.stdout.filter info,commonware_p2p=debug pair.
+        // Dev ExecStart differs from canonical prod unit ONLY in --metrics bind address.
         let base_tokens = exec_start_tokens(base);
         let mut expected_dev_tokens = base_tokens.clone();
         let metrics_pos = expected_dev_tokens
@@ -730,13 +745,20 @@ fn vm_dev_dropins_bind_metrics_on_service_ip_and_preserve_prod_vm_units() {
             .position(|tok| tok == "127.0.0.1:9101")
             .expect("base ExecStart must contain 127.0.0.1:9101");
         expected_dev_tokens[metrics_pos] = "${OUTBE_VM_IP}:9101".to_owned();
-        expected_dev_tokens.insert(metrics_pos + 1, "--log.stdout.filter".to_owned());
-        expected_dev_tokens.insert(metrics_pos + 2, "info,commonware_p2p=debug".to_owned());
         let dev_tokens = exec_start_tokens(dropin);
         assert_eq!(
             dev_tokens, expected_dev_tokens,
-            "{name}: dev ExecStart must differ only in --metrics address and --log.stdout.filter"
+            "{name}: dev ExecStart must differ only in --metrics address"
         );
+    }
+
+    for name in [
+        "dstack-guest-agent.service.d/20-outbe-dev.conf",
+        "outbe-feeder.service.d/20-outbe-dev.conf",
+        "outbe-hyperlane-validator.service.d/20-outbe-dev.conf",
+        "outbe-radicle.service.d/20-outbe-dev.conf",
+    ] {
+        assert!(!unit(&dropins, name).contains("ExecStart"));
     }
 }
 
