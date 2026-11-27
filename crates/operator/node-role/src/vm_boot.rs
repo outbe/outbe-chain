@@ -26,13 +26,13 @@ pub fn vm_role_services(role: NodeRole) -> &'static [&'static str] {
             "outbe-radicle.service",
             "outbe-validator.service",
             "outbe-feeder.service",
-            "outbe-hyperlane-validator.service",
+            "outbe-hyperlane-agent.service",
         ],
         NodeRole::JoiningValidator => &[
             "outbe-radicle.service",
             "outbe-joining-validator.service",
             "outbe-feeder.service",
-            "outbe-hyperlane-validator.service",
+            "outbe-hyperlane-agent.service",
         ],
         NodeRole::FullNode => &["outbe-full-node.service"],
     }

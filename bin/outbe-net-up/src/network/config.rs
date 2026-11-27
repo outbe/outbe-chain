@@ -785,7 +785,15 @@ impl NetworkConfig {
                     .any(|origin| origin.domain == local_domain),
                 "VM hyperlane.origins must include local domain {local_domain} (or omit origins to auto-generate local origins)"
             );
-            self.hyperlane.origins.clone()
+            let mut configured = self.hyperlane.origins.clone();
+            let local = configured
+                .iter_mut()
+                .find(|origin| origin.domain == local_domain)
+                .expect("local Hyperlane origin presence checked above");
+            local.rpc_urls = vec![format!("http://{local_rpc_ip}:{local_rpc_port}")];
+            local.rpc_consensus = RpcConsensus::Single;
+            local.ws_url = None;
+            configured
         };
 
         let cfg = HyperlaneConfig {
@@ -1480,5 +1488,38 @@ genesis:
                 "bare-host config must reject rpc_port={bad}"
             );
         }
+    }
+
+    #[test]
+    fn vm_explicit_local_origin_uses_each_guests_rpc_endpoint() {
+        let mut vm = vm_config("devnet", Network::Devnet.chain_id());
+        vm.hyperlane.origins.push(HyperlaneOrigin {
+            domain: 31_337,
+            rpc_urls: vec!["https://external.example.invalid".to_owned()],
+            rpc_consensus: RpcConsensus::Quorum,
+            reorg_period: ReorgPeriod::Blocks(12),
+            interval_secs: 17,
+            ws_url: Some("wss://external.example.invalid".to_owned()),
+            index_from: Some(42),
+        });
+        vm.validate().unwrap();
+
+        let first = vm.resolve_hyperlane_config(&vm.founders[0]).unwrap();
+        let second = vm.resolve_hyperlane_config(&vm.founders[1]).unwrap();
+        assert_eq!(first.origins[0].rpc_urls, vec!["http://10.77.0.10:8545"]);
+        assert_eq!(second.origins[0].rpc_urls, vec!["http://10.77.0.11:8545"]);
+        assert!(matches!(
+            first.origins[0].rpc_consensus,
+            RpcConsensus::Single
+        ));
+        assert_eq!(first.origins[0].ws_url, None);
+
+        assert_eq!(first.origins[1].rpc_urls, vm.hyperlane.origins[1].rpc_urls);
+        assert!(matches!(
+            first.origins[1].rpc_consensus,
+            RpcConsensus::Quorum
+        ));
+        assert_eq!(first.origins[1].ws_url, vm.hyperlane.origins[1].ws_url);
+        assert_eq!(first.origins[1].index_from, Some(42));
     }
 }

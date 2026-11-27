@@ -452,7 +452,7 @@ fn vm_units_share_service_policy_and_target() {
     for name in [
         "outbe-radicle.service",
         "outbe-feeder.service",
-        "outbe-hyperlane-validator.service",
+        "outbe-hyperlane-agent.service",
     ] {
         assert!(unit(&vm, name).contains("TimeoutStartSec=150\n"), "{name}");
     }
