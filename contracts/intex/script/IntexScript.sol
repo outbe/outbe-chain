@@ -16,6 +16,7 @@ abstract contract IntexScript is Script {
     error DomainTooLarge(uint256 chainId);
     error AddressMismatch(string label, address predicted, address deployed);
     error NoOutbeAccount(uint32 domain);
+    error OutbeRpcChainMismatch(uint256 outbeChainId, uint256 rpcChainId);
 
     function create3Factory() public view virtual returns (address factory) {
         factory = vm.envAddress("CREATE3_FACTORY_ADDRESS");
@@ -69,9 +70,13 @@ abstract contract IntexScript is Script {
     }
 
     /// @dev Asks CrosschainBridge on Outbe for its Interchain Account on `domain`. A fork cannot run
-    ///      the precompile, so this is a raw `eth_call` to the Outbe node. `virtual` so a test
+    ///      the precompile, so this is a raw `eth_call` to the Outbe node, which must be `OUTBE_CHAIN_ID`. `virtual` so a test
     ///      harness can supply the account.
     function _remoteAccount(uint32 domain) internal virtual returns (address) {
+        string memory rpcUrl = vm.envString("OUTBE_RPC_URL");
+        uint256 outbe = vm.envUint("OUTBE_CHAIN_ID");
+        uint256 rpcChainId = vm.parseUint(vm.toString(vm.rpc(rpcUrl, "eth_chainId", "[]")));
+        if (rpcChainId != outbe) revert OutbeRpcChainMismatch(outbe, rpcChainId);
         string memory params = string.concat(
             '[{"to":"',
             vm.toString(CROSSCHAIN_BRIDGE),
@@ -79,6 +84,6 @@ abstract contract IntexScript is Script {
             vm.toString(abi.encodeCall(ICrosschainBridge.remoteAccount, (domain))),
             '"},"latest"]'
         );
-        return abi.decode(vm.rpc(vm.envString("OUTBE_RPC_URL"), "eth_call", params), (address));
+        return abi.decode(vm.rpc(rpcUrl, "eth_call", params), (address));
     }
 }
