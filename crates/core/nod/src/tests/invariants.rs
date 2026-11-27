@@ -147,39 +147,12 @@ fn group_record_survives_membership_changes_until_last_removal() {
 }
 
 #[test]
-fn entry_price_day_is_the_last_closed_utc_day() {
-    let new_year = date_key_to_utc_timestamp(20_260_101).unwrap();
-    assert_eq!(
-        crate::openings::entry_price_day(new_year).expect("date step"),
-        20_251_231
-    );
-    assert_eq!(
-        crate::openings::entry_price_day(new_year - 1).expect("date step"),
-        20_251_230
-    );
-}
-
-#[test]
-fn issuance_rejects_legacy_and_mismatched_digests_without_writes() {
+fn issuance_rejects_mismatched_ids_without_writes() {
     let body = item(Address::repeat_byte(0x42));
     let mut provider = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut provider, |storage| {
         super::seed_production_nod_genesis(&storage);
-        let legacy = outbe_core_common::wwd_entity_id::derive_poseidon_entity_id(
-            body.owner,
-            WorldwideDay::new(body.series_id.day()),
-        )
-        .to_u256();
-        assert_ne!(body.nod_id, legacy);
         for invalid_id in [
-            legacy,
-            U256::from_be_bytes(
-                outbe_core_common::wwd_entity_id::derive_poseidon_digest(
-                    body.owner,
-                    WorldwideDay::new(body.series_id.day()),
-                )
-                .0,
-            ),
             crate::identity::generate_nod_id(body.series_id, Address::repeat_byte(0x43)),
             crate::test_support::nod_id_of(
                 body.owner,
@@ -298,12 +271,12 @@ fn nod_contract_slot_layout_is_pinned() {
         assert_eq!(nod.call_bin_count.base_slot(), U256::from(16));
         assert_eq!(nod.call_bin_groups.base_slot(), U256::from(17));
         assert_eq!(nod.call_group_slot.base_slot(), U256::from(18));
-        assert_eq!(nod.forfeit_tree_root.slot(), U256::from(19));
-        assert_eq!(nod.forfeit_tree_leaf.base_slot(), U256::from(21));
+        assert_eq!(nod.close_tree_root.slot(), U256::from(19));
+        assert_eq!(nod.close_tree_leaf.base_slot(), U256::from(21));
         assert_eq!(nod.call_currency_cursor.slot(), U256::from(22));
         assert_eq!(nod.call_bin_cursor.base_slot(), U256::from(23));
         assert_eq!(nod.config_profile.slot(), U256::from(24));
-        assert_eq!(nod.forfeit_day_len.base_slot(), U256::from(25));
-        assert_eq!(nod.forfeit_cursor.slot(), U256::from(31));
+        assert_eq!(nod.close_day_len.base_slot(), U256::from(25));
+        assert_eq!(nod.close_cursor.slot(), U256::from(31));
     });
 }

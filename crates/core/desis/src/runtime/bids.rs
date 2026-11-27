@@ -1,5 +1,5 @@
 use super::*;
-use outbe_core_common::addresses::{ERC7786_HUB_ADDRESS, TARGET_ROUTER_ADDRESS};
+use outbe_core_common::addresses::{ERC7786_HUB_ADDRESS, INTEX_AUCTION_TARGET_ROUTER_ADDRESS};
 use outbe_intexfactory::transport::wire::{decode_bids_message, evm_chain_of, BidsMessage};
 use outbe_primitives::error::PassFailure;
 
@@ -57,7 +57,7 @@ fn emit_intex_auction_bids_ignored(
 
 /// Accept a relayed bid batch. Bids accumulate per source chain while the stage is `RevealingBids`.
 /// Batches may arrive in any order over the unordered bridge, so a per-chain bitmap of
-/// `page_index` tracks completeness. The chain finalizes once its BIDS_DONE marker and every batch
+/// `page_index` tracks completeness. The chain finalizes once its BIDS_TOTALS marker and every batch
 /// have arrived (see `try_complete_intex_auction_bids`). The first batch fixes the chain's `total_pages` and
 /// every later one must agree. A redelivered batch (its bit already set) is an idempotent no-op, so
 /// the transport may safely re-deliver. A batch past clearing, or for a day that has not
@@ -117,7 +117,7 @@ pub fn collect_intex_auction_bids(
     try_complete_intex_auction_bids(&mut contract, emission_day, src_chain_id)
 }
 
-/// Accept a chain's BIDS_DONE completeness marker: the source relayed `total_pages` batches with
+/// Accept a chain's BIDS_TOTALS completeness marker: the source relayed `total_pages` batches with
 /// `total_bids` bids for this day. Stage semantics mirror `collect_intex_auction_bids`. A marker may land
 /// before the batches it counts, which finalize the chain as they arrive. A marker the chain already
 /// recorded is a no-op when it agrees and is acknowledged with `IntexAuctionBidsIgnored` when it does not: the
@@ -190,7 +190,7 @@ fn check_page_shape(page_index: u16, total_pages: u16, bids: &[IntexAuctionBidDa
     Ok(())
 }
 
-/// Mark the chain done once its BIDS_DONE marker and every batch have arrived with matching totals.
+/// Mark the chain done once its BIDS_TOTALS marker and every batch have arrived with matching totals.
 /// Invoked from both arrival paths. Either side may land last over the unordered bridge. An
 /// integrity mismatch (batch totals vs marker claims) keeps the chain not-done, so the deadline
 /// skip excludes it.
@@ -245,7 +245,7 @@ pub fn receive_bids_message(
     if caller != ERC7786_HUB_ADDRESS {
         return Err(DesisError::UnauthorizedOrigin(caller).into());
     }
-    let src_chain_id = evm_chain_of(sender, TARGET_ROUTER_ADDRESS);
+    let src_chain_id = evm_chain_of(sender, INTEX_AUCTION_TARGET_ROUTER_ADDRESS);
     let message = decode_bids_message(payload);
     let mut contract = storage.contract::<DesisContract>();
     let ignore = |contract: &mut DesisContract<'_>, day: u32, chain: u32, reason: u8| {

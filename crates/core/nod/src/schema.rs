@@ -142,7 +142,7 @@ pub struct NodGroupState {
 #[storage_schema]
 #[contract(addr = NOD_ADDRESS)]
 pub struct NodContract {
-    // --- Group member index: lets the cleanup enumerate a group's unsettled Nods.
+    // --- Group member index: lets the forfeit pass enumerate a group's unsettled Nods.
     // U256 occupies one storage word; IDs require no reconstruction.
     /// Authoritative unsettled member count, stored outside the shared group body.
     #[attribute(order = 35)]
@@ -221,11 +221,11 @@ pub struct NodContract {
     // The queue orders called groups by the UTC day when their notice period closes.
     // The trie occupies these columns. The group columns follow `config_profile`, whose slot genesis fixes.
     #[attribute(order = 67)]
-    pub forfeit_tree_root: outbe_primitives::storage::dsl::Value<U256>,
+    pub close_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 68)]
-    pub forfeit_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
+    pub close_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 69)]
-    pub forfeit_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
+    pub close_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
     /// ISO the call pass resumes at.
     #[attribute(order = 70)]
     pub call_currency_cursor: outbe_primitives::storage::dsl::Value<u32>,
@@ -238,19 +238,19 @@ pub struct NodContract {
     pub config_profile: outbe_primitives::storage::dsl::Value<u8>,
 
     #[attribute(order = 74)]
-    pub forfeit_day_len: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub close_day_len: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 75)]
-    pub forfeit_day_live: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub close_day_live: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 76)]
-    pub forfeit_day_at: outbe_primitives::storage::dsl::Map<B256, B256>,
+    pub close_day_at: outbe_primitives::storage::dsl::Map<B256, B256>,
     #[attribute(order = 77)]
     pub called_group_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
     #[attribute(order = 78)]
     pub called_deadline: outbe_primitives::storage::dsl::Map<B256, u64>,
     #[attribute(order = 79)]
-    pub forfeit_pass_day: outbe_primitives::storage::dsl::Value<u32>,
+    pub close_pass_day: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 80)]
-    pub forfeit_cursor: outbe_primitives::storage::dsl::Value<u64>,
+    pub close_cursor: outbe_primitives::storage::dsl::Value<u64>,
 
     /// Lowest sealed `call_threshold_seconds` of at least a day per reference currency.
     /// With the widest window it bounds the call prices the scan visits.
@@ -276,37 +276,37 @@ pub struct NodContract {
     pub group_unsettled_load_minor_ct:
         outbe_primitives::storage::dsl::Map<B256, outbe_primitives::storage::dsl::Bytes>,
 
-    // The queue orders forfeited groups by deadline day while their unsettled Nods await deletion.
+    // The queue orders closed groups by deadline day while their unsettled Nods await deletion.
     #[attribute(order = 90)]
-    pub cleanup_tree_root: outbe_primitives::storage::dsl::Value<U256>,
+    pub forfeit_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 91)]
-    pub cleanup_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
+    pub forfeit_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 92)]
-    pub cleanup_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
+    pub forfeit_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 93)]
-    pub cleanup_day_len: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub forfeit_day_len: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 94)]
-    pub cleanup_day_live: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub forfeit_day_live: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 95)]
-    pub cleanup_day_at: outbe_primitives::storage::dsl::Map<B256, B256>,
+    pub forfeit_day_at: outbe_primitives::storage::dsl::Map<B256, B256>,
     #[attribute(order = 96)]
-    pub cleanup_group_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
+    pub forfeit_group_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
     #[attribute(order = 97)]
-    pub cleanup_deadline: outbe_primitives::storage::dsl::Map<B256, u64>,
+    pub forfeit_deadline: outbe_primitives::storage::dsl::Map<B256, u64>,
     #[attribute(order = 98)]
-    pub cleanup_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
+    pub forfeit_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 99)]
-    pub cleanup_cursor: outbe_primitives::storage::dsl::Value<u64>,
+    pub forfeit_cursor: outbe_primitives::storage::dsl::Value<u64>,
     #[attribute(order = 100)]
     pub daily_phase: outbe_primitives::storage::dsl::Value<u8>,
     #[attribute(order = 101)]
     pub daily_budget: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 103)]
-    pub cleanup_budget: outbe_primitives::storage::dsl::Value<U256>,
+    pub forfeit_budget: outbe_primitives::storage::dsl::Value<U256>,
 
     /// Set to `true` when the group's call notice deadline lapses and its unsettled load is forfeited.
     #[attribute(order = 106)]
-    pub group_is_forfeited: outbe_primitives::storage::dsl::Map<B256, bool>,
+    pub group_is_closed: outbe_primitives::storage::dsl::Map<B256, bool>,
 
     /// Sub-series keys belonging to a call group, kept until `close_group` so
     /// `NodSeriesCalled` and `NodSeriesClosed` emit per sub-series.
@@ -329,15 +329,15 @@ pub struct NodContract {
     #[attribute(order = 115)]
     pub group_series_unsettled_load_minor_ct:
         outbe_primitives::storage::dsl::Map<B256, outbe_primitives::storage::dsl::Bytes>,
-    /// Set while the forfeit pass closes the group series by series, until the group is forfeited.
+    /// Set while the close pass closes the group series by series, until the group is closed.
     #[attribute(order = 116)]
-    pub group_forfeiting: outbe_primitives::storage::dsl::Map<B256, bool>,
-    /// The open loads of the group series the forfeit pass has closed so far.
+    pub group_closing: outbe_primitives::storage::dsl::Map<B256, bool>,
+    /// The open loads of the group series the close pass has closed so far.
     #[attribute(order = 117)]
-    pub group_forfeit_load_minor: outbe_primitives::storage::dsl::Map<B256, U256>,
-    /// Whether the forfeit pass has closed `group_series_key(group_key, sub_series)`.
+    pub group_close_load_minor: outbe_primitives::storage::dsl::Map<B256, U256>,
+    /// Whether the close pass has closed `group_series_key(group_key, sub_series)`.
     #[attribute(order = 118)]
-    pub group_series_forfeited: outbe_primitives::storage::dsl::Map<B256, bool>,
+    pub group_series_closed: outbe_primitives::storage::dsl::Map<B256, bool>,
     /// The series of a sub-series key.
     #[attribute(order = 119)]
     pub sub_series_series_id: outbe_primitives::storage::dsl::Map<B256, SeriesId>,

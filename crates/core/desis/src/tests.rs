@@ -177,7 +177,7 @@ fn fixture_provider(chains: &[u32]) -> HashMapStorageProvider {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(NOW));
     seed_targets(&mut storage, chains);
-    // Stub IntexNFT1155: createSeries/burnIntex are void. balanceOf returns 0 (32 bytes).
+    // Stub IntexNFT1155: openSeries/burnIntex are void. balanceOf returns 0 (32 bytes).
     storage.stub_sub_call_at(
         outbe_intexfactory::constants::INTEX_NFT1155_ADDRESS,
         Bytes::from(vec![0u8; 32]),
@@ -344,7 +344,7 @@ fn open_clearing(s: &StorageHandle, units: u128) {
     arm_clearing(s);
 }
 
-/// Send the chain's BIDS_DONE marker so its intake finalizes and the clearing gate opens.
+/// Send the chain's BIDS_TOTALS marker so its intake finalizes and the clearing gate opens.
 fn mark_done(s: &StorageHandle, chain: u32, total_pages: u16, total_bids: u32) {
     runtime::complete_intex_auction_bids(
         s.clone(),
@@ -1787,7 +1787,7 @@ fn process_bids_accumulate_across_batches() {
         open_revealing(&s);
 
         // Two batches (total_pages=2) accumulate for the chain. Intake stays
-        // Revealing. Nothing auto-transitions. The chain finalizes only on its BIDS_DONE marker.
+        // Revealing. Nothing auto-transitions. The chain finalizes only on its BIDS_TOTALS marker.
         runtime::collect_intex_auction_bids(
             s.clone(),
             runtime::Inbound {
@@ -1962,7 +1962,7 @@ fn no_bids_clears_as_no_sale() {
         mark_done(&s, SRC_CHAIN, 1, 0);
 
         // Clearing a zero-bid auction is a no-sale: Completed with 0 issued and no winners. The
-        // AuctionResult(0,0,0) lets the target chain finalize to Completed instead of stalling.
+        // IntexAuctionResult(0,0,0) lets the target chain finalize to Completed instead of stalling.
         let result = clear(&s);
         assert_eq!(result.issued_units, 0);
         assert!(result.winners.is_empty());
@@ -2961,7 +2961,7 @@ fn clearing_marks_the_bid_supply_ran_out_in() {
     });
 }
 
-/// The same vectors pin the lock `EscrowAdapter.lockFunds` takes.
+/// The same vectors pin the lock `EscrowAdapter.lockIntexAuctionAsset` takes.
 #[test]
 fn rate_lock_matches_the_escrow_vectors() {
     assert_eq!(runtime::rate_lock(1, 1, 999_999), 0);

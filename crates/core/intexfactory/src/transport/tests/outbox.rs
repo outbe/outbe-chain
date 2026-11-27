@@ -99,7 +99,7 @@ fn a_chain_gets_its_messages_in_order_through_the_bridge() {
     assert_eq!(call.calls.len(), 1);
     assert_eq!(
         call.calls[0].to,
-        outbe_core_common::addresses::TARGET_ROUTER_ADDRESS
+        outbe_core_common::addresses::INTEX_AUCTION_TARGET_ROUTER_ADDRESS
     );
     assert_eq!(call.calls[0].value, U256::ZERO);
     assert_eq!(

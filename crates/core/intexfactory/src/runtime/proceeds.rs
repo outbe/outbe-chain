@@ -2,7 +2,9 @@ use super::*;
 
 use crate::transport::wire::evm_chain_of;
 use alloy_sol_types::{sol, SolValue};
-use outbe_core_common::addresses::{TARGET_ROUTER_ADDRESS, WCOEN_ADDRESS, WCOEN_BRIDGE_ADDRESS};
+use outbe_core_common::addresses::{
+    INTEX_AUCTION_TARGET_ROUTER_ADDRESS, WCOEN_ADDRESS, WCOEN_BRIDGE_ADDRESS,
+};
 use outbe_promislimit::{BurnSource, PromisLimitContract};
 
 sol! {
@@ -17,7 +19,7 @@ pub struct CrosschainProceeds<'a> {
     pub extra_data: &'a [u8],
 }
 
-/// The proceeds of one page of winners from TargetRouter of `src_chain_id`, which the WCOEN token
+/// The proceeds of one page of winners from IntexAuctionTargetRouter of `src_chain_id`, which the WCOEN token
 /// bridge credited to the factory. They burn with code 43.
 pub fn receive_crosschain_proceeds(
     storage: &StorageHandle<'_>,
@@ -36,13 +38,13 @@ pub fn receive_crosschain_proceeds(
     let (emission_day, page_index) = <(u32, u32)>::abi_decode_params(extra_data)
         .map_err(|_| IntexFactoryError::UndecodableProceedsData)?;
     require_day_target(storage, emission_day, src_chain_id)?;
-    if evm_chain_of(from, TARGET_ROUTER_ADDRESS) != Some(src_chain_id) {
+    if evm_chain_of(from, INTEX_AUCTION_TARGET_ROUTER_ADDRESS) != Some(src_chain_id) {
         return Err(IntexFactoryError::UnauthorizedProceedsSender(from.to_vec().into()).into());
     }
     burn_wcoen_proceeds(storage, emission_day, page_index, src_chain_id, amount)
 }
 
-/// The proceeds of one page of winners that TargetRouter on Outbe approved to the factory.
+/// The proceeds of one page of winners that IntexAuctionTargetRouter on Outbe approved to the factory.
 pub fn receive_local_proceeds(
     storage: &StorageHandle<'_>,
     caller: Address,
@@ -50,7 +52,7 @@ pub fn receive_local_proceeds(
     page_index: u32,
     amount: U256,
 ) -> Result<()> {
-    if caller != TARGET_ROUTER_ADDRESS {
+    if caller != INTEX_AUCTION_TARGET_ROUTER_ADDRESS {
         return Err(IntexFactoryError::UnauthorizedProceedsCaller(caller).into());
     }
     let local =

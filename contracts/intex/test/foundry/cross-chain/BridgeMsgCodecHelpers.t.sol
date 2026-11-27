@@ -98,7 +98,7 @@ contract BridgeMsgCodecHelpersTest is Test {
     }
 
     // --- assertMinLength on the fixed-width-but-variable-floor helpers ---
-    function test_assertMinLength_shortMarkCalled_reverts() public {
+    function test_assertMinLength_shortCallNotice_reverts() public {
         uint16 floor = BridgeMsgCodec.MIN_LEN_INTEX_SERIES_CALL_NOTICE;
         bytes memory packet = new bytes(uint256(floor) - 1);
         vm.expectRevert(

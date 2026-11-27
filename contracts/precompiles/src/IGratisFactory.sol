@@ -6,7 +6,7 @@ interface IGratisFactory {
     error InvalidCoenAmount();
 
     event CoenMinedFromGratis(address indexed account, uint256 amountMinor);
-    event GratisMinedFromCoen(address indexed account, uint256 gratisMinor);
+    event GratisMinedFromCoen(address indexed account, uint256 amountMinor);
     function mineCoen(uint256 gratisMinor, bytes32 mac, uint64 opNonce) external returns (uint256 coenMinor);
     /// Mine Gratis from the native COEN sent with the call, 1 COEN to 1 Gratis. `msg.value`
     /// must be a non-zero whole number of Gratis minors (1e12 units each). The COEN is burned

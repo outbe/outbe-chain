@@ -440,8 +440,7 @@ fn record_failed_allocation_fallback(ctx: &BlockRuntimeContext, day: u32) -> Res
                 emissionDay: day,
                 emissionLimitMinor: cap,
                 reason: ALLOCATION_FAILED_STEP_REVERTED,
-            })?;
-        outbe_metadosis::commands::emit_canceled_after_failed_allocation(ctx, day)
+            })
     })
 }
 

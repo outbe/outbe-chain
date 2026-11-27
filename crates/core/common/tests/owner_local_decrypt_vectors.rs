@@ -3,13 +3,12 @@
 
 use alloy_primitives::{hex, Address, B256, U256};
 use outbe_core_common::confidential_tee::{
-    decrypt_fidelity_cohorts, decrypt_gratis_balance, decrypt_nod_for_owner,
-    decrypt_nod_nominal_for_owner, decrypt_promis_balance, LocalCryptoError,
+    decrypt_gratis_balance, decrypt_nod_for_owner, decrypt_nod_nominal_for_owner,
+    decrypt_promis_balance, LocalCryptoError,
 };
 use outbe_core_common::nod_encryption::{EncryptedNodV1, NodTermsV1};
 use outbe_system_common::time::WorldwideDay;
 
-const FIDELITY_BLOB: &str = "01020304050607084649443231313131313131313131313131313131313131313131313131313131313131316f227d375d26e7d0c69faf0aa386d6b2f7e739b4de99fc0828f54a8b22d4e223";
 const GRATIS_BLOB: &str = "111213141516171847524132515151515151515151515151515151515151515151515151515151515151515146185e002fe9d80f2f80daea54dcfbd2faa5ce7014252c82b2d6dccd3455cc7a79fdb10771779339ce5f26d6aa2f2027";
 const PROMIS_BLOB: &str = "111213141516171850524f325151515151515151515151515151515151515151515151515151515151515151950f76eb13183701977ca3510b80c426f3dacad91248fa9961b5857074a00025091a5da1a6224be9617c475e65c22d71";
 const NOD_CONTEXT_DIGEST: &str = "b09e597ba7d0c3f500971679c335da4fec642cad4f3a5f4e4017762e362b8ad3";
@@ -48,13 +47,8 @@ fn fixed_nod() -> EncryptedNodV1 {
 fn fixed_owner_local_view_vectors_open_exact_plaintext() {
     let key = [0x11; 32];
     let account = Address::repeat_byte(0x42);
-    let fidelity = hex::decode(FIDELITY_BLOB).unwrap();
     let gratis = hex::decode(GRATIS_BLOB).unwrap();
     let promis = hex::decode(PROMIS_BLOB).unwrap();
-    assert_eq!(
-        decrypt_fidelity_cohorts(&key, account, &fidelity).unwrap(),
-        b"cohort-v2-golden".to_vec()
-    );
     assert_eq!(
         decrypt_gratis_balance(&key, account, &gratis).unwrap(),
         U256::from(123_456_789_u64)
@@ -69,13 +63,8 @@ fn fixed_owner_local_view_vectors_open_exact_plaintext() {
 fn owner_local_views_reject_wrong_context_and_tampered_tag() {
     let key = [0x11; 32];
     let account = Address::repeat_byte(0x42);
-    let mut fidelity = hex::decode(FIDELITY_BLOB).unwrap();
     let mut gratis = hex::decode(GRATIS_BLOB).unwrap();
     let mut promis = hex::decode(PROMIS_BLOB).unwrap();
-    assert_eq!(
-        decrypt_fidelity_cohorts(&key, Address::repeat_byte(0x43), &fidelity).unwrap_err(),
-        "Fidelity cohort decryption failed"
-    );
     assert_eq!(
         decrypt_gratis_balance(&key, Address::repeat_byte(0x43), &gratis).unwrap_err(),
         "Gratis balance decryption failed"
@@ -84,13 +73,8 @@ fn owner_local_views_reject_wrong_context_and_tampered_tag() {
         decrypt_promis_balance(&key, Address::repeat_byte(0x43), &promis).unwrap_err(),
         "Promis balance decryption failed"
     );
-    *fidelity.last_mut().unwrap() ^= 1;
     *gratis.last_mut().unwrap() ^= 1;
     *promis.last_mut().unwrap() ^= 1;
-    assert_eq!(
-        decrypt_fidelity_cohorts(&key, account, &fidelity).unwrap_err(),
-        "Fidelity cohort decryption failed"
-    );
     assert_eq!(
         decrypt_gratis_balance(&key, account, &gratis).unwrap_err(),
         "Gratis balance decryption failed"

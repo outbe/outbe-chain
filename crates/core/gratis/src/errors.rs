@@ -94,9 +94,6 @@ outbe_core_common::define_confidential_fatal_error! {
         #[source]
         source: Box<dyn std::error::Error + Send + Sync>,
     },
-    /// A co-located Fidelity section produced no outcome.
-    #[error("enclave dropped the fidelity section outcome")]
-    MissingFidelityOutcome,
     /// The collateral result did not match the requested movement.
     #[error("invalid owner movement")]
     InvalidOwnerMovement,
@@ -118,7 +115,6 @@ fn reverts(err: &GratisFatalError) -> bool {
     matches!(
         err,
         GratisFatalError::TestEnclave { .. }
-            | GratisFatalError::MissingFidelityOutcome
             | GratisFatalError::InvalidOwnerMovement
             | GratisFatalError::WrongOpNonce
             | GratisFatalError::CollateralResultMismatch

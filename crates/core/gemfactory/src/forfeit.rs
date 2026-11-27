@@ -1,0 +1,95 @@
+//! Forfeit pass: deletes the unsettled gems of the closed groups. It moves no value:
+//! the close already returned their load.
+
+use alloy_primitives::{B256, U256};
+use outbe_core_common::deadline_queue::{self, DeadlineHandler, Due};
+use outbe_gem::precompile::IGem::GemForfeited;
+use outbe_gem::{api as gem_api, ForfeitQueue, GemContract};
+use outbe_primitives::{
+    block::BlockRuntimeContext,
+    error::{PassFailure, PrecompileError, Result},
+    storage::StorageHandle,
+};
+
+use crate::errors::GemFactoryError;
+
+/// Deletes the unsettled gems of the closed groups. Returns the gems deleted.
+pub fn forfeit_through(ctx: &BlockRuntimeContext) -> Result<u32> {
+    let queue = GemContract::new(ctx.storage.clone());
+    let mut forfeit = GemForfeit::new(ctx);
+    deadline_queue::run_with_saved_budget(
+        &ForfeitQueue(&queue),
+        ctx,
+        &queue.forfeit_budget,
+        &mut forfeit,
+    )?;
+    Ok(forfeit.deleted)
+}
+
+struct GemForfeit<'a, 's> {
+    storage: &'a StorageHandle<'s>,
+    gem: GemContract<'s>,
+    deleted: u32,
+}
+
+impl<'a, 's> GemForfeit<'a, 's> {
+    fn new(ctx: &'a BlockRuntimeContext<'s>) -> Self {
+        Self {
+            storage: &ctx.storage,
+            gem: GemContract::new(ctx.storage.clone()),
+            deleted: 0,
+        }
+    }
+}
+
+/// A closed group's members are its unsettled gems.
+impl DeadlineHandler<B256> for GemForfeit<'_, '_> {
+    type Member = U256;
+
+    fn due(&mut self, group: B256) -> Result<Due> {
+        Ok(match self.gem.group_gem_count.read(&group)? {
+            0 => Due::Drop,
+            _ => Due::Handle,
+        })
+    }
+
+    fn member_count(&self, group: B256) -> Result<u32> {
+        self.gem.group_gem_count.read(&group)
+    }
+
+    fn member_at(&self, group: B256, index: u32) -> Result<U256> {
+        self.gem
+            .group_gems
+            .read(&GemContract::group_member_key(group, index))
+    }
+
+    fn classify(&self, error: &PrecompileError) -> PassFailure {
+        error.record_pass_failure()
+    }
+
+    fn handle_member(&mut self, group_key: B256, gem_id: U256) -> Result<()> {
+        if gem_id.is_zero() {
+            return Err(GemFactoryError::EmptyMemberSlotDuringForfeit { group_key }.into());
+        }
+        let (item, group) = gem_api::load_pair(self.storage, gem_id)?
+            .ok_or(GemFactoryError::MissingMemberRecordDuringForfeit { group_key, gem_id })?;
+        if item.body().is_settled() || item.body().group_key != group_key {
+            return Err(GemFactoryError::IneligibleGroupMember { group_key, gem_id }.into());
+        }
+        let forfeited = GemForfeited {
+            gemId: gem_id,
+            owner: item.body().owner,
+            issuanceCurrency: item.body().issuance_currency,
+            referenceCurrency: item.body().reference_currency,
+        };
+        gem_api::remove_gem(self.storage, item, group)?;
+        self.gem.emit(forfeited)?;
+        self.deleted = self.deleted.saturating_add(1);
+        Ok(())
+    }
+
+    fn deferred(&mut self, group: B256, retry_at: u64) -> Result<()> {
+        tracing::warn!(target: "outbe::gemfactory", %group, retry_at, "forfeit pass: group deferred");
+        Ok(())
+    }
+}

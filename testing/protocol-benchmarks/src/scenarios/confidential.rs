@@ -2,8 +2,6 @@ use std::time::Instant;
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_core_common::confidential_tee::{ModifyOperation, TeeError};
-use outbe_fidelity::enclave_client::test_enclave as fidelity_enclave;
-use outbe_fidelity::FidelityCohortOp;
 use outbe_gratis::enclave_client::test_enclave as gratis_enclave;
 use outbe_gratis::{GratisOp, ModifyAuth};
 use outbe_primitives::{
@@ -29,7 +27,6 @@ const AMOUNT: u64 = 10_000_000;
 enum ConfidentialPath {
     Promis,
     Gratis,
-    GratisWithFidelity,
     Gratisfactory,
 }
 
@@ -49,13 +46,6 @@ impl ConfidentialScenario {
     pub const fn gratis() -> Self {
         Self {
             path: ConfidentialPath::Gratis,
-        }
-    }
-
-    #[must_use]
-    pub const fn gratis_with_fidelity() -> Self {
-        Self {
-            path: ConfidentialPath::GratisWithFidelity,
         }
     }
 
@@ -128,22 +118,6 @@ impl ConfidentialScenario {
             ConfidentialPath::Gratis => {
                 outbe_gratis::api::mint(storage, ACCOUNT, U256::from(AMOUNT), gratis_auth())?
             }
-            ConfidentialPath::GratisWithFidelity => {
-                let section = outbe_fidelity::api::cohort_section(
-                    storage.clone(),
-                    ACCOUNT,
-                    FidelityCohortOp::In,
-                    T_NOW,
-                )?;
-                let outcome = outbe_gratis::api::mint_with_fidelity(
-                    storage.clone(),
-                    ACCOUNT,
-                    U256::from(AMOUNT),
-                    gratis_auth(),
-                    section,
-                )?;
-                outbe_fidelity::api::apply_fidelity_outcome(storage, ACCOUNT, &outcome)?;
-            }
             ConfidentialPath::Gratisfactory => {
                 outbe_gratisfactory::api::mint(storage, ACCOUNT, U256::from(AMOUNT), gratis_auth())?
             }
@@ -154,13 +128,7 @@ impl ConfidentialScenario {
     fn read_post_state(
         &self,
         storage: StorageHandle<'_>,
-    ) -> Result<(U256, bool), ConfidentialScenarioError> {
-        let fidelity_applied = match self.path {
-            ConfidentialPath::GratisWithFidelity | ConfidentialPath::Gratisfactory => {
-                outbe_fidelity::api::league(storage.clone(), ACCOUNT)? > 0
-            }
-            _ => false,
-        };
+    ) -> Result<U256, ConfidentialScenarioError> {
         let balance = match self.path {
             ConfidentialPath::Promis => {
                 let key = outbe_promis::derive_view_key(&promis_enclave::state_key(), ACCOUNT)?;
@@ -173,7 +141,7 @@ impl ConfidentialScenario {
                 outbe_gratis::decrypt_balance(&key, ACCOUNT, &blob)?
             }
         };
-        Ok((balance, fidelity_applied))
+        Ok(balance)
     }
 
     fn run_once_typed(
@@ -200,8 +168,7 @@ impl ConfidentialScenario {
         )
         .map_err(ConfidentialScenarioError::Capture)?;
 
-        let (balance, fidelity_applied) =
-            StorageHandle::enter(&mut provider, |storage| self.read_post_state(storage))?;
+        let balance = StorageHandle::enter(&mut provider, |storage| self.read_post_state(storage))?;
         if balance != U256::from(AMOUNT) {
             return Err(ConfidentialScenarioError::BalanceMismatch);
         }
@@ -209,7 +176,6 @@ impl ConfidentialScenario {
         let component = match self.path {
             ConfidentialPath::Promis => "chain.promis.mint",
             ConfidentialPath::Gratis => "chain.gratis.mint",
-            ConfidentialPath::GratisWithFidelity => "chain.gratis.mint_with_fidelity",
             ConfidentialPath::Gratisfactory => "chain.gratisfactory.mint",
         };
         let mut observation = Observation::new(
@@ -218,11 +184,7 @@ impl ConfidentialScenario {
         )
         .with_total_latency(latency_ns)
         .with_latency(component, latency_ns)
-        .with_postcondition("confidential.balance_matches", "true")
-        .with_postcondition(
-            "confidential.fidelity_applied",
-            fidelity_applied.to_string(),
-        );
+        .with_postcondition("confidential.balance_matches", "true");
         observation.storage = captured.storage;
         observation.events = captured.events;
         Ok(observation)
@@ -236,10 +198,6 @@ impl BenchmarkScenario for ConfidentialScenario {
         let (id, display_name) = match self.path {
             ConfidentialPath::Promis => ("promis/create/mint", "Promis confidential mint"),
             ConfidentialPath::Gratis => ("gratis/create/mint", "Gratis confidential mint"),
-            ConfidentialPath::GratisWithFidelity => (
-                "gratis/create/mint-with-fidelity",
-                "Gratis mint with fused Fidelity round-trip",
-            ),
             ConfidentialPath::Gratisfactory => (
                 "gratisfactory/create/mint",
                 "Gratisfactory mint orchestration",
@@ -257,7 +215,6 @@ impl BenchmarkScenario for ConfidentialScenario {
     fn prepare(&self, _profile: Profile) -> Result<Self::Prepared, String> {
         promis_enclave::install();
         gratis_enclave::install();
-        fidelity_enclave::install();
         let mut provider = HashMapStorageProvider::new(CHAIN_ID);
         provider.set_block_number(1);
         provider.set_timestamp(U256::from(T_NOW));

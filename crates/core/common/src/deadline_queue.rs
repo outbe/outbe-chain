@@ -19,7 +19,7 @@ use outbe_system_common::math::tree_math::{self, BinTreeStorage};
 use outbe_system_common::pass_budget::{BlockAllowance, PassBudget};
 
 mod walk;
-pub use walk::{process_through, PassTime};
+pub use walk::{run_through, PassTime};
 
 /// A queue entry cannot use zero because zero marks a vacant slot.
 pub trait QueueEntry: Copy + PartialEq + Storable + StorageKey {
@@ -226,7 +226,7 @@ fn retire_day<'s, Q: DeadlineQueueStore<'s>>(queue: &Q, day: u32) -> Result<()> 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Due {
     /// Expire its members.
-    Process,
+    Handle,
     /// The pass removes the entry because no members remain to expire.
     Drop,
     /// The pass defers the entry to a later day.
@@ -248,7 +248,7 @@ pub trait DeadlineHandler<E> {
         1
     }
     /// Expires `member` and takes it out of the entry.
-    fn process_member(&mut self, entry: E, member: Self::Member) -> Result<()>;
+    fn handle_member(&mut self, entry: E, member: Self::Member) -> Result<()>;
     fn classify(&self, error: &PrecompileError) -> PassFailure {
         error.pass_failure()
     }
@@ -257,7 +257,7 @@ pub trait DeadlineHandler<E> {
 }
 
 /// This function resumes the selected deadline day with the caller's shared allowance for the block.
-pub fn process_day<'s, Q, H>(
+pub fn run_through_day<'s, Q, H>(
     queue: &Q,
     ctx: &outbe_primitives::block::BlockRuntimeContext<'s>,
     through_day: u32,
@@ -268,7 +268,7 @@ where
     Q: DeadlineQueueStore<'s>,
     H: DeadlineHandler<Q::Entry>,
 {
-    process_through(
+    run_through(
         queue,
         &ctx.storage,
         PassTime {
@@ -282,7 +282,7 @@ where
 
 /// This function removes already-accounted records and stores the separate cleanup allowance within one checkpoint.
 /// Repeated calls at the same block height cannot reset the allowance.
-pub fn process_cleanup<'s, Q, H>(
+pub fn run_with_saved_budget<'s, Q, H>(
     queue: &Q,
     ctx: &outbe_primitives::block::BlockRuntimeContext<'s>,
     saved_budget: &Value<'s, U256>,
@@ -295,7 +295,7 @@ where
     ctx.storage.with_checkpoint(|| {
         let mut allowance =
             BlockAllowance::for_block(saved_budget.read()?, ctx.block.block_number, 0)?;
-        let progress = process(
+        let progress = run_closed_days(
             queue,
             &ctx.storage,
             ctx.block.timestamp,
@@ -308,7 +308,7 @@ where
 }
 
 /// This function processes entries through the last closed UTC day. The pass does not visit an open day.
-pub fn process<'s, Q, H>(
+pub fn run_closed_days<'s, Q, H>(
     queue: &Q,
     storage: &StorageHandle<'s>,
     now: u64,
@@ -322,7 +322,7 @@ where
     let Some(closed_timestamp) = now.checked_sub(SECONDS_PER_DAY) else {
         return Ok(Progress::Complete);
     };
-    process_through(
+    run_through(
         queue,
         storage,
         PassTime {
@@ -449,7 +449,7 @@ mod tests {
         fn member_at(&self, entry: U256, _: u32) -> Result<U256> {
             Ok(entry)
         }
-        fn process_member(&mut self, entry: U256, _: U256) -> Result<()> {
+        fn handle_member(&mut self, entry: U256, _: U256) -> Result<()> {
             if self.out_of_gas_on.contains(&entry) {
                 return Err(PrecompileError::OutOfGas);
             }
@@ -479,7 +479,7 @@ mod tests {
             deferred: Vec::new(),
             out_of_gas_on: Vec::new(),
             refused: Vec::new(),
-            due: Due::Process,
+            due: Due::Handle,
         }
     }
 
@@ -494,7 +494,7 @@ mod tests {
         budget: &mut PassBudget,
         handler: &mut Recorder,
     ) -> Progress {
-        process(queue, storage, now, budget, handler).unwrap()
+        run_closed_days(queue, storage, now, budget, handler).unwrap()
     }
 
     #[test]
@@ -551,7 +551,7 @@ mod tests {
             let mut handler = recorder();
             let mut budget = PassBudget::new(10, 10);
             assert_eq!(
-                process_through(
+                run_through(
                     queue,
                     storage,
                     PassTime {
@@ -568,7 +568,7 @@ mod tests {
             assert_eq!(first_day(queue).unwrap(), Some(12));
             assert_eq!((budget.visits_left(), budget.writes_left()), (8, 8));
             assert_eq!(
-                process_through(
+                run_through(
                     queue,
                     storage,
                     PassTime {
@@ -820,7 +820,7 @@ mod tests {
         type Member = ();
 
         fn due(&mut self, _: U256) -> Result<Due> {
-            Ok(Due::Process)
+            Ok(Due::Handle)
         }
 
         fn member_count(&self, _: U256) -> Result<u32> {
@@ -831,7 +831,7 @@ mod tests {
             Ok(())
         }
 
-        fn process_member(&mut self, _: U256, _: ()) -> Result<()> {
+        fn handle_member(&mut self, _: U256, _: ()) -> Result<()> {
             self.state.write(1)?;
             match self.member_error.take() {
                 Some(error) => Err(error),
@@ -885,12 +885,12 @@ mod tests {
             );
             let mut handler = recorder();
             assert_eq!(
-                process_cleanup(queue, &ctx, &saved, &mut handler).unwrap(),
+                run_with_saved_budget(queue, &ctx, &saved, &mut handler).unwrap(),
                 Progress::Pending
             );
             assert_eq!(handler.expired, vec![id(1)]);
             assert_eq!(
-                process_cleanup(queue, &ctx, &saved, &mut handler).unwrap(),
+                run_with_saved_budget(queue, &ctx, &saved, &mut handler).unwrap(),
                 Progress::Pending
             );
             assert_eq!(
@@ -921,7 +921,7 @@ mod tests {
                 defer_error: false,
             };
             assert!(matches!(
-                process_cleanup(queue, &ctx, &saved, &mut handler),
+                run_with_saved_budget(queue, &ctx, &saved, &mut handler),
                 Err(PrecompileError::Storage(_))
             ));
             assert_eq!(handler.state.read().unwrap(), 0);
@@ -930,7 +930,7 @@ mod tests {
             assert_eq!(entry_at(queue, 10, 1).unwrap(), Some(id(2)));
 
             assert_eq!(
-                process_cleanup(queue, &ctx, &saved, &mut handler).unwrap(),
+                run_with_saved_budget(queue, &ctx, &saved, &mut handler).unwrap(),
                 Progress::Complete
             );
             assert_eq!(first_day(queue).unwrap(), None);
@@ -952,7 +952,7 @@ mod tests {
                 defer_error: false,
             };
             assert_eq!(
-                process(
+                run_closed_days(
                     queue,
                     storage,
                     11 * DAY,
@@ -968,7 +968,7 @@ mod tests {
 
             handler.member_error = Some(PrecompileError::Storage("injected member failure".into()));
             assert!(matches!(
-                process(
+                run_closed_days(
                     queue,
                     storage,
                     12 * DAY,
@@ -983,7 +983,7 @@ mod tests {
             handler.member_error = Some(PrecompileError::Revert("refused again".into()));
             handler.defer_error = true;
             assert!(matches!(
-                process(
+                run_closed_days(
                     queue,
                     storage,
                     12 * DAY,
@@ -1017,7 +1017,7 @@ mod tests {
             Ok(if self.members.is_empty() {
                 Due::Drop
             } else {
-                Due::Process
+                Due::Handle
             })
         }
         fn member_count(&self, _: U256) -> Result<u32> {
@@ -1026,7 +1026,7 @@ mod tests {
         fn member_at(&self, _: U256, index: u32) -> Result<u32> {
             Ok(index)
         }
-        fn process_member(&mut self, _: U256, index: u32) -> Result<()> {
+        fn handle_member(&mut self, _: U256, index: u32) -> Result<()> {
             let member = self.members[index as usize];
             if self.failing.contains(&member) {
                 return Err(PrecompileError::Revert("refused".into()));
@@ -1053,7 +1053,7 @@ mod tests {
             };
             for _ in 0..4 {
                 assert_eq!(
-                    process(
+                    run_closed_days(
                         queue,
                         storage,
                         11 * DAY,
@@ -1067,7 +1067,7 @@ mod tests {
             assert_eq!(handler.expired.len(), 5);
             assert_eq!(handler.deferred, 0);
             assert_eq!(
-                process(
+                run_closed_days(
                     queue,
                     storage,
                     11 * DAY,

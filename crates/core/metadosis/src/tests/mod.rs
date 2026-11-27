@@ -15,7 +15,6 @@ const CHAIN_ID: u64 = 1;
 fn with_storage<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 64);
-    outbe_fidelity::enclave_client::test_enclave::install();
     outbe_nod::test_support::install();
     StorageHandle::enter(&mut storage, |storage| f(storage.clone()))
 }
@@ -40,7 +39,6 @@ fn allocate_to_metadosis(ctx: &BlockRuntimeContext<'_>, day: u32, limit: U256) {
 }
 
 fn install_test_enclaves() {
-    outbe_fidelity::enclave_client::test_enclave::install();
     outbe_nod::test_support::install();
 }
 

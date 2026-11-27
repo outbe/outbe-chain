@@ -14,10 +14,9 @@ alloy-sol-types.workspace = true
 hex.workspace = true
 outbe-credis.workspace = true
 outbe-credisfactory.workspace = true
-outbe-fidelity = { workspace = true, features = ["test-enclave"] }
 outbe-gem = { workspace = true, features = ["test-utils"] }
 outbe-gemfactory.workspace = true
-outbe-gratis = { workspace = true, features = ["test-enclave", "test-utils"] }
+outbe-gratis = { workspace = true, features = ["test-enclave"] }
 outbe-gratisfactory = { workspace = true, features = ["test-utils"] }
 outbe-intex.workspace = true
 outbe-intexfactory = { workspace = true, features = ["bench-utils"] }

@@ -1,0 +1,109 @@
+# Minimal four-founder test network. Add more `founders` entries for a larger founding committee.
+# This workflow uses in-process TEE without attestation and is limited to devnet and testnet.
+version: 1
+name: local-testnet
+network: testnet
+chain_id: 54322345
+certified_rpc: "http://10.0.0.10:8545"
+founders:
+  - name: validator-0
+    ssh:
+      host: 192.0.2.10
+      user: ubuntu
+      port: 22
+    advertise_ip: 10.0.0.10
+    rpc_bind_ip: 10.0.0.10
+    # Optional per-member HTTP JSON-RPC port (defaults to 8545; written to OUTBE_RPC_PORT).
+    # rpc_port: 8545
+    hyperlane_public_url: "http://192.0.2.10:9000"
+  - name: validator-1
+    ssh:
+      host: 192.0.2.11
+      user: ubuntu
+      port: 22
+    advertise_ip: 10.0.0.11
+    rpc_bind_ip: 10.0.0.11
+    hyperlane_public_url: "http://192.0.2.11:9000"
+  - name: validator-2
+    ssh:
+      host: 192.0.2.12
+      user: ubuntu
+      port: 22
+    advertise_ip: 10.0.0.12
+    rpc_bind_ip: 10.0.0.12
+    hyperlane_public_url: "http://192.0.2.12:9000"
+  - name: validator-3
+    ssh:
+      host: 192.0.2.13
+      user: ubuntu
+      port: 22
+    advertise_ip: 10.0.0.13
+    rpc_bind_ip: 10.0.0.13
+    hyperlane_public_url: "http://192.0.2.13:9000"
+
+hyperlane:
+  gasless: true
+  origins:
+    - domain: 54322345
+      rpc_urls:
+        - "https://rpc.testnet.outbe.net"
+      reorg_period: 0
+    - domain: 97
+      rpc_urls:
+        - "https://data-seed-prebsc-1-s1.bnbchain.org:8545"
+        - "https://data-seed-prebsc-1-s2.bnbchain.org:8545"
+      reorg_period: 9
+    - domain: 11155111
+      rpc_urls:
+        - "https://ethereum-sepolia-rpc.publicnode.com"
+      reorg_period: 2
+
+topology:
+  # Enable only when consensus peers use private/RFC1918 addresses.
+  use_local_defaults: true
+
+genesis:
+  # Optional pre-TEE genesis JSON. Paths are resolved relative to this file.
+  # When set, remove the timestamp, epoch length, and DKG window settings below.
+  # base: ./custom-genesis.json
+  # Omit timestamp for a fresh launch time. Set it to reproduce one exact genesis.
+  # timestamp: 1793795928
+  epoch_length_blocks: 1200
+  dkg_prepare_window_blocks: 300
+  dkg_activation_grace_blocks: 300
+  prefunded_accounts:
+    "0x1111111111111111111111111111111111111111": "1000000000000000000000"
+  # Additional keys accepted by outbe-genesis-cli, for example oracle or
+  # protocol overrides. Network identity, hosts, keys, and runtime fields are
+  # managed by outbe-net-up and cannot be overridden here.
+  overrides: {}
+
+# Optional VM deployment (devnet and testnet only). When present, replace each
+# founder's `ssh` block with a `vm` block (`vm_ip`, optional `port_offset`
+# for multi-host / published deploys, plus optional host/resource overrides).
+# Three addresses are kept distinct in VM mode:
+#   - `vm.vm_ip` (`OUTBE_VM_IP`): static guest IPv4 on the host bridge (`eth0`)
+#   - `rpc_bind_ip` (`OUTBE_RPC_BIND_IP`, optional): defaults to `vm.vm_ip`; `outbe-net-up` refuses
+#     `rpc_bind_ip != vm.vm_ip` in VM mode because host-side RPC readiness requires reaching `vm_ip`
+#   - `advertise_ip` (`OUTBE_EXTERNAL_IP`): external IPv4 advertised for P2P and on-chain registration
+# For a local VM devnet with two Hyperlane origins (the local Outbe node plus
+# host-side anvil), omit `hyperlane.origins` and configure `hyperlane.local_evm`:
+# hyperlane:
+#   gasless: true
+#   local_evm:
+#     domain: 31337
+#     rpc_url: "http://10.77.0.1:8546"
+#     reorg_period: 0
+# vm:
+#   vmm_host:
+#     host: 192.0.2.50
+#     user: ubuntu
+#     port: 22
+#   prefix: 24
+#   gateway: 10.77.0.1
+#   dns: [1.1.1.1, 8.8.8.8]
+#   vcpu: 3
+#   memory_gib: 5
+#   disk_gib: 40
+#   flavor: dev
+#   authorized_keys: ./dev-authorized-keys

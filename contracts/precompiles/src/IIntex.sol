@@ -56,13 +56,13 @@ interface IIntex {
     /// @notice Full identity + lifecycle record for a series. Reverts if the
     ///         series does not exist, or was deleted once nothing in it was left to settle
     ///         or mine.
-    function getIntexSeries(uint256 intexId) external view returns (SeriesData memory);
+    function getIntex(uint256 intexId) external view returns (SeriesData memory);
 
     /// @notice The classes an issued unit can be in. Disjoint: they sum to
     ///         `issuedUnits`. `activeUnits` is what is still unpaid while the series
     ///         lives, and `forfeitedUnits` is the same remainder once it is Forfeited.
     ///         `settledUnits` is what is paid and not yet mined, the same
-    ///         measure `getIntexSeries` reports.
+    ///         measure `getIntex` reports.
     struct UnitCounts {
         uint32 issuedUnits;
         uint32 activeUnits;

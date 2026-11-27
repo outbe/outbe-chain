@@ -56,6 +56,15 @@ fn dispatch(ctx: &BlockRuntimeContext, specs: &[TaskSpec]) -> Result<()> {
     run_due_tasks_with_specs(ctx, specs)
 }
 
+fn completed_tasks(storage: &HashMapStorageProvider) -> Vec<u32> {
+    storage
+        .get_events(CYCLE_ADDRESS)
+        .iter()
+        .filter_map(|log| ICycle::CycleTaskCompleted::decode_log_data(log).ok())
+        .map(|event| u32::from(event.task as u8))
+        .collect()
+}
+
 #[test]
 fn over_budget_rolls_back_and_propagates_pending_then_retries_once_next_block() {
     let mut storage = storage(&[0, 1, 2, 4]);
@@ -81,36 +90,7 @@ fn over_budget_rolls_back_and_propagates_pending_then_retries_once_next_block() 
         }
         assert_eq!(cycle.last_executed_block_number.read(&1).unwrap(), 2);
     });
-    let logs = storage.get_events(CYCLE_ADDRESS);
-    let over: Vec<_> = logs
-        .iter()
-        .filter_map(|log| ICycle::CycleTaskOverBudget::decode_log_data(log).ok())
-        .collect();
-    assert_eq!(over.len(), 1);
-    assert_eq!(
-        (over[0].id, over[0].consumedGas, over[0].budgetGas),
-        (0, 40, 50)
-    );
-    assert_eq!(
-        logs.iter()
-            .filter(|log| ICycle::CycleTaskFailed::decode_log_data(log).is_ok())
-            .count(),
-        0
-    );
-    assert_eq!(
-        logs.iter()
-            .filter(|log| ICycle::CycleTaskExecuted::decode_log_data(log).is_ok())
-            .count(),
-        1
-    );
-    let deferred: Vec<_> = logs
-        .iter()
-        .filter_map(|log| ICycle::CycleTaskDeferred::decode_log_data(log).ok())
-        .collect();
-    assert_eq!(deferred.len(), 2);
-    assert!(deferred
-        .iter()
-        .all(|event| event.reason == 2 && event.scheduledAt == GENESIS_TS + 60));
+    assert_eq!(completed_tasks(&storage), vec![1]);
 
     specs[0] = spec(0, 140, write_then_spend);
     storage.set_block_number(3);
@@ -240,14 +220,7 @@ fn late_protocol_exhaustion_rolls_back_calendar_and_allocation_then_retries_acro
             promis_before
         );
     });
-    assert_eq!(
-        storage
-            .get_events(CYCLE_ADDRESS)
-            .iter()
-            .filter(|log| ICycle::CycleTaskOverBudget::decode_log_data(log).is_ok())
-            .count(),
-        1
-    );
+    assert!(completed_tasks(&storage).is_empty());
     assert!(storage
         .get_events(CYCLE_ADDRESS)
         .iter()
@@ -359,11 +332,8 @@ fn write_and_emit(ctx: &BlockRuntimeContext) -> Result<()> {
     ctx.storage.increase_balance(RECIPIENT, U256::ONE)?;
     ctx.storage
         .contract::<Cycle>()
-        .emit(ICycle::CycleTaskExecuted {
-            id: 99,
-            scheduledAt: 0,
-            blockTimestamp: 0,
-            blockNumber: 0,
+        .emit(ICycle::CycleTaskCompleted {
+            task: ICycle::CycleTask::ScheduleNodCallPass,
         })
 }
 
@@ -407,19 +377,7 @@ fn isolated_economic_task_panic_and_halt_roll_back_slot_and_continue_walk() {
             assert_eq!(cycle.last_executed_block_number.read(&id).unwrap(), 2);
         }
     });
-    let logs = storage.get_events(CYCLE_ADDRESS);
-    let failed: Vec<_> = logs
-        .iter()
-        .filter_map(|log| ICycle::CycleTaskFailed::decode_log_data(log).ok())
-        .map(|event| event.id)
-        .collect();
-    assert_eq!(failed, vec![1, 2, 5]);
-    let executed: Vec<_> = logs
-        .iter()
-        .filter_map(|log| ICycle::CycleTaskExecuted::decode_log_data(log).ok())
-        .map(|event| event.id)
-        .collect();
-    assert_eq!(executed, vec![3]);
+    assert_eq!(completed_tasks(&storage), vec![3]);
 }
 
 #[test]

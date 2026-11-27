@@ -3,7 +3,7 @@ pragma solidity 0.8.30;
 
 import {AuctionResultLib} from "../helpers/AuctionResultLib.sol";
 
-import {MarkBatchLib} from "../helpers/MarkBatchLib.sol";
+import {CallNoticeBatchLib} from "../helpers/CallNoticeBatchLib.sol";
 import {BidPackLib} from "../helpers/BidPackLib.sol";
 import {ReferenceCurrencyPriceLib} from "../helpers/ReferenceCurrencyPriceLib.sol";
 import {Test} from "forge-std/Test.sol";
@@ -78,11 +78,13 @@ contract BridgeMsgCodecGoldenTest is Test {
         assertEq(encoded.length, BridgeMsgCodec.MIN_LEN_INTEX_AUCTION_RESULT);
     }
 
-    function test_Golden_MarkCalled() public pure {
+    function test_Golden_CallNotice() public pure {
         // [ver=01][type=08] ++ abi.encode(day, calledAt, seriesIds)
         assertEq(
-            BridgeMsgCodec.encodeIntexSeriesCallNotice(20260212, CALLED_AT, MarkBatchLib.one("20260212-TRY-U")),
-            abi.encodePacked(hex"0108", abi.encode(uint32(20260212), CALLED_AT, MarkBatchLib.one("20260212-TRY-U")))
+            BridgeMsgCodec.encodeIntexSeriesCallNotice(20260212, CALLED_AT, CallNoticeBatchLib.one("20260212-TRY-U")),
+            abi.encodePacked(
+                hex"0108", abi.encode(uint32(20260212), CALLED_AT, CallNoticeBatchLib.one("20260212-TRY-U"))
+            )
         );
     }
 
@@ -284,8 +286,10 @@ contract BridgeMsgCodecGoldenTest is Test {
             0x0A0B0C0D
         );
         assertEq(
-            this.exposedDecodeMarkCalled(
-                BridgeMsgCodec.encodeIntexSeriesCallNotice(20260212, CALLED_AT, MarkBatchLib.one("20260212-TRY-U"))
+            this.exposedDecodeIntexSeriesCallNotice(
+                BridgeMsgCodec.encodeIntexSeriesCallNotice(
+                    20260212, CALLED_AT, CallNoticeBatchLib.one("20260212-TRY-U")
+                )
             ),
             bytes14("20260212-TRY-U")
         );
@@ -305,7 +309,7 @@ contract BridgeMsgCodecGoldenTest is Test {
         return BridgeMsgCodec.decodeIntexAuctionClearingStart(p);
     }
 
-    function exposedDecodeMarkCalled(bytes calldata p) external pure returns (bytes14) {
+    function exposedDecodeIntexSeriesCallNotice(bytes calldata p) external pure returns (bytes14) {
         (,, bytes14[] memory seriesIds) = BridgeMsgCodec.decodeIntexSeriesCallNotice(p);
         return seriesIds[0];
     }

@@ -58,7 +58,7 @@ fn world() -> (HashMapStorageProvider, SeriesId) {
             .seed_called_group(id, DEADLINE)
             .unwrap();
         // The pass starts the day before the deadline, and the Oracle is final past its close.
-        super::called::prepare_daily_pass(&BlockRuntimeContext::new(
+        super::call::prepare_daily_pass(&BlockRuntimeContext::new(
             BlockContext {
                 block_gas_limit: 0,
                 user_gas_used: 0,
@@ -105,8 +105,8 @@ fn sweep(p: &mut HashMapStorageProvider, at: u64) -> Result<()> {
             },
             s,
         );
-        super::called::daily_pass(&ctx)?;
-        crate::notify::send_call_notices(&ctx)
+        super::call::daily_pass(&ctx)?;
+        crate::call_notice::send_call_notices(&ctx)
     })
 }
 
@@ -131,8 +131,8 @@ fn ledger(p: &mut HashMapStorageProvider, id: SeriesId, terminal: bool) {
         if terminal {
             assert_eq!((units.active, units.forfeited, pending), (0, 5, 0));
             assert_eq!(returned, U256::from(5 * LOAD));
-            assert_eq!(factory.forfeit_tree_root.read().unwrap(), U256::ZERO);
-            assert!(factory.first_cleanup_day().unwrap().is_some());
+            assert_eq!(factory.close_tree_root.read().unwrap(), U256::ZERO);
+            assert!(factory.first_forfeit_day().unwrap().is_some());
         } else {
             assert!(pending <= 1);
             assert_eq!(

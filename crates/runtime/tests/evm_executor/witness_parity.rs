@@ -16,7 +16,7 @@ fn witness_entry_len<T: outbe_core_common::confidential_tee::WitnessSchema>(valu
     postcard::to_allocvec(&entry).unwrap().len()
 }
 
-/// The end-block reserve holds the Nod forfeit and the Credis cleanup at their full block budget,
+/// The end-block reserve holds the Nod close pass and the Credis forfeit pass at their full block budget,
 /// and the reserve itself fits the tape.
 #[test]
 fn the_end_block_reserve_holds_both_private_passes_at_their_full_budget() {
@@ -37,7 +37,6 @@ fn the_end_block_reserve_holds_both_private_passes_at_their_full_budget() {
         new_pledged: vec![0x04; GRATIS_BLOB_LEN],
         event_amount: U256::MAX,
         next_op_nonce: u64::MAX,
-        fidelity: None,
         inputs_canonical_hash: B256::repeat_byte(0x05),
         attestation_tag: vec![0x06; 64],
         encrypted_event_amount: Vec::new(),

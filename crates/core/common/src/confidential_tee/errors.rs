@@ -105,12 +105,6 @@ pub const PROMIS_OP_ATTESTATION: AppErrorDescriptor = AppErrorDescriptor::new(
     "promis-op attestation signature invalid",
 );
 
-/// Fidelity operation attestation failure descriptor.
-pub const FIDELITY_ATTESTATION: AppErrorDescriptor = AppErrorDescriptor::new(
-    "fidelity_attestation",
-    "fidelity attestation signature invalid",
-);
-
 /// Encrypted NOD mint business rejection descriptor.
 pub const NOD_MINT_REJECTED: AppErrorDescriptor =
     AppErrorDescriptor::new("nod_mint_rejected", "encrypted NOD mint rejected");
@@ -256,12 +250,6 @@ pub enum LocalCryptoError {
     /// Sealed offer bytes did not have the fixed wire length.
     #[error("aead seal")]
     AeadOutputLength,
-    /// Encrypted Fidelity cohort blob failed envelope validation.
-    #[error("invalid encrypted Fidelity cohort envelope")]
-    InvalidFidelityCohortEnvelope,
-    /// Fidelity cohort ciphertext failed AEAD.
-    #[error("Fidelity cohort decryption failed")]
-    FidelityCohortDecryptionFailed(#[source] outbe_tee::TeeCryptoError),
     /// Encrypted Gratis balance blob failed envelope validation.
     #[error("invalid encrypted Gratis balance")]
     InvalidGratisBalance,
@@ -314,8 +302,6 @@ impl LocalCryptoError {
             Self::HkdfFill(_) => "hkdf fill",
             Self::AeadKey(_) => "aead key",
             Self::AeadSeal(_) | Self::AeadOutputLength => "aead seal",
-            Self::InvalidFidelityCohortEnvelope => "invalid encrypted Fidelity cohort envelope",
-            Self::FidelityCohortDecryptionFailed(_) => "Fidelity cohort decryption failed",
             Self::InvalidGratisBalance => "invalid encrypted Gratis balance",
             Self::GratisBalanceDecryptionFailed(_) => "Gratis balance decryption failed",
             Self::InvalidGratisAmountLength(_) => "invalid Gratis amount length",

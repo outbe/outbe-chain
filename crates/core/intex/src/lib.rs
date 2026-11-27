@@ -1,6 +1,6 @@
 //! Intex: canonical, cross-chain Intex series ledger, the terms and profile a series is
 //! issued under, and its call lifecycle data: the price bins, the called-group queue and
-//! the cleanup queue of expired groups.
+//! the forfeit queue of expired groups.
 //!
 //! IntexFactory runs the lifecycle and writes the registry through the Rust-to-Rust API
 //! in [`api`]. The [`precompile`] surface is read-only: the series views and the Settled
@@ -21,7 +21,7 @@ pub use schema::{
     intex_id, CallStamp, CreateSeriesParams, IntexCallTrigger, IntexContract, IntexState, SeriesId,
     SeriesRecord, SERIES_ID_LEN,
 };
-pub use state::{CallBins, CleanupQueue, ForfeitQueue};
+pub use state::{CallBins, CloseQueue, ForfeitQueue};
 
 #[cfg(test)]
 mod tests;

@@ -15,7 +15,7 @@ use outbe_core_common::pow;
 
 use crate::errors::GemFactoryError;
 use crate::precompile::IGemFactory::{
-    GemFactoryPositionCreated, GemFactoryPositionGemIssued, GemSeriesOpened,
+    GemFactoryPositionCreated, GemFactoryPositionRedeemed, GemSeriesOpened,
 };
 use crate::schema::{GemFactoryContract, GemFactoryPosition, GemIssueParams};
 use crate::sol_ext::IIntexNFT1155;
@@ -217,7 +217,8 @@ pub fn create_gem_factory_position(
         source_series_id,
         remaining_capacity_minor: capacity,
         issued_at,
-        expires_at: issued_at.saturating_add(outbe_gem::config::read(storage)?.position_validity),
+        expires_at: issued_at
+            .saturating_add(outbe_gem::config::read(storage)?.gem_factory_position_validity),
     };
     factory.add_position(&position)?;
 
@@ -338,8 +339,10 @@ pub fn issue_merchant_gem(
     emit_gem_issued(storage, gem_id)?;
     emit_event(
         storage,
-        GemFactoryPositionGemIssued {
+        GemFactoryPositionRedeemed {
             gemFactoryPositionId: gem_factory_position_id,
+            owner: record.owner,
+            promisLoadMinor: promis_load,
             gemId: gem_id,
         },
     )?;
@@ -468,7 +471,7 @@ pub fn quote_settlement(
 }
 
 /// The full terms of a Gem Factory position.
-pub fn position_data(
+pub fn gem_factory_position_data(
     storage: &StorageHandle<'_>,
     gem_factory_position_id: U256,
 ) -> Result<crate::precompile::IGemFactory::GemFactoryPositionData> {

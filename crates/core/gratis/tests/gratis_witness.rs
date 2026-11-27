@@ -6,7 +6,6 @@ use alloy_primitives::{hex, Address, B256, U256};
 use alloy_sol_types::SolError;
 use outbe_core_common::confidential_tee::{encode_tagged_payload, WitnessResponseTag, NOD};
 use outbe_core_common::nod_encryption::NodTermsV1;
-use outbe_fidelity::{FidelityCohortOp, FidelityOpSection};
 use outbe_gratis::enclave_client::{apply_gratis_op, mine_encrypted_nod};
 use outbe_gratis::nod_mine::{
     inputs_hash, result_preimage, EncryptedNodMintRejectedV1, MineEncryptedNodRequestV1, MineRound,
@@ -173,7 +172,6 @@ fn mint_request() -> GratisOpRequest {
             mac: modify_mac(&keys, &operation),
             op_nonce: 0,
         },
-        fidelity: None,
         sealed_pledge: None,
     }
 }
@@ -190,7 +188,6 @@ fn zero_request(account: Address) -> GratisOpRequest {
             mac: [0; 32],
             op_nonce: 0,
         },
-        fidelity: None,
         sealed_pledge: None,
     }
 }
@@ -348,12 +345,6 @@ fn mine_request_amount(amount: u64, flip: bool) -> MineEncryptedNodRequestV1 {
         nod,
         current_balance: Vec::new(),
         modify_auth: ModifyAuth { mac, op_nonce: 0 },
-        fidelity: FidelityOpSection {
-            op: FidelityCohortOp::In,
-            timestamp: 1_000_000,
-            first_qualified_start: 0,
-            current_blob: Vec::new(),
-        },
     }
 }
 
@@ -719,7 +710,7 @@ fn nod_rpc_direct_checks_tag_8_before_and_after_a_context_swap() {
     assert_rpc_quiet(&round);
 }
 
-const FROZEN_MINE_REQUEST: &str = r#"{"nod":{"terms":{"chain_id":1,"nod_id":"0x2","owner":"0x2222222222222222222222222222222222222222","emission_day":20261116,"entry_price_minor":"0x3","issuance_currency":840,"reference_currency":978},"encryption_binding":"0x3333333333333333333333333333333333333333333333333333333333333333","encrypted_gratis_amount":[65],"encrypted_nominal_amount":[66]},"current_balance":[81,82],"modify_auth":{"mac":[51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51],"op_nonce":5},"fidelity":{"op":"Out","timestamp":123,"first_qualified_start":124,"current_blob":[65,66]}}"#;
+const FROZEN_MINE_REQUEST: &str = r#"{"nod":{"terms":{"chain_id":1,"nod_id":"0x2","owner":"0x2222222222222222222222222222222222222222","emission_day":20261116,"entry_price_minor":"0x3","issuance_currency":840,"reference_currency":978},"encryption_binding":"0x3333333333333333333333333333333333333333333333333333333333333333","encrypted_gratis_amount":[65],"encrypted_nominal_amount":[66]},"current_balance":[81,82],"modify_auth":{"mac":[51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51],"op_nonce":5}}"#;
 
 fn frozen_bytes<const N: usize>(text: &str) -> [u8; N] {
     hex::decode(text)
@@ -730,12 +721,12 @@ fn frozen_bytes<const N: usize>(text: &str) -> [u8; N] {
 
 fn frozen_refusal_tape(reason: &str) -> (EnclaveWitnessTapeV1, [u8; 32]) {
     let inputs = B256::from(frozen_bytes::<32>(
-        "e66620bdb18c3bed4b4f00a9d2c64efcb870fa3cff2d6cf6b3043541bf91f855",
+        "f5670b98751417eee14498b45d599a4c52b6fc4eb3cdbedfc88a3c7318c700ae",
     ));
     let leader =
         frozen_bytes::<32>("f80cccdce4ae1c07ae208a2adf99a310ae4207e0306fa0236110b06827bbb8d0");
     let tag = frozen_bytes::<64>(
-        "f4c88413f0d2536bf74b5b8d40e6af31475e5e5b4dab2dd4c7d6dd802c2d7ac607a353a351a82f6c2d442db10bee01ac8df1bf957c9e35900492cad99dd0a502",
+        "fc9d0e72df24e287233f38a135ec5650212e61b903ff036992e4bf4a207142e580daa73ea79f922fd290283cfbcab6196b20c13951a432631faff6bc608f6906",
     );
     let body = EncryptedNodMintRejectedV1 {
         reason: reason.to_owned(),
@@ -762,7 +753,7 @@ fn frozen_nod_refusal_replays_through_the_host_client() {
     assert_eq!(
         expected,
         B256::from(frozen_bytes::<32>(
-            "e66620bdb18c3bed4b4f00a9d2c64efcb870fa3cff2d6cf6b3043541bf91f855"
+            "f5670b98751417eee14498b45d599a4c52b6fc4eb3cdbedfc88a3c7318c700ae"
         ))
     );
     let (tape, leader) = frozen_refusal_tape("bad \"quote\"\nline");
@@ -802,7 +793,6 @@ fn promis_tag_on_the_gratis_tape_is_rejected_by_the_typed_codec() {
             new_pledged: Vec::new(),
             event_amount: U256::ZERO,
             next_op_nonce: 0,
-            fidelity: None,
             inputs_canonical_hash: B256::ZERO,
             attestation_tag: Vec::new(),
             encrypted_event_amount: Vec::new(),

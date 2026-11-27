@@ -13,8 +13,8 @@ pub const PROMIS_ADDRESS: Address = address!("0x00000000000000000000000000000000
 
 /// Promis factory precompile address (orchestrator: mint/burn orchestration via
 /// cross-module API, `mineCoen` on the ABI). Wraps the Promis token at
-/// [`PROMIS_ADDRESS`], records Fidelity cohorts, and mints native COEN on
-/// `mineCoen`. Carries no persistent storage of its own.
+/// [`PROMIS_ADDRESS`] and mints native COEN on `mineCoen`. Carries no persistent
+/// storage of its own.
 pub const PROMIS_FACTORY_ADDRESS: Address = address!("0x0000000000000000000000000000000000002337");
 
 /// Nod NFT precompile address.
@@ -56,18 +56,14 @@ pub const WORLDWIDE_DAY_ADDRESS: Address = address!("0x0000000000000000000000000
 /// Agent reward precompile address.
 pub const AGENT_REWARD_ADDRESS: Address = address!("0x000000000000000000000000000000000000100B");
 
-/// Fidelity precompile address.
-pub const FIDELITY_ADDRESS: Address = address!("0x000000000000000000000000000000000000100C");
-
 /// Emission precompile address (`IEmission`).
 pub const EMISSION_ADDRESS: Address = address!("0x000000000000000000000000000000000000100D");
 
 /// Legacy alias for [`EMISSION_ADDRESS`].
 pub const EMISSION_LIMIT_ADDRESS: Address = EMISSION_ADDRESS;
 
-/// Metadosis precompile address. Its registered dispatch serves public view
-/// methods (for example `getWorldwideDay`) to any caller. It also routes the
-/// `submitLysisResult` result-vote selector.
+/// Metadosis precompile address. `IMetadosis` declares only events and errors, so its
+/// dispatch rejects every selector.
 pub const METADOSIS_ADDRESS: Address = address!("0x000000000000000000000000000000000000100E");
 
 /// Promis limit precompile address. Its registered dispatch serves the public

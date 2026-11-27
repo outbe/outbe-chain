@@ -4,7 +4,6 @@ use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::{sol, SolCall};
 use outbe_credis::CredisContract;
 use outbe_credisfactory::precompile::ICredisFactory;
-use outbe_fidelity::enclave_client::test_enclave as fidelity_enclave;
 use outbe_gratis::enclave_client::test_enclave as gratis_enclave;
 use outbe_gratis::{decrypt_pledged, derive_account_keys, derive_view_key, modify_mac};
 use outbe_gratis::{GratisOp, ModifyAuth};
@@ -14,7 +13,6 @@ use outbe_primitives::storage::{
 };
 use outbe_system_common::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_system_common::time::timestamp_to_date_key;
-use outbe_system_common::time::SECONDS_PER_DAY;
 use outbe_system_common::units::{checked_protocol_to_native, SCALE_1E6_U256};
 use outbe_vaultrouter::{CredisReservation, VaultRouterContract};
 
@@ -123,13 +121,6 @@ fn seed_world(storage: StorageHandle<'_>) -> Result<U256, String> {
         auth(GratisOp::Mint, pledge_cost(), 0),
     )
     .map_err(|error| error.to_string())?;
-    outbe_fidelity::api::cohort_in(
-        storage.clone(),
-        ALICE,
-        U256::from(100),
-        CREATED_AT - 365 * SECONDS_PER_DAY,
-    )
-    .map_err(|error| error.to_string())?;
     outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
         .map_err(|error| error.to_string())?;
     outbe_oracle::api::set_exchange_rate(
@@ -210,7 +201,6 @@ impl BenchmarkScenario for CredisScenario {
 
     fn prepare(&self, _profile: Profile) -> Result<Self::Prepared, String> {
         gratis_enclave::install();
-        fidelity_enclave::install();
         let mut provider = HashMapStorageProvider::new(CHAIN_ID);
         provider.set_timestamp(U256::from(CREATED_AT));
         provider.set_block_number(BLOCK_NUMBER);

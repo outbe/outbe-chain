@@ -87,7 +87,7 @@ interface ICredisFactory {
 
     /// @notice How close a right is to its group's call. The window ends at the last
     ///         finalized UTC day. Prices are COEN in `referenceCurrency` at scale 1e6.
-    struct CallProgress {
+    struct CallState {
         uint32 callWindowDays;
         uint32 callThresholdDays;
         /// Window days since the group's start, priced or not.
@@ -105,7 +105,7 @@ interface ICredisFactory {
 
     /// @notice Read the call progress of `credisId`. Reverts `CredisNotFound`, or
     ///         `CredisNotIssued` once it is Called, Settled or Forfeited.
-    function getCallProgress(uint256 credisId) external view returns (CallProgress memory);
+    function callState(uint256 credisId) external view returns (CallState memory);
     /// The owner gives up an Issued or Called Credis before its settlement deadline: its remaining
     /// Gratis burns, the amount is forfeited and the Credis is deleted.
     function forfeitCredis(uint256 credisId)

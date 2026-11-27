@@ -219,7 +219,7 @@ fn with_payment_token<R>(
     );
 
     StorageHandle::enter(&mut storage, |s| {
-        runtime::issue_intex(&s, sample(7)).unwrap();
+        runtime::open_intex_series(&s, sample(7)).unwrap();
         f(s)
     })
 }
@@ -329,7 +329,7 @@ fn erc20_series() -> HashMapStorageProvider {
     storage.stub_sub_call_at_selector(settlement_asset(), IERC20::decimalsCall::SELECTOR, word(6));
 
     StorageHandle::enter(&mut storage, |s| {
-        runtime::issue_intex(&s, sample(7)).unwrap();
+        runtime::open_intex_series(&s, sample(7)).unwrap();
     });
     storage
 }
@@ -467,7 +467,7 @@ fn settle_rejects_expired_deadline() {
         alloy_primitives::Bytes::from(vec![0u8; 32]),
     );
     StorageHandle::enter(&mut storage, |s| {
-        runtime::issue_intex(&s, sample(7)).unwrap();
+        runtime::open_intex_series(&s, sample(7)).unwrap();
         // ISSUED_AT + CALL_NOTICE_PERIOD + TRANSIT_MARGIN < now
         outbe_intex::api::call_group_of(&s, sid(7), ISSUED_AT).unwrap();
         let err = runtime::settle_intex(
@@ -499,7 +499,7 @@ fn settle_rejects_expired_deadline() {
 fn settle_stays_open_through_the_transit_margin() {
     let mut storage = factory_provider();
     StorageHandle::enter(&mut storage, |s| {
-        runtime::issue_intex(&s, sample(7)).unwrap();
+        runtime::open_intex_series(&s, sample(7)).unwrap();
         outbe_intex::api::call_group_of(&s, sid(7), ISSUED_AT).unwrap();
     });
     storage.set_timestamp(U256::from(
@@ -535,7 +535,7 @@ fn settle_stays_open_through_the_transit_margin() {
 fn a_series_called_past_its_deadline_stays_closed() {
     let mut storage = factory_provider();
     StorageHandle::enter(&mut storage, |s| {
-        runtime::issue_intex(&s, sample(7)).unwrap();
+        runtime::open_intex_series(&s, sample(7)).unwrap();
         outbe_intex::api::call_group_of(&s, sid(7), ISSUED_AT).unwrap();
     });
     storage.set_timestamp(U256::from(
@@ -713,7 +713,7 @@ fn a_mining_that_fails_after_any_write_changes_nothing() {
         );
         let nonce = StorageHandle::enter(&mut storage, |s| {
             select_prod_profile(&s);
-            runtime::issue_intex(&s, sample(7)).unwrap();
+            runtime::open_intex_series(&s, sample(7)).unwrap();
             outbe_intex::api::record_settled_units(&s, sid(7), owner(), 1).unwrap();
             let promis_amount = outbe_intex::api::get_series(&s, sid(7))
                 .unwrap()
@@ -770,7 +770,7 @@ fn a_mining_that_fails_after_any_write_changes_nothing() {
 #[test]
 fn the_unit_counts_view_reports_the_disjoint_classes() {
     with_factory(|s| {
-        runtime::issue_intex(&s, sample(7)).unwrap();
+        runtime::open_intex_series(&s, sample(7)).unwrap();
         outbe_intex::api::record_settled_units(&s, sid(7), owner(), 40).unwrap();
         outbe_intex::api::record_gem_factory_units(&s, sid(7), owner(), 10).unwrap();
         outbe_intex::api::record_mined_units(&s, sid(7), owner(), 15).unwrap();
@@ -825,7 +825,7 @@ fn the_owner_balances_view_reports_live_units_and_owner_history() {
     );
     let stamp = StorageHandle::enter(&mut storage, |s| {
         select_prod_profile(&s);
-        runtime::issue_intex(&s, sample(7)).unwrap();
+        runtime::open_intex_series(&s, sample(7)).unwrap();
         outbe_intex::api::record_settled_units(&s, sid(7), owner(), 40).unwrap();
         outbe_intex::api::record_gem_factory_units(&s, sid(7), owner(), 10).unwrap();
         outbe_intex::api::record_mined_units(&s, sid(7), owner(), 15).unwrap();

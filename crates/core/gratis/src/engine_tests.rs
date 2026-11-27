@@ -9,7 +9,6 @@ use outbe_core_common::confidential_tee::{
     decode_tagged_payload, encode_tagged_payload, hkdf_sha256, BalanceTransition,
     WitnessResponseTag, FIELD_BALANCE,
 };
-use outbe_fidelity::{FidelityCohortOp, FidelityOpSection};
 use outbe_tee::resident::{AccountKeysHandle, ResidentOfferMaterial, StateKeyHandle};
 
 use crate::cipher;
@@ -66,7 +65,6 @@ fn request(op: GratisOp, amount: U256, nonce: u64) -> GratisOpRequest {
         current_balance: Vec::new(),
         current_pledged: Vec::new(),
         modify_auth: empty_auth(nonce),
-        fidelity: None,
         sealed_pledge: None,
     }
 }
@@ -305,22 +303,6 @@ fn pledged_blobs_bind_the_inputs_hash_and_round_trip_on_tag_1() {
         decode_tagged_payload(WitnessResponseTag::GratisOpApplied, &wire).unwrap();
     assert_eq!(decoded_result, result);
     assert_eq!(wire[0], WitnessResponseTag::GratisOpApplied.value());
-}
-
-#[test]
-fn collateral_ops_reject_a_fidelity_section() {
-    let sk = state_key();
-    for op in [GratisOp::ReleasePledged, GratisOp::BurnPledged] {
-        let mut req = request(op, U256::from(1u64), 0);
-        req.current_pledged = pledged_blob(&sk, 100);
-        req.fidelity = Some(FidelityOpSection {
-            op: FidelityCohortOp::Out,
-            timestamp: 1,
-            first_qualified_start: 0,
-            current_blob: Vec::new(),
-        });
-        assert!(rejected(&apply_op(&sk, &req).status));
-    }
 }
 
 #[test]

@@ -165,11 +165,51 @@ fn a_failed_series_page_emits_its_send_failed_event() {
 }
 
 #[test]
+fn a_series_page_is_reported_sent_only_when_it_leaves() {
+    let sent = |storage: &HashMapStorageProvider| {
+        storage
+            .get_events(INTEX_FACTORY_ADDRESS)
+            .iter()
+            .filter(|log| IIntexFactory::IntexSeriesSent::decode_log_data(log).is_ok())
+            .count()
+    };
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(ISSUED_AT));
+    StorageHandle::enter(&mut storage, |s| {
+        register(&s, &[(97, TargetMode::Series)]);
+        IntexFactoryContract::new(s.clone())
+            .outbox()
+            .push(Message {
+                chain_id: 97,
+                label: Label::new(MSG_INTEX_SERIES, 7, [1, 2, 3]),
+                message_gas: 1,
+                payload: Bytes::from(vec![1, MSG_INTEX_SERIES]),
+            })
+            .unwrap();
+        crate::outbox::flush(&s).unwrap();
+    });
+    assert_eq!(sent(&storage), 0, "a refused send is no Sent");
+
+    storage.stub_sub_call_at(
+        CROSSCHAIN_BRIDGE_ADDRESS,
+        Bytes::from(B256::repeat_byte(0xAB).to_vec()),
+    );
+    storage.set_timestamp(U256::from(
+        ISSUED_AT + crate::transport::outbox::RETRY_SECONDS,
+    ));
+    StorageHandle::enter(&mut storage, |s| {
+        crate::outbox::flush(&s).unwrap();
+        crate::outbox::flush(&s).unwrap();
+    });
+    assert_eq!(sent(&storage), 1, "the retry that leaves is one Sent");
+}
+
+#[test]
 fn an_issued_day_puts_one_series_page_into_the_outbox_for_each_chain() {
     with_factory(|s| {
         let mut params = sample(7);
         params.target_chains = vec![97, 98];
-        let legs = runtime::issue_intex(&s, params).unwrap();
+        let legs = runtime::open_intex_series(&s, params).unwrap();
         runtime::send_issuance(&s, legs).unwrap();
         let outbox = IntexFactoryContract::new(s.clone()).outbox();
         for chain in [97, 98] {

@@ -45,6 +45,40 @@ pub(crate) fn desis_limit(
     Some(nominal_total.checked_sub(nod_loads_minor)?.min(available))
 }
 
+/// What the Metadosis limit of a day covers of the day's loads and of the excess of past days.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct LoadsCoverage {
+    /// The part of the limit that covers loads.
+    pub covered_minor: U256,
+    pub promis_limit_add: U256,
+    /// The loads left uncovered after this day.
+    pub excess_minor: U256,
+}
+
+impl LoadsCoverage {
+    pub(crate) fn of(limit: U256, loads_minor: U256, excess_minor: U256) -> Result<Self> {
+        let total = loads_minor.checked_add(excess_minor).ok_or(
+            MetadosisError::InvalidMetadosisLimitSplit {
+                day_limit: limit,
+                nod_loads_minor: loads_minor,
+            },
+        )?;
+        Ok(if total <= limit {
+            Self {
+                covered_minor: total,
+                promis_limit_add: limit - total,
+                excess_minor: U256::ZERO,
+            }
+        } else {
+            Self {
+                covered_minor: limit,
+                promis_limit_add: U256::ZERO,
+                excess_minor: total - limit,
+            }
+        })
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct LimitSplit {
     /// The day's own emission plus what it drew from the Promis Limit.
@@ -87,6 +121,16 @@ impl LimitSplit {
             desis_limit_minor,
             promis_limit_add,
         )
+    }
+
+    /// The split of a day whose limit goes whole to the loads: no Promis Limit add, no Desis.
+    pub(crate) const fn uncovered(base_limit: U256) -> Self {
+        Self {
+            day_limit: base_limit,
+            nod_loads_minor: base_limit,
+            desis_limit_minor: U256::ZERO,
+            promis_limit_add: U256::ZERO,
+        }
     }
 
     fn assemble(
@@ -186,7 +230,7 @@ mod tests {
 
     #[test]
     fn native_split_preserves_the_day_and_carry_economic_vectors() {
-        for (base, lysis, nominal, carry, auction, remaining) in [
+        for (base, loads, nominal, carry, auction, remaining) in [
             (1_000, 32, 100, 0, 68, 900),
             (1_000, 320, 5_000, 0, 680, 0),
             (1_000, 320, 5_000, 2_000, 2_680, 0),
@@ -205,7 +249,7 @@ mod tests {
                 let split = allocate_day_metadosis_limit(
                     storage.clone(),
                     U256::from(base as u64),
-                    U256::from(lysis as u64),
+                    U256::from(loads as u64),
                     U256::from(nominal as u64),
                 )
                 .unwrap();
@@ -237,8 +281,34 @@ mod tests {
     }
 
     #[test]
+    fn the_limit_covers_the_excess_with_the_loads_and_carries_the_rest() {
+        for (limit, loads, excess, covered, promis_limit_add, excess_after) in [
+            (100, 40, 0, 40, 60, 0),
+            (100, 40, 50, 90, 10, 0),
+            (100, 40, 60, 100, 0, 0),
+            (100, 120, 0, 100, 0, 20),
+            (100, 10, 150, 100, 0, 60),
+        ] {
+            assert_eq!(
+                LoadsCoverage::of(
+                    U256::from(limit as u64),
+                    U256::from(loads as u64),
+                    U256::from(excess as u64),
+                )
+                .unwrap(),
+                LoadsCoverage {
+                    covered_minor: U256::from(covered as u64),
+                    promis_limit_add: U256::from(promis_limit_add as u64),
+                    excess_minor: U256::from(excess_after as u64),
+                }
+            );
+        }
+        assert!(LoadsCoverage::of(U256::ONE, U256::MAX, U256::ONE).is_err());
+    }
+
+    #[test]
     fn native_split_and_auction_failures_roll_back_the_whole_effect() {
-        for (base, lysis, nominal, carry) in [
+        for (base, loads, nominal, carry) in [
             (U256::MAX, U256::ZERO, U256::MAX, U256::ZERO),
             (U256::from(100), U256::from(40), U256::from(100), U256::MAX),
         ] {
@@ -253,7 +323,7 @@ mod tests {
             let result = StorageHandle::enter(&mut provider, |storage| {
                 storage.with_checkpoint(|| {
                     let split =
-                        allocate_day_metadosis_limit(storage.clone(), base, lysis, nominal)?;
+                        allocate_day_metadosis_limit(storage.clone(), base, loads, nominal)?;
                     apply_desis_limit(storage.clone(), 20260101, &split)
                 })
             });
@@ -333,11 +403,11 @@ mod tests {
                 Some(U256::MAX),
             ),
         ];
-        for (nominal, lysis, day_limit, draw, expected) in cases {
+        for (nominal, loads, day_limit, draw, expected) in cases {
             assert_eq!(
-                desis_limit(nominal, lysis, day_limit, draw),
+                desis_limit(nominal, loads, day_limit, draw),
                 expected,
-                "nominal {nominal} lysis {lysis} day_limit {day_limit} draw {draw}"
+                "nominal {nominal} loads {loads} day_limit {day_limit} draw {draw}"
             );
         }
     }

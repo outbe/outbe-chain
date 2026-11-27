@@ -5,10 +5,13 @@ use outbe_vaultrouter::settlement::SettlementPayment;
 fn a_position_reports_its_full_terms() {
     with_storage(Some(U256::from(2u64) * six_decimal_unit()), |storage| {
         let id = seed_and_send(storage, six_decimal_unit(), six_decimal_u128());
-        let data = runtime::position_data(storage, id).unwrap();
+        let data = runtime::gem_factory_position_data(storage, id).unwrap();
         assert_eq!(data.owner, ALICE);
         assert_eq!(data.issuedAt, T_NOW);
-        assert_eq!(data.expiresAt, T_NOW + POSITION_VALIDITY_SECONDS);
+        assert_eq!(
+            data.expiresAt,
+            T_NOW + GEM_FACTORY_POSITION_VALIDITY_SECONDS
+        );
         assert_eq!(
             data.remainingCapacityMinor,
             sent_capacity(six_decimal_u128())

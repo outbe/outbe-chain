@@ -30,7 +30,7 @@ pub enum IntexFactoryError {
     UnauthorizedProceedsCaller(alloy_primitives::Address),
     #[error("proceeds from a chain {0} that the day did not start on")]
     UnexpectedProceedsSource(u32),
-    #[error("proceeds from a sender other than TargetRouter")]
+    #[error("proceeds from a sender other than IntexAuctionTargetRouter")]
     UnauthorizedProceedsSender(alloy_primitives::Bytes),
     #[error("proceeds data does not decode as (emissionDay, pageIndex)")]
     UndecodableProceedsData,
@@ -44,8 +44,8 @@ pub enum IntexFactoryError {
     #[error("forfeited promis load overflow")]
     ForfeitedPromisLoadOverflow,
 
-    #[error("issuance chunk count exceeds u16")]
-    IssuanceChunkCountExceedsU16,
+    #[error("Intex series page count exceeds u16")]
+    IntexSeriesPageCountExceedsU16,
 
     #[error("price exceeds the wire type")]
     PriceExceedsWireType,
@@ -142,8 +142,8 @@ impl From<IntexFactoryError> for PrecompileError {
             IntexFactoryError::ForfeitedPromisLoadOverflow => {
                 revert_with(I::ForfeitedPromisLoadOverflow {})
             }
-            IntexFactoryError::IssuanceChunkCountExceedsU16 => {
-                revert_with(I::IssuanceChunkCountExceedsU16 {})
+            IntexFactoryError::IntexSeriesPageCountExceedsU16 => {
+                revert_with(I::IntexSeriesPageCountExceedsU16 {})
             }
             IntexFactoryError::PriceExceedsWireType => revert_with(I::PriceExceedsWireType {}),
             IntexFactoryError::MarkedUpPriceOverflow => revert_with(I::MarkedUpPriceOverflow {}),
