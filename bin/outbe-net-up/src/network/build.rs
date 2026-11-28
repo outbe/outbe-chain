@@ -178,6 +178,9 @@ pub fn run(
         .tempdir_in(parent)?;
     let software = verify_and_extract(software_bundle, software_root.path())?;
     ensure_supported_software(&software)?;
+    // Fail fast before keygen/genesis if the active feeder profile requires RPC endpoints or keys
+    // that are missing from a non-devnet VM `network.yaml`.
+    joining::joining_feeder_public_toml(&config, software_root.path())?;
 
     progress.stage("generating founding validator identities and genesis");
     let staging = tempfile::Builder::new()

@@ -278,7 +278,9 @@ where
             node.pool.clone(),
             outbe_txpool::maintain::OutbePoolMaintainConfig {
                 staleness_interval_secs: args.txpool_pending_staleness_secs,
-                min_block_time: std::time::Duration::from_millis(args.payload_resolve_time_ms),
+                min_block_time: std::time::Duration::from_millis(
+                    outbe_consensus::timing::MIN_BLOCK_TIME_MS,
+                ),
                 queued_lifetime: crate::configuration::OUTBE_TXPOOL_QUEUED_LIFETIME,
             },
         )));

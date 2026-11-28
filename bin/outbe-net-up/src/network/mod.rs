@@ -5,6 +5,7 @@ mod build_genesis;
 mod build_joining;
 mod build_vm;
 pub mod config;
+mod feeder_config;
 pub mod prepare;
 pub(crate) mod remote;
 pub mod start;

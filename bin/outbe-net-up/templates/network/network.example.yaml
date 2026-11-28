@@ -58,6 +58,18 @@ hyperlane:
         - "https://ethereum-sepolia-rpc.publicnode.com"
       reorg_period: 2
 
+# External EVM JSON-RPC endpoints used by `outbe-feeder` (`pairs.toml` onchain, DEX, and gas
+# providers). Required for non-devnet VM networks for every chain ID referenced by the active
+# feeder profile (replace `.example.invalid` with real endpoints before launching).
+feeder:
+  rpc_endpoints:
+    1: "https://ethereum-rpc.example.invalid"
+    97: "https://bsc-testnet-rpc.example.invalid"
+    11155111: "https://sepolia-rpc.example.invalid"
+  # Optional provider API keys (only needed if the active feeder profile uses `pyth` or `redstone`):
+  # api_keys:
+  #   pyth: "<your-pyth-api-key>"
+
 topology:
   # Enable only when consensus peers use private/RFC1918 addresses.
   use_local_defaults: true
@@ -68,8 +80,9 @@ genesis:
   # base: ./custom-genesis.json
   # Omit timestamp for a fresh launch time. Set it to reproduce one exact genesis.
   # timestamp: 1793795928
-  epoch_length_blocks: 1200
-  dkg_prepare_window_blocks: 300
+  # Blocks are at least 1 s apart: 3600 blocks is at least one hour, 900 blocks at least 15 minutes.
+  epoch_length_blocks: 3600
+  dkg_prepare_window_blocks: 900
   dkg_activation_grace_blocks: 300
   prefunded_accounts:
     "0x1111111111111111111111111111111111111111": "1000000000000000000000"
@@ -102,8 +115,8 @@ genesis:
 #   prefix: 24
 #   gateway: 10.77.0.1
 #   dns: [1.1.1.1, 8.8.8.8]
-#   vcpu: 3
-#   memory_gib: 5
-#   disk_gib: 40
+#   vcpu: 8
+#   memory_gib: 16
+#   disk_gib: 100
 #   flavor: dev
 #   authorized_keys: ./dev-authorized-keys

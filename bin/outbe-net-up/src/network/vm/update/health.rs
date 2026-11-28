@@ -227,6 +227,13 @@ fn unready_member_reason(s: &VmMemberStatus, required_peers: usize) -> String {
     if s.role == MemberRole::FullNode {
         return "not ready (vmm/rpc/consensus/tee)".to_owned();
     }
+    if s.feeder_healthy != Some(true) {
+        return s
+            .feeder_error
+            .as_deref()
+            .unwrap_or("feeder /health did not return ok")
+            .to_owned();
+    }
     if s.hyperlane_healthy != Some(true) {
         return "Hyperlane unavailable/unhealthy".to_owned();
     }
@@ -236,7 +243,7 @@ fn unready_member_reason(s: &VmMemberStatus, required_peers: usize) -> String {
             "consensus connectedPeers={} (expected >= n-1={required_peers})",
             c.connected_peers
         ),
-        Some(_) => "not ready (vmm/rpc/consensus/tee)".to_owned(),
+        Some(_) => "not ready (vmm/rpc/consensus/tee/feeder)".to_owned(),
     }
 }
 

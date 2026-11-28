@@ -93,7 +93,7 @@ enum DiskCommand {
         #[arg(long)]
         cleanup_stale: bool,
         /// Raw data disk size in GiB.
-        #[arg(long, default_value_t = 40)]
+        #[arg(long, default_value_t = outbe_operator_vm::local::DEFAULT_LOCAL_DISK_GIB)]
         size_gib: u32,
         /// Output raw GPT+ext4 disk image path (refuses to overwrite existing files or symlinks).
         #[arg(long)]
@@ -513,13 +513,13 @@ enum VmCommand {
         /// Host bridge interface to attach (e.g. `obr0`).
         #[arg(long)]
         bridge: String,
-        /// Number of vCPUs [default: 3].
+        /// Number of vCPUs [default: 8].
         #[arg(long)]
         vcpu: Option<u32>,
-        /// Memory in GiB [default: 5].
+        /// Memory in GiB [default: 16].
         #[arg(long)]
         memory_gib: Option<u32>,
-        /// Virtual disk size in GiB [default: 40].
+        /// Virtual disk size in GiB [default: 100].
         #[arg(long)]
         disk_gib: Option<u32>,
         /// Custom dstack app-compose JSON path (defaults to embedded deploy/outbe-vm/app-compose.json).
@@ -1523,10 +1523,31 @@ mod tests {
             "--output",
             "./validator-0.img",
             "--size-gib",
-            "40",
+            "100",
             "--json",
         ])
         .is_ok());
+        let default_disk = Cli::try_parse_from([
+            "outbe-up",
+            "disk",
+            "prepare",
+            "--role",
+            "founder",
+            "--source",
+            "./vm/validator-0",
+            "--output",
+            "./validator-0.img",
+        ])
+        .unwrap();
+        assert!(matches!(
+            default_disk.command,
+            Command::Disk(DiskArgs {
+                command: DiskCommand::Prepare { size_gib: 100, .. }
+            })
+        ));
+        assert_eq!(outbe_operator_vm::local::DEFAULT_LOCAL_VCPU, 8);
+        assert_eq!(outbe_operator_vm::local::DEFAULT_LOCAL_MEMORY_GIB, 16);
+        assert_eq!(outbe_operator_vm::local::DEFAULT_LOCAL_DISK_GIB, 100);
         assert!(Cli::try_parse_from([
             "outbe-up",
             "disk",

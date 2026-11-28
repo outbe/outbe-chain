@@ -23,7 +23,7 @@ use super::{
         ensure_pinned_outbe_up_on_host, fetch_host_vms, resolve_state_or_bundled_outbe_up_sha256,
         RemoteOutbeUp,
     },
-    rpc::{query_vm_rpc_batch, BatchedRpcResult},
+    rpc::{query_vm_feeder_health, query_vm_rpc_batch, BatchedRpcResult},
     types::{
         build_all_desired_members, classify_host_vm, collect_unique_hosts,
         network_owner_tag_prefix, DesiredMember, RemoteVmStatusOutput, UniqueHost, VmClassKind,
@@ -63,6 +63,10 @@ pub(crate) struct VmMemberStatus {
     pub(crate) has_threshold_shares: Option<bool>,
     pub(crate) vrf_material_version: Option<u64>,
     pub(crate) tee_ready: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) feeder_healthy: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) feeder_error: Option<String>,
     pub(crate) hyperlane_healthy: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) hyperlane_controller: Option<String>,
@@ -283,7 +287,18 @@ fn member_unhealthy_reason(
     if !status.vmm_running || status.error.is_some() || status.finalized.is_none() {
         return Some(format!("{}: unreachable/not-running", status.name));
     }
-    if status.role != MemberRole::FullNode && status.consensus.is_none() {
+    if status.role != MemberRole::FullNode {
+        if let Some(reason) = validator_unhealthy_reason(status, required_peers) {
+            return Some(reason);
+        }
+    }
+    assessment
+        .lagging
+        .then(|| format!("{}: {}", status.name, assessment.reasons.join(", ")))
+}
+
+fn validator_unhealthy_reason(status: &VmMemberStatus, required_peers: usize) -> Option<String> {
+    if status.consensus.is_none() {
         return Some(format!("{}: missing outbe_consensusStatus", status.name));
     }
     if status.role != MemberRole::FullNode && status.hyperlane_healthy != Some(true) {
@@ -298,9 +313,14 @@ fn member_unhealthy_reason(
             status.consensus_peers.unwrap_or(0)
         ));
     }
-    assessment
-        .lagging
-        .then(|| format!("{}: {}", status.name, assessment.reasons.join(", ")))
+    if status.feeder_healthy != Some(true) {
+        let detail = status
+            .feeder_error
+            .as_deref()
+            .unwrap_or("feeder /health did not return ok");
+        return Some(format!("{}: feeder unhealthy ({detail})", status.name));
+    }
+    None
 }
 
 pub(crate) async fn query_members_and_orphans(
@@ -414,20 +434,27 @@ pub(super) fn build_member_status(
         .or(vm.intended_ip)
         .unwrap_or(member.service_ip);
 
-    let rpc = if vm.running && query_rpc && kind == VmClassKind::Ours {
-        query_member_rpc(
-            exec,
-            &member,
-            service_ip,
-            boot_warning.as_deref(),
-            &mut error,
-        )
-    } else {
-        if !vm.running && error.is_none() {
-            error.clone_from(&boot_warning);
-        }
-        BatchedRpcResult::default()
-    };
+    let (rpc, feeder_healthy, feeder_error) =
+        if vm.running && query_rpc && kind == VmClassKind::Ours {
+            let rpc = query_member_rpc(
+                exec,
+                &member,
+                service_ip,
+                boot_warning.as_deref(),
+                &mut error,
+            );
+            let (feeder_healthy, feeder_error) = if member.role == MemberRole::FullNode {
+                (None, None)
+            } else {
+                query_member_feeder(exec, &member, service_ip)
+            };
+            (rpc, feeder_healthy, feeder_error)
+        } else {
+            if !vm.running && error.is_none() {
+                error.clone_from(&boot_warning);
+            }
+            (BatchedRpcResult::default(), None, None)
+        };
 
     let tee_ready = (!effective_no_tee)
         .then(|| rpc.consensus.as_ref().map(ConsensusStatus::resident_ready))
@@ -465,12 +492,25 @@ pub(super) fn build_member_status(
         has_threshold_shares: rpc.consensus.as_ref().map(|c| c.has_threshold_shares),
         vrf_material_version: rpc.consensus.as_ref().map(|c| c.vrf_material_version),
         tee_ready,
+        feeder_healthy,
+        feeder_error,
         hyperlane_healthy: hyperlane.as_ref().map(|status| status.healthy),
         hyperlane_controller: hyperlane.as_ref().map(|status| status.controller.clone()),
         hyperlane_active: hyperlane.and_then(|status| status.active),
         consensus: rpc.consensus,
         boot_warning,
         error,
+    }
+}
+
+fn query_member_feeder(
+    exec: &dyn HostExec,
+    member: &DesiredMember,
+    service_ip: Ipv4Addr,
+) -> (Option<bool>, Option<String>) {
+    match query_vm_feeder_health(exec, &member.vmm_host, &member.name, service_ip) {
+        Ok(()) => (Some(true), None),
+        Err(err) => (Some(false), Some(format!("{err:#}"))),
     }
 }
 
@@ -502,6 +542,8 @@ fn absent_member_status(
         has_threshold_shares: None,
         vrf_material_version: None,
         tee_ready: None,
+        feeder_healthy: None,
+        feeder_error: None,
         hyperlane_healthy: None,
         hyperlane_controller: None,
         hyperlane_active: None,

@@ -34,6 +34,8 @@ pub fn feeder(bin_dir: Option<&Path>) -> Result<()> {
         .unwrap_or_else(|| PathBuf::from("/run/outbe-feeder"));
     fs::create_dir_all(&runtime)?;
     let config = runtime.join("feeder.toml");
+    let is_vm_role = env::var_os("OUTBE_NODE_ROLE").is_some_and(|v| !v.is_empty());
+    let health_bind = feeder_health_bind_address(is_vm_role);
     let mut content = format!(
         concat!(
             "[chain]\n",
@@ -45,12 +47,13 @@ pub fn feeder(bin_dir: Option<&Path>) -> Result<()> {
             "validator_address = {validator}\n\n",
             "[health]\n",
             "enabled = true\n",
-            "bind_address = \"127.0.0.1:9002\"\n\n"
+            "bind_address = {health_bind}\n\n"
         ),
         chain_id = chain_id,
         rpc = serde_json::to_string(&rpc)?,
         private_key = serde_json::to_string(&format!("0x{key}"))?,
         validator = serde_json::to_string(&validator)?,
+        health_bind = serde_json::to_string(health_bind)?,
     );
     content.push_str(&public);
     if !content.ends_with('\n') {
@@ -121,6 +124,14 @@ fn binary_path(bin_dir: Option<&Path>, name: &str) -> PathBuf {
     bin_dir
         .unwrap_or_else(|| Path::new(process::ROOT))
         .join(name)
+}
+
+fn feeder_health_bind_address(is_vm_role: bool) -> &'static str {
+    if is_vm_role {
+        "0.0.0.0:9002"
+    } else {
+        "127.0.0.1:9002"
+    }
 }
 
 pub async fn wait_validator_dependencies(timeout: u64) -> Result<()> {
@@ -344,5 +355,11 @@ mod tests {
             .contains("OUTBE_RPC_PORT"));
         assert!(local_rpc_url_from("127.0.0.1", Some("0"), false).is_err());
         assert!(local_rpc_url_from("127.0.0.1", Some("abc"), false).is_err());
+    }
+
+    #[test]
+    fn feeder_health_binds_all_interfaces_in_vm_and_loopback_on_bare_host() {
+        assert_eq!(feeder_health_bind_address(true), "0.0.0.0:9002");
+        assert_eq!(feeder_health_bind_address(false), "127.0.0.1:9002");
     }
 }

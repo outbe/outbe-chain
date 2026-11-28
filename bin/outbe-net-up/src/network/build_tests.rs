@@ -285,12 +285,12 @@ fn genesis_cli_config_defaults_epoch_and_dkg_windows_when_omitted() {
 
     let (keys, _) = feeder_keys(temp.path(), config.founders.len());
     let defaulted = genesis_cli_config(&config, temp.path(), &keys, None).unwrap();
-    assert_eq!(defaulted["epoch_length_blocks"], 1200);
-    assert_eq!(defaulted["dkg_prepare_window_blocks"], 300);
+    assert_eq!(defaulted["epoch_length_blocks"], 3600);
+    assert_eq!(defaulted["dkg_prepare_window_blocks"], 900);
     assert_eq!(defaulted["dkg_activation_grace_blocks"], 300);
     outbe_genesis_cli::network::validate_config(&defaulted).unwrap();
 
-    // Explicit valid values (>= 120) are preserved verbatim.
+    // Explicit valid values (>= 60) are preserved verbatim.
     config.genesis.epoch_length_blocks = Some(2400);
     config.genesis.dkg_prepare_window_blocks = Some(120);
     config.genesis.dkg_activation_grace_blocks = Some(180);
@@ -1154,4 +1154,186 @@ genesis:
         .unwrap();
     local_dev.validate().unwrap();
     assert!(build_vm_firewall_mappings(&local_dev).unwrap().is_empty());
+}
+
+#[test]
+fn vm_feeder_config_injects_rpc_endpoints_and_refuses_missing_or_placeholders() {
+    let temp = tempfile::tempdir().unwrap();
+    let pairs_path = temp
+        .path()
+        .join("share/outbe-genesis/profiles/testnet/pairs.toml");
+    fs::create_dir_all(pairs_path.parent().unwrap()).unwrap();
+    fs::write(
+        &pairs_path,
+        include_str!("../../../outbe-genesis-cli/profiles/testnet/pairs.toml"),
+    )
+    .unwrap();
+
+    let mut cfg: NetworkConfig = serde_yaml_ng::from_str(
+        r#"
+version: 1
+name: testnet-feeder
+network: testnet
+chain_id: 54322345
+certified_rpc: "http://10.77.0.10:8545"
+vm:
+  vmm_host:
+    host: 198.51.100.10
+  prefix: 24
+  gateway: 10.77.0.1
+  dns: [1.1.1.1, 8.8.8.8]
+founders:
+  - name: validator-0
+    advertise_ip: 198.51.100.10
+    hyperlane_public_url: http://198.51.100.10:9000
+    vm:
+      vm_ip: 10.77.0.10
+  - name: validator-1
+    advertise_ip: 198.51.100.11
+    hyperlane_public_url: http://198.51.100.11:9000
+    vm:
+      vm_ip: 10.77.0.11
+  - name: validator-2
+    advertise_ip: 198.51.100.12
+    hyperlane_public_url: http://198.51.100.12:9000
+    vm:
+      vm_ip: 10.77.0.12
+  - name: validator-3
+    advertise_ip: 198.51.100.13
+    hyperlane_public_url: http://198.51.100.13:9000
+    vm:
+      vm_ip: 10.77.0.13
+hyperlane:
+  gasless: true
+topology:
+  use_local_defaults: true
+genesis:
+  prefunded_accounts: {}
+"#,
+    )
+    .unwrap();
+    cfg.validate().unwrap();
+
+    // 1. Missing all feeder.rpc_endpoints on non-devnet VM -> refused listing 1, 97, 11155111.
+    let err = joining_operator_config(
+        &cfg,
+        temp.path(),
+        vec!["enode://boot".into()],
+        vec!["pk@198.51.100.10:30400".into()],
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        err.contains("feeder.rpc_endpoints")
+            && err.contains("1")
+            && err.contains("97")
+            && err.contains("11155111"),
+        "{err}"
+    );
+
+    // 2. Missing gas_providers chain 97 alone -> still refused!
+    cfg.feeder
+        .rpc_endpoints
+        .insert(1, "https://ethereum-rpc.example.invalid".into());
+    cfg.feeder
+        .rpc_endpoints
+        .insert(11155111, "https://sepolia-rpc.example.invalid".into());
+    let err_gas = joining_operator_config(
+        &cfg,
+        temp.path(),
+        vec!["enode://boot".into()],
+        vec!["pk@198.51.100.10:30400".into()],
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err_gas.contains("97"), "{err_gas}");
+
+    // 3. All required chains present -> emitted cleanly with zero REPLACE_WITH_ placeholders.
+    cfg.feeder
+        .rpc_endpoints
+        .insert(97, "https://bsc-testnet-rpc.example.invalid".into());
+    cfg.validate().unwrap();
+    let op = joining_operator_config(
+        &cfg,
+        temp.path(),
+        vec!["enode://boot".into()],
+        vec!["pk@198.51.100.10:30400".into()],
+    )
+    .unwrap();
+    assert!(
+        op.feeder
+            .public_toml
+            .contains("1 = \"https://ethereum-rpc.example.invalid\""),
+        "{}",
+        op.feeder.public_toml
+    );
+    assert!(
+        op.feeder
+            .public_toml
+            .contains("97 = \"https://bsc-testnet-rpc.example.invalid\""),
+        "{}",
+        op.feeder.public_toml
+    );
+    assert!(
+        op.feeder
+            .public_toml
+            .contains("11155111 = \"https://sepolia-rpc.example.invalid\""),
+        "{}",
+        op.feeder.public_toml
+    );
+    assert!(!op.feeder.public_toml.contains("REPLACE_WITH_"));
+    assert!(!op.feeder.public_toml.contains("mock_http"));
+    assert!(!op.feeder.public_toml.contains("name = \"pyth\""));
+
+    // 4. Profile requiring pyth refuses when feeder.api_keys.pyth is absent and succeeds when set.
+    fs::write(
+        &pairs_path,
+        "[[currency_pairs]]\nbase = \"COEN\"\nquote = \"840\"\nmarkets = [{ provider = \"pyth\" }]\n",
+    )
+    .unwrap();
+    let err_pyth = joining_operator_config(
+        &cfg,
+        temp.path(),
+        vec!["enode://boot".into()],
+        vec!["pk@198.51.100.10:30400".into()],
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err_pyth.contains("feeder.api_keys.pyth"), "{err_pyth}");
+
+    cfg.feeder
+        .api_keys
+        .insert("pyth".into(), "test-pyth-key-123".into());
+    let op_pyth = joining_operator_config(
+        &cfg,
+        temp.path(),
+        vec!["enode://boot".into()],
+        vec!["pk@198.51.100.10:30400".into()],
+    )
+    .unwrap();
+    assert!(op_pyth.feeder.public_toml.contains("name = \"pyth\""));
+    assert!(op_pyth
+        .feeder
+        .public_toml
+        .contains("api_key = \"test-pyth-key-123\""));
+    assert!(!op_pyth.feeder.public_toml.contains("REPLACE_WITH_"));
+
+    // 5. Any lingering REPLACE_WITH_ placeholder in pairs.toml is refused in VM mode.
+    fs::write(
+        &pairs_path,
+        "[[currency_pairs]]\nbase = \"COEN\"\nquote = \"840\"\nmarkets = [{ provider = \"mock\" }]\n# REPLACE_WITH_SOMETHING\n",
+    )
+    .unwrap();
+    let err_placeholder = joining_operator_config(
+        &cfg,
+        temp.path(),
+        vec!["enode://boot".into()],
+        vec!["pk@198.51.100.10:30400".into()],
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        err_placeholder.contains("REPLACE_WITH_"),
+        "{err_placeholder}"
+    );
 }

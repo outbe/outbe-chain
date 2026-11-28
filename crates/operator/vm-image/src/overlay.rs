@@ -4,7 +4,7 @@
 use std::{fs, os::unix::fs::PermissionsExt, path::Path};
 
 use eyre::{ensure, Result};
-use outbe_operator_systemd::{vm_dev_dropins, vm_units};
+use outbe_operator_systemd::{vm_console_dropins, vm_dev_dropins, vm_units};
 
 use crate::{OUTBE_GID, OUTBE_UID, PINNED_RUNTIME_LIBS, VM_BINARIES};
 
@@ -78,6 +78,12 @@ pub fn stage_overlay(
     for unit in vm_units() {
         write_overlay_file(&systemd_dir.join(unit.name), &unit.content, 0o644)?;
     }
+    // 5a. Console drop-ins for both flavors: each service prints to the serial console one
+    //     time. journald does not forward its entries to the console: that would print each
+    //     line a second time.
+    for dropin in vm_console_dropins() {
+        write_overlay_file(&systemd_dir.join(dropin.name), &dropin.content, 0o644)?;
+    }
     write_overlay_file(
         &systemd_dir.join("outbe-data-mount.service"),
         &render_data_mount_unit(),
@@ -105,9 +111,9 @@ pub fn stage_overlay(
         0o644,
     )?;
 
-    // 7. Dev-only overlay: SSH, serial console log forwarding, service-IP metrics bind, and
-    //    periodic diagnostic snapshots. Everything here lives strictly under
-    //    `mkosi.profiles/dev/mkosi.skeleton`, so `prod` never receives any of it.
+    // 7. Dev-only overlay: SSH, service-IP metrics bind, and periodic diagnostic snapshots.
+    //    Everything here lives strictly under `mkosi.profiles/dev/mkosi.skeleton`, so `prod`
+    //    never receives any of it.
     //    SSH config is named `00-outbe-dev.conf` so OpenSSH first-match-wins overrides dstack's.
     write_overlay_file(
         &dev_only.join("etc/ssh/sshd_config.d/00-outbe-dev.conf"),
@@ -120,16 +126,7 @@ pub fn stage_overlay(
         0o644,
     )?;
 
-    // 7a. Forward journald info-and-higher logs to the serial console (`outbe-up vm logs`),
-    //     sorted after dstack's `dstack.conf`.
-    write_overlay_file(
-        &dev_only.join("etc/systemd/journald.conf.d/zz-outbe-dev.conf"),
-        &render_dev_journald_conf(),
-        0o644,
-    )?;
-
-    // 7b. Unit drop-ins for `outbe-*` services and `dstack-guest-agent.service`: console output
-    //     plus `${OUTBE_VM_IP}:9101` metrics binding on node units.
+    // 7b. Unit drop-ins for the node units: `${OUTBE_VM_IP}:9101` metrics binding.
     let dev_systemd_dir = dev_only.join("usr/lib/systemd/system");
     for dropin in vm_dev_dropins() {
         write_overlay_file(&dev_systemd_dir.join(dropin.name), &dropin.content, 0o644)?;
@@ -218,16 +215,6 @@ fn render_dev_sshd_conf() -> String {
         "PubkeyAuthentication yes\n",
         "PermitRootLogin prohibit-password\n",
         "AuthorizedKeysFile /opt/outbe-chain/dev/authorized_keys\n",
-    )
-    .to_owned()
-}
-
-fn render_dev_journald_conf() -> String {
-    concat!(
-        "# Outbe dev VM diagnostic logging: forward info-and-higher journal entries to serial console.\n",
-        "[Journal]\n",
-        "ForwardToConsole=yes\n",
-        "MaxLevelConsole=info\n",
     )
     .to_owned()
 }

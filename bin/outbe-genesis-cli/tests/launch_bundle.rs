@@ -259,7 +259,7 @@ fn feeder_pairs_and_config_templates() {
         })
         .collect();
     quotes.sort();
-    let mut expected_quotes = vec!["840", "978", "392", "826", "156", "344"];
+    let mut expected_quotes = vec!["840", "978", "392", "826", "156"];
     expected_quotes.sort_unstable();
     assert_eq!(quotes, expected_quotes);
     assert_eq!(pairs[0]["initial_rate"], json!("1000000"));
@@ -273,8 +273,10 @@ fn feeder_pairs_and_config_templates() {
             .expect("read committed pairs")
     );
     let feeder_toml = fs::read_to_string(dir0.join("feeder.toml")).expect("read feeder.toml");
-    assert!(feeder_toml.contains("[rpc_endpoints]\n1 = \"REPLACE_WITH_RPC_URL\""));
-    assert!(feeder_toml.contains("name = \"pyth\""));
+    assert!(feeder_toml.contains(
+        "[rpc_endpoints]\n1 = \"REPLACE_WITH_RPC_URL\"\n97 = \"REPLACE_WITH_RPC_URL\"\n11155111 = \"REPLACE_WITH_RPC_URL\""
+    ));
+    assert!(!feeder_toml.contains("name = \"pyth\""));
 
     let binance_cfg = merge_obj(
         minimal_config("/keys"),

@@ -12,22 +12,24 @@
 //!
 //! Each felony default is four times its misdemeanor default. Voter thresholds
 //! exceed the corresponding proposer thresholds because votes occur more often.
-//! Both felony defaults fit within a 1,200-block epoch. Proposer opportunities
+//! The defaults match the default epoch of 3,600 blocks: a voter warning at
+//! 7.1% of the epoch and a voter felony at 28.4%. Both felony defaults fit
+//! within that epoch. Proposer opportunities
 //! depend on committee size and skipped views, so this alone does not guarantee
 //! that every validator can reach the proposer threshold. Short-epoch networks
 //! must select suitable storage overrides.
 
 /// Proposer misses between warning events within one epoch.
-pub const DEFAULT_PROPOSER_MISDEMEANOR_THRESHOLD: u64 = 32;
+pub const DEFAULT_PROPOSER_MISDEMEANOR_THRESHOLD: u64 = 64;
 
 /// Proposer misses at the first jail and stake slash within one epoch.
-pub const DEFAULT_PROPOSER_FELONY_THRESHOLD: u64 = 128;
+pub const DEFAULT_PROPOSER_FELONY_THRESHOLD: u64 = 256;
 
 /// Missed finalized-block votes between warning events within one epoch.
-pub const DEFAULT_VOTER_MISDEMEANOR_THRESHOLD: u64 = 128;
+pub const DEFAULT_VOTER_MISDEMEANOR_THRESHOLD: u64 = 256;
 
 /// Missed finalized-block votes at the first jail and stake slash within one epoch.
-pub const DEFAULT_VOTER_FELONY_THRESHOLD: u64 = 512;
+pub const DEFAULT_VOTER_FELONY_THRESHOLD: u64 = 1024;
 
 /// Percentage of stake slashed for one felony.
 pub const DEFAULT_SLASH_AMOUNT_PERCENT: u64 = 8;

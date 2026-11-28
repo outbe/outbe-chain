@@ -819,8 +819,8 @@ fn c1_local_exec_full_staged_disk_owner_tag_and_expect_vm_id_flow() {
     assert_eq!(st["disk_source_sha256"], json!(disk_sha));
     assert!(st["app_id"].as_str().is_some_and(|s| s.len() == 40));
     assert_eq!(st["no_tee"], json!(false));
-    assert_eq!(st["vcpu"], json!(3));
-    assert_eq!(st["memory_gib"], json!(5));
+    assert_eq!(st["vcpu"], json!(8));
+    assert_eq!(st["memory_gib"], json!(16));
     assert_eq!(st["disk_gib"], json!(1));
     assert_eq!(st["service_ip"], json!("10.77.0.10"));
     assert_eq!(st["dhcp_ip"], json!("10.77.0.91"));

@@ -106,8 +106,8 @@ fn overlay_assembly_stages_binaries_units_libs_and_keeps_ssh_dev_only() {
     assert!(mount_unit.contains("mount --bind /dstack/persistent/outbe-chain /opt/outbe-chain"));
     assert!(mount_unit.contains("remount,bind,noexec,nosuid,nodev /opt/outbe-chain"));
 
-    // SSH, journald ForwardToConsole, diagnostic timer/script, and service-IP metrics drop-ins
-    // are strictly in the dev profile skeleton, NEVER in common/prod.
+    // SSH, diagnostic timer/script, and service-IP metrics drop-ins are strictly in the dev
+    // profile skeleton, NEVER in common/prod.
     assert!(!common.join("etc/ssh").exists());
     assert!(!common.join("etc/systemd/journald.conf.d").exists());
     assert!(!common.join("usr/local/bin/outbe-vm-diag.sh").exists());
@@ -144,7 +144,7 @@ fn overlay_assembly_stages_binaries_units_libs_and_keeps_ssh_dev_only() {
             "prod overlay must not contain {rel}"
         );
         assert!(
-            !rel.contains(".service.d/"),
+            !rel.contains(".service.d/") || rel.ends_with("/10-outbe-console.conf"),
             "prod overlay must not contain service drop-in {rel}"
         );
     }
@@ -160,6 +160,14 @@ fn overlay_assembly_stages_binaries_units_libs_and_keeps_ssh_dev_only() {
         assert!(!content.contains("--log.stdout.filter"));
         assert!(!content.contains("StandardOutput=journal+console"));
     }
+    // Both flavors print each service to the serial console one time.
+    for dropin in vm_console_dropins() {
+        let content = fs::read_to_string(systemd.join(&dropin.name)).unwrap();
+        assert_eq!(
+            content,
+            "[Service]\nStandardOutput=journal+console\nStandardError=journal+console\n"
+        );
+    }
 
     // Dev-only SSH configuration.
     let dev_sshd =
@@ -174,21 +182,16 @@ fn overlay_assembly_stages_binaries_units_libs_and_keeps_ssh_dev_only() {
     assert!(dev_ssh_dropin.contains("After=outbe-data-mount.service"));
     assert!(dev_ssh_dropin.contains("Wants=outbe-data-mount.service"));
 
-    // Dev-only journald ForwardToConsole (MaxLevelConsole=info), sorted after dstack.conf.
-    let dev_journald =
-        fs::read_to_string(dev_only.join("etc/systemd/journald.conf.d/zz-outbe-dev.conf")).unwrap();
-    assert!(dev_journald.contains("[Journal]"));
-    assert!(dev_journald.contains("ForwardToConsole=yes"));
-    assert!(dev_journald.contains("MaxLevelConsole=info"));
+    // journald does not forward its entries to the console: each service prints there one time.
+    assert!(!dev_only.join("etc/systemd/journald.conf.d").exists());
 
-    // Dev-only unit drop-ins: console logging + service-IP metrics on node units.
+    // Dev-only unit drop-ins: service-IP metrics on node units.
     let dev_systemd = dev_only.join("usr/lib/systemd/system");
     for dropin in vm_dev_dropins() {
         let path = dev_systemd.join(&dropin.name);
         assert!(path.is_file(), "missing dev drop-in {}", dropin.name);
         let content = fs::read_to_string(&path).unwrap();
-        assert!(content.contains("StandardOutput=journal+console"));
-        assert!(content.contains("StandardError=journal+console"));
+        assert!(!content.contains("StandardOutput="));
     }
     for node_unit in [
         "outbe-validator.service",
@@ -199,7 +202,7 @@ fn overlay_assembly_stages_binaries_units_libs_and_keeps_ssh_dev_only() {
             fs::read_to_string(dev_systemd.join(format!("{node_unit}.d/20-outbe-dev.conf")))
                 .unwrap();
         assert!(dropin.contains("--metrics ${OUTBE_VM_IP}:9101"));
-        assert!(dropin.contains("--log.stdout.filter info,commonware_p2p=debug"));
+        assert!(!dropin.contains("--log.stdout.filter"));
         assert!(!dropin.contains("127.0.0.1:9101"));
     }
 

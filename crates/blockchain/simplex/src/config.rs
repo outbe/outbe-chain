@@ -78,13 +78,19 @@ pub const ENGINE_MAILBOX_SIZE: usize = 256;
 /// `outbe_slashindicator`). The DKG prepare/grace windows below are
 /// lookback/fallback bounds and stay < this epoch. The operational windows come
 /// from `config.dkg{Prepare,Grace}*` in genesis.
-pub const DEFAULT_EPOCH_LENGTH_BLOCKS: u32 = 1_200;
+///
+/// Blocks are at least `timing::MIN_BLOCK_TIME_MS` (1 s) apart, so 3600 blocks
+/// is at least one hour: the validator set changes at most once an hour.
+pub const DEFAULT_EPOCH_LENGTH_BLOCKS: u32 = 3_600;
 
 /// Activity timeout in views (track this many behind finalized tip).
 pub const ACTIVITY_TIMEOUT: u32 = 1000;
 
 /// Default DKG prepare window before planned activation, in blocks.
-pub const DEFAULT_DKG_PREPARE_WINDOW_BLOCKS: u64 = 600;
+///
+/// At least 15 minutes at the 1 s minimum block time: the ceremony starts 15
+/// minutes before the epoch ends.
+pub const DEFAULT_DKG_PREPARE_WINDOW_BLOCKS: u64 = 900;
 /// Default late activation grace window after planned activation.
 pub const DEFAULT_DKG_ACTIVATION_GRACE_BLOCKS: u64 = 600;
 

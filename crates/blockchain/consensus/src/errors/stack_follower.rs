@@ -282,6 +282,16 @@ pub enum StackStartupError {
     /// Indicates that genesis config leaderTimeoutMs is zero.
     #[error("genesis config leaderTimeoutMs must be > 0")]
     LeaderTimeoutMsZero,
+    /// Indicates that leaderTimeoutMs does not exceed the minimum block time.
+    #[error(
+        "genesis config leaderTimeoutMs ({leader_ms}) must be > the minimum block time ({min_block_time_ms} ms)"
+    )]
+    LeaderTimeoutNotAboveMinBlockTime {
+        /// Leader timeout in milliseconds.
+        leader_ms: u64,
+        /// Minimum block time in milliseconds.
+        min_block_time_ms: u64,
+    },
     /// Indicates that genesis config certificationTimeoutMs is zero.
     #[error("genesis config certificationTimeoutMs must be > 0")]
     CertificationTimeoutMsZero,

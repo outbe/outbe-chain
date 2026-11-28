@@ -168,9 +168,10 @@ genesis:
         .is_file());
 
     // 2. Mixed 2-host (AMD+Intel) 4-VM testnet build with per-host `port_offset` 0/1.
-    let testnet_cfg = tmp.path().join("testnet.yaml");
+    // First verify build refuses a non-devnet VM config missing `feeder.rpc_endpoints`.
+    let missing_feeder_cfg = tmp.path().join("testnet-missing-feeder.yaml");
     fs::write(
-        &testnet_cfg,
+        &missing_feeder_cfg,
         r#"
 version: 1
 name: s6-mixed-testnet
@@ -221,6 +222,85 @@ genesis:
 "#,
     )
     .unwrap();
+    let bad_build = Command::new(OUTBE_NET_UP_BIN)
+        .args(["network", "build", "--software-bundle"])
+        .arg(bundle)
+        .arg("--config")
+        .arg(&missing_feeder_cfg)
+        .arg("--output")
+        .arg(tmp.path().join("testnet-missing-feeder-out"))
+        .output()
+        .unwrap();
+    assert!(
+        !bad_build.status.success(),
+        "testnet VM build without feeder.rpc_endpoints must fail"
+    );
+    let bad_stderr = String::from_utf8_lossy(&bad_build.stderr);
+    assert!(
+        bad_stderr.contains("feeder.rpc_endpoints"),
+        "expected missing feeder.rpc_endpoints error, got:\n{bad_stderr}"
+    );
+
+    let testnet_cfg = tmp.path().join("testnet.yaml");
+    fs::write(
+        &testnet_cfg,
+        r#"
+version: 1
+name: s6-mixed-testnet
+network: testnet
+chain_id: 54322345
+certified_rpc: "http://10.77.0.80:8545"
+vm:
+  vmm_host:
+    host: 198.51.100.10
+  prefix: 24
+  gateway: 10.77.0.1
+  dns: [1.1.1.1, 8.8.8.8]
+founders:
+  - name: validator-0
+    advertise_ip: 198.51.100.10
+    hyperlane_public_url: http://198.51.100.10:9000
+    vm:
+      vm_ip: 10.77.0.80
+      port_offset: 0
+  - name: validator-1
+    advertise_ip: 198.51.100.10
+    hyperlane_public_url: http://198.51.100.10:9001
+    vm:
+      vm_ip: 10.77.0.81
+      port_offset: 1
+  - name: validator-2
+    advertise_ip: 203.0.113.20
+    hyperlane_public_url: http://203.0.113.20:9000
+    vm:
+      vm_ip: 10.77.0.80
+      port_offset: 0
+      vmm_host:
+        host: 203.0.113.20
+  - name: validator-3
+    advertise_ip: 203.0.113.20
+    hyperlane_public_url: http://203.0.113.20:9001
+    vm:
+      vm_ip: 10.77.0.81
+      port_offset: 1
+      vmm_host:
+        host: 203.0.113.20
+hyperlane:
+  gasless: true
+feeder:
+  rpc_endpoints:
+    1: "https://ethereum-rpc.example.invalid"
+    97: "https://bsc-testnet-rpc.example.invalid"
+    11155111: "https://sepolia-rpc.example.invalid"
+  api_keys:
+    pyth: "test-pyth-key-placeholder"
+topology:
+  use_local_defaults: true
+genesis:
+  prefunded_accounts: {}
+"#,
+    )
+    .unwrap();
 
     let testnet_out = tmp.path().join("testnet-artifacts");
     let build_test = Command::new(OUTBE_NET_UP_BIN)
@@ -251,7 +331,8 @@ genesis:
     let fw = test_manifest["firewall_mappings"]
         .as_array()
         .expect("mixed-host manifest must include firewall_mappings");
-    assert_eq!(fw.len(), 20);
+    // Six mappings for each of the four founders. The Hyperlane port is the sixth.
+    assert_eq!(fw.len(), 24);
     assert_eq!(fw[0]["member"], "validator-0");
     assert_eq!(fw[0]["host"], "198.51.100.10");
     assert_eq!(fw[0]["public_ip"], "198.51.100.10");
@@ -308,7 +389,11 @@ genesis:
     let feeder0 =
         fs::read_to_string(testnet_out.join("vm/validator-0/feeder-public.toml")).unwrap();
     assert!(
-        feeder0.contains("https://prc.testnet.outbe.net"),
+        feeder0.contains("1 = \"https://ethereum-rpc.example.invalid\""),
         "{feeder0}"
+    );
+    assert!(
+        !feeder0.contains("REPLACE_WITH_"),
+        "VM feeder-public.toml must never contain REPLACE_WITH_ placeholders:\n{feeder0}"
     );
 }

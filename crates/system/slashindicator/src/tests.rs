@@ -1052,7 +1052,7 @@ fn default_thresholds_warn_before_they_punish() {
                 si.slash_amount_percent().unwrap(),
                 si.evidence_reward_percent().unwrap(),
             ),
-            (32, 128, 128, 512, 8, 0)
+            (64, 256, 256, 1024, 8, 0)
         );
         assert!(
             si.proposer_misdemeanor_threshold().unwrap() < si.proposer_felony_threshold().unwrap()
@@ -1200,8 +1200,8 @@ fn configured_slashing_policy_overrides_defaults() {
 
 #[test]
 fn default_liveness_thresholds_warn_then_jail_once() {
-    exercise_liveness_role([32, 64, 96], 128, true, record_proposer_miss);
-    exercise_liveness_role([128, 256, 384], 512, false, record_voter_miss);
+    exercise_liveness_role([64, 128, 192], 256, true, record_proposer_miss);
+    exercise_liveness_role([256, 512, 768], 1024, false, record_voter_miss);
 }
 
 fn fresh_liveness_provider() -> HashMapStorageProvider {

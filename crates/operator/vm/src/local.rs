@@ -59,9 +59,9 @@ pub use self::{
 };
 
 pub const LOCAL_VM_STATE_VERSION: u32 = 1;
-pub const DEFAULT_LOCAL_VCPU: u32 = 3;
-pub const DEFAULT_LOCAL_MEMORY_GIB: u32 = 5;
-pub const DEFAULT_LOCAL_DISK_GIB: u32 = 40;
+pub const DEFAULT_LOCAL_VCPU: u32 = 8;
+pub const DEFAULT_LOCAL_MEMORY_GIB: u32 = 16;
+pub const DEFAULT_LOCAL_DISK_GIB: u32 = 100;
 pub const DEFAULT_LOCAL_FLAVOR: &str = "dev";
 pub const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(1);
 /// Default grace window when polling `Status` for an in-flight `Creating` VM before refusing.

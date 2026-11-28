@@ -20,12 +20,14 @@ use serde::{Deserialize, Serialize};
 
 pub const CONFIG_VERSION: u32 = 1;
 pub const MIN_FOUNDERS: usize = 4;
-pub const DEFAULT_EPOCH_LENGTH_BLOCKS: u64 = 1200;
-pub const DEFAULT_DKG_PREPARE_WINDOW_BLOCKS: u64 = 300;
+/// One hour at the 1 s minimum block time: the validator set changes at most once an hour.
+pub const DEFAULT_EPOCH_LENGTH_BLOCKS: u64 = 3600;
+/// 15 minutes at the 1 s minimum block time: the DKG ceremony starts 15 minutes before the epoch ends.
+pub const DEFAULT_DKG_PREPARE_WINDOW_BLOCKS: u64 = 900;
 pub const DEFAULT_DKG_ACTIVATION_GRACE_BLOCKS: u64 = 300;
 /// Minimum safe DKG prepare/activation grace window in blocks.
 /// Shorter windows risk starving `ACK_COLLECTION_GRACE` (30s) at ~4 blocks/s.
-pub const MIN_DKG_WINDOW_BLOCKS: u64 = 120;
+pub const MIN_DKG_WINDOW_BLOCKS: u64 = 60;
 pub const EXAMPLE: &str = include_str!("../../templates/network/network.example.yaml");
 
 pub const BASE_RPC_PORT: u16 = 8545;
@@ -34,6 +36,8 @@ pub const BASE_HYPERLANE_PORT: u16 = 9000;
 pub const BASE_RETH_P2P_PORT: u16 = 30303;
 pub const BASE_CONSENSUS_P2P_PORT: u16 = 30400;
 pub const BASE_RETH_DISCV5_PORT: u16 = 31303;
+
+pub use super::feeder_config::FeederNetworkConfig;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -45,6 +49,8 @@ pub struct NetworkConfig {
     pub certified_rpc: String,
     pub founders: Vec<Founder>,
     pub hyperlane: HyperlaneNetworkConfig,
+    #[serde(default, skip_serializing_if = "FeederNetworkConfig::is_empty")]
+    pub feeder: FeederNetworkConfig,
     #[serde(default)]
     pub topology: Topology,
     pub genesis: Genesis,
@@ -366,6 +372,7 @@ impl NetworkConfig {
         if let Some(vm) = &self.vm {
             self.validate_vm_defaults(vm)?;
         }
+        self.feeder.validate()?;
         self.validate_founders()?;
         self.validate_genesis()
     }
@@ -601,7 +608,7 @@ impl NetworkConfig {
                 ensure!(
                     value >= MIN_DKG_WINDOW_BLOCKS,
                     "genesis.{name} must be at least {MIN_DKG_WINDOW_BLOCKS} blocks (got {value}); \
-                     shorter windows risk starving DKG ACK_COLLECTION_GRACE (30s) at ~4 blocks/s"
+                     shorter windows risk starving DKG ACK_COLLECTION_GRACE (30s)"
                 );
             }
         }
@@ -989,15 +996,15 @@ fn default_vm_bridge() -> String {
 }
 
 const fn default_vm_vcpu() -> u32 {
-    3
+    8
 }
 
 const fn default_vm_memory_gib() -> u32 {
-    5
+    16
 }
 
 const fn default_vm_disk_gib() -> u32 {
-    40
+    100
 }
 
 #[cfg(test)]
@@ -1293,27 +1300,27 @@ genesis:
 
     #[test]
     fn rejects_dkg_windows_below_minimum_and_accepts_floor_and_defaults() {
-        // Omitting epoch & DKG fields is valid (build applies safe 1200/300/300 defaults).
+        // Omitting epoch & DKG fields is valid (build applies safe 3600/900/300 defaults).
         config_with(4).validate().unwrap();
 
-        // Prepare window < 120 blocks must be refused with a clear error.
-        for bad in [0, 30, 119] {
+        // Prepare window < 60 blocks must be refused with a clear error.
+        for bad in [0, 30, 59] {
             let mut cfg = config_with(4);
             cfg.genesis.dkg_prepare_window_blocks = Some(bad);
             let err = cfg.validate().unwrap_err().to_string();
             assert!(
-                err.contains("dkg_prepare_window_blocks") && err.contains("120"),
+                err.contains("dkg_prepare_window_blocks") && err.contains("60"),
                 "expected floor error for prepare={bad}, got: {err}"
             );
         }
 
-        // Activation grace < 120 blocks must be refused with a clear error.
-        for bad in [0, 30, 119] {
+        // Activation grace < 60 blocks must be refused with a clear error.
+        for bad in [0, 30, 59] {
             let mut cfg = config_with(4);
             cfg.genesis.dkg_activation_grace_blocks = Some(bad);
             let err = cfg.validate().unwrap_err().to_string();
             assert!(
-                err.contains("dkg_activation_grace_blocks") && err.contains("120"),
+                err.contains("dkg_activation_grace_blocks") && err.contains("60"),
                 "expected floor error for grace={bad}, got: {err}"
             );
         }
@@ -1405,9 +1412,9 @@ genesis:
 
         let f0 = config.resolve_founder_vm(&config.founders[0]).unwrap();
         assert_eq!(f0.vmm_host.host, "192.0.2.50");
-        assert_eq!(f0.vcpu, 3);
-        assert_eq!(f0.memory_gib, 5);
-        assert_eq!(f0.disk_gib, 40);
+        assert_eq!(f0.vcpu, 8);
+        assert_eq!(f0.memory_gib, 16);
+        assert_eq!(f0.disk_gib, 100);
         assert_eq!(f0.flavor, VmFlavor::Dev);
         assert_eq!(f0.vm_ip, Ipv4Addr::new(10, 77, 0, 10));
         assert_eq!(f0.authorized_keys, Some(PathBuf::from("./dev.pub")));
@@ -1415,7 +1422,7 @@ genesis:
         let f1 = config.resolve_founder_vm(&config.founders[1]).unwrap();
         assert_eq!(f1.vcpu, 4);
         assert_eq!(f1.memory_gib, 8);
-        assert_eq!(f1.disk_gib, 40);
+        assert_eq!(f1.disk_gib, 100);
 
         let f2 = config.resolve_founder_vm(&config.founders[2]).unwrap();
         assert_eq!(f2.vmm_host.host, "192.0.2.51");
@@ -1488,6 +1495,69 @@ genesis:
                 "bare-host config must reject rpc_port={bad}"
             );
         }
+    }
+
+    #[test]
+    fn feeder_config_validates_rpc_endpoints_and_api_keys() {
+        let mut cfg = vm_config("testnet", Network::Testnet.chain_id());
+        // Both unquoted integer and quoted string chain IDs deserialize into BTreeMap<u64, String>.
+        let parsed: FeederNetworkConfig = serde_yaml_ng::from_str(
+            r#"
+rpc_endpoints:
+  1: "https://ethereum-rpc.example.invalid"
+  "97": "https://bsc-testnet-rpc.example.invalid"
+  11155111: "https://sepolia-rpc.example.invalid"
+api_keys:
+  pyth: "test-key"
+"#,
+        )
+        .unwrap();
+        assert_eq!(parsed.rpc_endpoints.len(), 3);
+        assert_eq!(
+            parsed.rpc_endpoints[&97],
+            "https://bsc-testnet-rpc.example.invalid"
+        );
+        cfg.feeder = parsed;
+        cfg.validate().unwrap();
+
+        // Reject chain_id = 0.
+        let mut zero_cid = cfg.clone();
+        zero_cid
+            .feeder
+            .rpc_endpoints
+            .insert(0, "https://zero.example.invalid".into());
+        assert!(zero_cid.validate().is_err());
+
+        // Reject non-HTTP URL and REPLACE_WITH_ placeholder URL.
+        for bad_url in [
+            "REPLACE_WITH_RPC_URL",
+            "https://REPLACE_WITH_RPC_URL.example.invalid",
+            "ws://ethereum-rpc.example.invalid",
+            "https://",
+            "https://rpc.example.invalid/has space",
+        ] {
+            let mut bad = cfg.clone();
+            bad.feeder.rpc_endpoints.insert(1, bad_url.into());
+            assert!(
+                bad.validate().is_err(),
+                "feeder.rpc_endpoints must reject `{bad_url}`"
+            );
+        }
+
+        // Reject unknown API-key provider and REPLACE_WITH_ key.
+        let mut bad_provider = cfg.clone();
+        bad_provider
+            .feeder
+            .api_keys
+            .insert("binance".into(), "secret".into());
+        assert!(bad_provider.validate().is_err());
+
+        let mut bad_key = cfg;
+        bad_key
+            .feeder
+            .api_keys
+            .insert("pyth".into(), "REPLACE_WITH_PYTH_API_KEY".into());
+        assert!(bad_key.validate().is_err());
     }
 
     #[test]
