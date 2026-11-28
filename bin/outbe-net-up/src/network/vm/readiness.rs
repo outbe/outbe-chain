@@ -48,9 +48,8 @@ fn validator_consensus_ready(status: &VmMemberStatus, required_peers: usize) -> 
         && consensus.has_threshold_shares
         && consensus.connected_peers >= required_peers as u64;
     let tee_ok = status.no_tee || consensus.resident_ready();
-    let feeder_ok = status.feeder_healthy == Some(true);
-    let hyperlane_ok = status.hyperlane_healthy == Some(true);
-    exec_ok && core_ready && tee_ok && feeder_ok && hyperlane_ok
+    let sidecars_ok = status.feeder_healthy == Some(true) && status.hyperlane_healthy == Some(true);
+    exec_ok && core_ready && tee_ok && sidecars_ok
 }
 
 /// Compute readiness baseline `B = max(finalized)` from the first sample where every member
