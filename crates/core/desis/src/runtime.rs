@@ -37,25 +37,8 @@ use outbe_intexfactory::transport::wire::{
 // Auction lifecycle
 // ---------------------------------------------------------------------------
 
-/// Schedule the auction of `emission_day`: it starts at 00:00 UTC of the next day. A day that
-/// is already scheduled or ended stays as it is.
-pub(crate) fn schedule_auction(
-    storage: &StorageHandle<'_>,
-    emission_day: EmissionDate,
-) -> Result<()> {
-    let mut contract = storage.contract::<DesisContract>();
-    if contract.sched_active_slot.read(&emission_day)? != 0
-        || contract.read_stage(emission_day)? != AuctionStage::None
-    {
-        return Ok(());
-    }
-    let anchor = auction_anchor(emission_day)?;
-    contract.auction_at.write(&emission_day, anchor)?;
-    contract.push_sched_active(emission_day)
-}
-
 /// 00:00 UTC of the day after the emission day, where its schedule starts.
-fn auction_anchor(emission_day: EmissionDate) -> Result<u32> {
+pub(crate) fn auction_anchor(emission_day: EmissionDate) -> Result<u32> {
     if !emission_day.is_valid() {
         return Err(DesisError::InvalidEmissionDay(emission_day).into());
     }
@@ -75,7 +58,7 @@ fn is_open(contract: &DesisContract<'_>, emission_day: EmissionDate) -> Result<b
     })
 }
 
-/// Whether the day can still take its brief: open, not briefed and not being canceled.
+/// Whether the day can still take its Desis limit: open, with no limit yet and not being canceled.
 pub(crate) fn takes_desis_limit(
     storage: &StorageHandle<'_>,
     emission_day: EmissionDate,
@@ -86,17 +69,17 @@ pub(crate) fn takes_desis_limit(
         && contract.cancel_reason.read(&emission_day)? == 0)
 }
 
-/// `desis_limit_minor` is the brief's limit, already narrowed to the auction domain.
+/// `desis_limit_minor` is the Desis limit, already narrowed to the auction domain.
 pub(crate) fn record_desis_limit(
     storage: &StorageHandle<'_>,
-    brief: crate::api::DesisLimit,
+    limit: crate::api::DesisLimit,
     desis_limit_minor: u128,
 ) -> Result<()> {
     let crate::api::DesisLimit {
         emission_day,
         has_limit,
         ..
-    } = brief;
+    } = limit;
     let contract = storage.contract::<DesisContract>();
     contract
         .pending_desis_limit_minor
@@ -456,7 +439,7 @@ pub(crate) use algorithm::rate_lock;
 pub use bids::receive_bids_message;
 #[cfg(test)]
 pub(crate) use bids::{collect_intex_auction_bids, complete_intex_auction_bids, Inbound};
-pub use clearing::complete_auctions;
+pub use clearing::complete_intex_auctions;
 #[cfg(test)]
 pub(crate) use clearing::force_clear;
 #[cfg(test)]
@@ -464,6 +447,8 @@ pub(crate) use clearing::{
     clearing_run_gas, intex_auction_winners_page_count, intex_auction_winners_pages,
     issuance_groups, IntexAuctionWinnersPage,
 };
-pub use schedule::advance_auctions;
+pub use schedule::advance_intex_auctions;
 #[cfg(test)]
-pub(crate) use schedule::schedule_tick;
+pub(crate) use schedule::advance_intex_auctions_at;
+#[cfg(any(test, feature = "test-utils"))]
+pub(crate) use schedule::take_due_days;

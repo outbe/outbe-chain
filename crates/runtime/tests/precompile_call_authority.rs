@@ -13,8 +13,7 @@ use outbe_primitives::{
     system_tx::SystemTx,
 };
 use outbe_system_common::metadosis_bindings::{
-    metadosis_advance_due_binding, metadosis_cycle_allocation_binding,
-    metadosis_init_genesis_binding, metadosis_process_ready_binding,
+    metadosis_advance_due_binding, metadosis_init_genesis_binding, metadosis_process_ready_binding,
 };
 
 const TEST_CHAIN_ID: u64 = 42;
@@ -74,19 +73,10 @@ fn system_entitlements(input: SystemTx) -> MutationEntitlements {
 }
 
 fn expected_cycle_entitlements() -> MutationEntitlements {
-    let current_day = outbe_system_common::time::timestamp_to_date_key(TEST_TIMESTAMP);
-    let previous_day =
-        outbe_system_common::time::previous_date_key(current_day).expect("date step");
-    let allocation_timestamp =
-        outbe_system_common::time::date_key_to_utc_timestamp(previous_day).expect("date timestamp");
     MutationEntitlements::exact(
         Purpose::CycleLifecycle,
-        metadosis_cycle_allocation_binding(TEST_CHAIN_ID, TEST_BLOCK_NUMBER, allocation_timestamp),
-    )
-    .union(MutationEntitlements::exact(
-        Purpose::CycleLifecycle,
         metadosis_advance_due_binding(TEST_CHAIN_ID, TEST_BLOCK_NUMBER, TEST_TIMESTAMP),
-    ))
+    )
     .union(MutationEntitlements::exact(
         Purpose::CycleLifecycle,
         metadosis_process_ready_binding(TEST_CHAIN_ID, TEST_BLOCK_NUMBER, TEST_TIMESTAMP),
@@ -140,53 +130,6 @@ fn exact_production_causes_receive_only_their_purpose() {
         }),
         MutationEntitlements::NONE,
     );
-}
-
-#[test]
-fn process_emission_day_grants_only_oldest_unallocated_day_after_a_multi_day_halt() {
-    let block_day = outbe_system_common::time::timestamp_to_date_key(TEST_TIMESTAMP);
-    let mut active_day = block_day;
-    for _ in 0..6 {
-        active_day = outbe_system_common::time::previous_date_key(active_day).expect("date step");
-    }
-    let data = encoded(SystemTx::BeginBlock { step_index: 8 });
-    let granted = entitlements(PrecompileMutationCall {
-        address: OUTBE_SYSTEM_TX_ADDRESS,
-        data: data.as_ref(),
-        caller: SYSTEM_ADDRESS,
-        is_static: false,
-        value: U256::ZERO,
-        chain_id: TEST_CHAIN_ID,
-        block_number: TEST_BLOCK_NUMBER,
-        timestamp: TEST_TIMESTAMP,
-        cycle_active_utc_day: Some(active_day),
-    });
-
-    assert!(granted.expects(
-        Purpose::CycleLifecycle,
-        metadosis_cycle_allocation_binding(
-            TEST_CHAIN_ID,
-            TEST_BLOCK_NUMBER,
-            outbe_system_common::time::date_key_to_utc_timestamp(active_day)
-                .expect("date timestamp"),
-        ),
-    ));
-    let mut day = outbe_system_common::time::next_date_key(active_day).expect("date step");
-    while day < block_day {
-        assert!(!granted.expects(
-            Purpose::CycleLifecycle,
-            metadosis_cycle_allocation_binding(
-                TEST_CHAIN_ID,
-                TEST_BLOCK_NUMBER,
-                outbe_system_common::time::date_key_to_utc_timestamp(day).expect("date timestamp"),
-            ),
-        ));
-        day = outbe_system_common::time::next_date_key(day).expect("date step");
-    }
-    assert!(granted.expects(
-        Purpose::CycleLifecycle,
-        metadosis_process_ready_binding(TEST_CHAIN_ID, TEST_BLOCK_NUMBER, TEST_TIMESTAMP),
-    ));
 }
 
 #[test]

@@ -53,7 +53,7 @@ const LAUNCH_EXPONENT: u32 = 12;
 fn the_first_priced_start_captures_its_currency_at_the_launch_rung() {
     with_storage(|s| {
         brief(&s, true);
-        runtime::schedule_tick(&s, NOW).unwrap();
+        runtime::advance_intex_auctions_at(&s, NOW).unwrap();
 
         let contract = s.contract::<DesisContract>();
         assert_eq!(
@@ -89,7 +89,7 @@ fn the_fixture_load_is_the_one_the_ladder_picks() {
     assert_eq!(LOAD_MINOR, runtime::promis_load_minor(LAUNCH_EXPONENT));
     with_storage(|s| {
         brief(&s, true);
-        runtime::schedule_tick(&s, NOW).unwrap();
+        runtime::advance_intex_auctions_at(&s, NOW).unwrap();
         assert_eq!(
             s.contract::<DesisContract>()
                 .config_promis_load_minor
@@ -292,9 +292,9 @@ fn brief_at_rate_from(s: &StorageHandle, brief: RateBrief) {
         .start_timestamp()
         .expect("date timestamp");
     seed_rate(s, start, brief.rate);
-    crate::api::schedule_auction(s.clone(), brief.emission_day).unwrap();
+    crate::tests::schedule_auction(s.clone(), brief.emission_day).unwrap();
     assert_eq!(
-        crate::api::set_desis_limit(
+        crate::api::start_desis(
             s.clone(),
             crate::api::DesisLimit {
                 emission_day: brief.emission_day,
@@ -314,18 +314,13 @@ fn brief(s: &StorageHandle, has_limit: bool) {
 /// Brief and drive the schedule to `RevealingBids` (bid intake open, gate not armed).
 fn open_revealing(s: &StorageHandle) {
     brief(s, true);
-    runtime::schedule_tick(s, NOW).unwrap();
+    runtime::advance_intex_auctions_at(s, NOW).unwrap();
     schedule_after(s, crate::constants::COMMIT_WINDOW_SECONDS);
 }
 
 fn schedule_after(s: &StorageHandle, elapsed: u64) {
-    let anchor = u64::from(
-        s.contract::<DesisContract>()
-            .auction_at
-            .read(&EMISSION_DAY)
-            .unwrap(),
-    );
-    runtime::schedule_tick(s, anchor + elapsed).unwrap();
+    let anchor = u64::from(runtime::auction_anchor(EMISSION_DAY).unwrap());
+    runtime::advance_intex_auctions_at(s, anchor + elapsed).unwrap();
 }
 
 /// The reveal-end tick: arms the clearing gate from the briefed Desis Limit.
@@ -339,7 +334,7 @@ fn arm_clearing(s: &StorageHandle) {
 /// Brief `units` whole Intex units and drive the schedule until the gate is armed.
 fn open_clearing(s: &StorageHandle, units: u128) {
     brief_at(s, EMISSION_DAY, units * LOAD_MINOR, true);
-    runtime::schedule_tick(s, NOW).unwrap();
+    runtime::advance_intex_auctions_at(s, NOW).unwrap();
     schedule_after(s, crate::constants::COMMIT_WINDOW_SECONDS);
     arm_clearing(s);
 }
@@ -455,7 +450,7 @@ fn submit_one_batch(s: &StorageHandle, chain: u32, rows: Vec<IntexAuctionBidData
 /// Started, not Revealing. The batch must be rejected.
 fn reject_batch_before_reveal(s: &StorageHandle, bid_count: u8) {
     brief(s, true);
-    runtime::schedule_tick(s, NOW).unwrap();
+    runtime::advance_intex_auctions_at(s, NOW).unwrap();
     assert!(runtime::collect_intex_auction_bids(
         s.clone(),
         origin(SRC_CHAIN),
@@ -476,11 +471,41 @@ fn chain_done_after_one_batch(s: &StorageHandle, arrived: u8, marked_total: u32)
         .unwrap()
 }
 
-// --- Auction brief ---
+// --- Desis limit ---
 
-/// Schedule the fixture day, as the allocation of its emission day does.
+/// Takes `day` as the Cycle run after its start does: the record of the day leaves `Pending`, and
+/// the day cursor of Desis reaches it.
+pub(crate) fn schedule_auction(
+    s: StorageHandle<'_>,
+    day: EmissionDate,
+) -> outbe_primitives::error::Result<()> {
+    record_started_day(&s, day);
+    let anchor = u64::from(runtime::auction_anchor(day)?);
+    runtime::take_due_days(&s, day.value(), anchor)
+}
+
+/// Puts a started emission day record for `day`, as the Cycle makes it.
+pub(crate) fn record_started_day(s: &StorageHandle<'_>, day: EmissionDate) {
+    if outbe_emission::api::get_emission_day(s.clone(), day.value())
+        .unwrap()
+        .is_some()
+    {
+        return;
+    }
+    let mut record = outbe_emission::EmissionDay::new(
+        day.value(),
+        outbe_system_common::time::WorldwideDay::new(0),
+        outbe_emission::api::compute_metadosis_start(day.value()).unwrap(),
+        0,
+        [0; 5],
+    );
+    record.state = outbe_emission::schema::emission_day_state::PROCESSING;
+    outbe_emission::api::put_emission_day(s.clone(), &record).unwrap();
+}
+
+/// Schedule the fixture day, as the Cycle run after its start does.
 fn schedule(s: &StorageHandle) {
-    crate::api::schedule_auction(s.clone(), EMISSION_DAY).unwrap();
+    crate::tests::schedule_auction(s.clone(), EMISSION_DAY).unwrap();
 }
 
 fn live_brief(desis_limit_minor: U256, has_limit: bool) -> crate::api::DesisLimit {
@@ -509,7 +534,7 @@ fn the_allocation_schedules_the_auction_at_the_midnight_after_its_day() {
             contract.read_stage(EMISSION_DAY).unwrap(),
             AuctionStage::None
         );
-        let anchor = contract.auction_at.read(&EMISSION_DAY).unwrap();
+        let anchor = runtime::auction_anchor(EMISSION_DAY).unwrap();
         assert_eq!(u64::from(anchor), ANCHOR);
         assert_eq!(
             u64::from(anchor),
@@ -527,7 +552,7 @@ fn the_allocation_schedules_the_auction_at_the_midnight_after_its_day() {
 fn brief_auction_records_the_brief() {
     with_storage(|s| {
         schedule(&s);
-        let receipt = crate::api::set_desis_limit(
+        let receipt = crate::api::start_desis(
             s.clone(),
             live_brief(U256::from(10 * PROMIS_LOAD_MINOR), true),
         )
@@ -560,7 +585,7 @@ fn brief_auction_records_the_brief() {
 fn brief_auction_records_a_brief_with_no_limit() {
     with_storage(|s| {
         for limit in [U256::ZERO, U256::from(PROMIS_LOAD_MINOR)] {
-            assert!(crate::api::set_desis_limit(
+            assert!(crate::api::start_desis(
                 s.clone(),
                 crate::api::DesisLimit {
                     emission_day: EmissionDate::new(0),
@@ -572,11 +597,9 @@ fn brief_auction_records_a_brief_with_no_limit() {
         }
 
         schedule(&s);
-        let receipt = crate::api::set_desis_limit(
-            s.clone(),
-            live_brief(U256::from(PROMIS_LOAD_MINOR), false),
-        )
-        .unwrap();
+        let receipt =
+            crate::api::start_desis(s.clone(), live_brief(U256::from(PROMIS_LOAD_MINOR), false))
+                .unwrap();
         assert_eq!(receipt, DesisLimitReceipt::Accepted);
         let contract = s.contract::<DesisContract>();
         assert_eq!(contract.has_desis_limit.read(&EMISSION_DAY).unwrap(), 0);
@@ -589,7 +612,7 @@ fn a_brief_for_a_day_with_no_auction_returns_its_limit() {
     with_storage(|s| {
         let limit = U256::from(7 * PROMIS_LOAD_MINOR);
         assert_eq!(
-            crate::api::set_desis_limit(s.clone(), live_brief(limit, true)).unwrap(),
+            crate::api::start_desis(s.clone(), live_brief(limit, true)).unwrap(),
             closed(limit)
         );
         assert_no_request_brief_state(&s);
@@ -603,7 +626,7 @@ fn a_second_brief_returns_its_limit_and_keeps_the_first() {
     StorageHandle::enter(&mut storage, |s| {
         schedule(&s);
         assert_eq!(
-            crate::api::set_desis_limit(
+            crate::api::start_desis(
                 s.clone(),
                 live_brief(U256::from(10 * PROMIS_LOAD_MINOR), true)
             )
@@ -612,7 +635,7 @@ fn a_second_brief_returns_its_limit_and_keeps_the_first() {
         );
         let second = U256::from(7 * PROMIS_LOAD_MINOR);
         assert_eq!(
-            crate::api::set_desis_limit(s.clone(), live_brief(second, true)).unwrap(),
+            crate::api::start_desis(s.clone(), live_brief(second, true)).unwrap(),
             closed(second)
         );
         let contract = s.contract::<DesisContract>();
@@ -637,7 +660,7 @@ fn a_brief_after_the_start_sets_the_size_of_the_live_auction() {
     with_storage(|s| {
         seed_rate(&s, ANCHOR, ENTRY_PRICE);
         schedule(&s);
-        runtime::schedule_tick(&s, NOW).unwrap();
+        runtime::advance_intex_auctions_at(&s, NOW).unwrap();
         let contract = s.contract::<DesisContract>();
         assert_eq!(
             contract.read_stage(EMISSION_DAY).unwrap(),
@@ -646,11 +669,11 @@ fn a_brief_after_the_start_sets_the_size_of_the_live_auction() {
         let config = contract.read_auction_config(EMISSION_DAY).unwrap();
 
         assert_eq!(
-            crate::api::set_desis_limit(s.clone(), live_brief(U256::from(7 * LOAD_MINOR), true))
+            crate::api::start_desis(s.clone(), live_brief(U256::from(7 * LOAD_MINOR), true))
                 .unwrap(),
             DesisLimitReceipt::Accepted
         );
-        runtime::schedule_tick(&s, NOW + 3_600).unwrap();
+        runtime::advance_intex_auctions_at(&s, NOW + 3_600).unwrap();
         let after = s.contract::<DesisContract>();
         assert_eq!(
             after.read_stage(EMISSION_DAY).unwrap(),
@@ -664,7 +687,7 @@ fn a_brief_after_the_start_sets_the_size_of_the_live_auction() {
 
         let top_up = U256::from(9 * LOAD_MINOR);
         assert_eq!(
-            crate::api::set_desis_limit(s.clone(), live_brief(top_up, true)).unwrap(),
+            crate::api::start_desis(s.clone(), live_brief(top_up, true)).unwrap(),
             closed(top_up)
         );
         assert_eq!(
@@ -720,7 +743,7 @@ fn assert_brief_rolls_back_at_each_mutation(desis_limit_minor: U256) {
     let mutation_count = {
         let mut provider = scheduled_provider();
         let result = StorageHandle::enter(&mut provider, |storage| {
-            crate::api::set_desis_limit(storage, live_brief(desis_limit_minor, true))
+            crate::api::start_desis(storage, live_brief(desis_limit_minor, true))
         });
         assert!(result.is_ok());
         provider.clear_mutation_failure()
@@ -734,7 +757,7 @@ fn assert_brief_rolls_back_at_each_mutation(desis_limit_minor: U256) {
         let mut provider = scheduled_provider();
         provider.fail_after_mutation_at(operation);
         let result = StorageHandle::enter(&mut provider, |storage| {
-            crate::api::set_desis_limit(storage, live_brief(desis_limit_minor, true))
+            crate::api::start_desis(storage, live_brief(desis_limit_minor, true))
         });
         assert!(
             result.is_err(),
@@ -762,14 +785,14 @@ fn overflow_brief(
     StorageHandle::enter(storage, |s| {
         schedule(&s);
         let receipt =
-            crate::api::set_desis_limit(s.clone(), live_brief(desis_limit_minor, true)).unwrap();
+            crate::api::start_desis(s.clone(), live_brief(desis_limit_minor, true)).unwrap();
         assert_eq!(
             s.contract::<DesisContract>()
                 .read_stage(EMISSION_DAY)
                 .unwrap(),
             AuctionStage::None
         );
-        runtime::schedule_tick(&s, NOW).unwrap();
+        runtime::advance_intex_auctions_at(&s, NOW).unwrap();
         let contract = s.contract::<DesisContract>();
         assert_eq!(
             contract.read_stage(EMISSION_DAY).unwrap(),
@@ -815,7 +838,7 @@ fn auction_domain_boundary_accepts_u128_max_and_rejects_the_next_value() {
     with_storage(|storage| {
         schedule(&storage);
         assert_eq!(
-            crate::api::set_desis_limit(storage.clone(), live_brief(U256::from(u128::MAX), true))
+            crate::api::start_desis(storage.clone(), live_brief(U256::from(u128::MAX), true))
                 .unwrap(),
             DesisLimitReceipt::Accepted
         );
@@ -846,7 +869,7 @@ fn auction_domain_boundary_accepts_u128_max_and_rejects_the_next_value() {
 fn invalid_day_and_anchor_overflow_are_errors_without_business_events() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut provider, |storage| {
-        assert!(crate::api::set_desis_limit(
+        assert!(crate::api::start_desis(
             storage.clone(),
             crate::api::DesisLimit {
                 emission_day: EmissionDate::new(0),
@@ -855,9 +878,9 @@ fn invalid_day_and_anchor_overflow_are_errors_without_business_events() {
             },
         )
         .is_err());
-        assert!(crate::api::schedule_auction(storage.clone(), EmissionDate::new(0)).is_err());
+        assert!(runtime::auction_anchor(EmissionDate::new(0)).is_err());
         // Its auction would anchor at 2106-02-08, past the u32 timestamps the wire carries.
-        assert!(crate::api::schedule_auction(storage, EmissionDate::new(21060207)).is_err());
+        assert!(crate::tests::schedule_auction(storage, EmissionDate::new(21060207)).is_err());
     });
     assert!(provider
         .get_events(outbe_system_common::addresses::DESIS_ADDRESS)
@@ -901,7 +924,7 @@ fn started_without_brief() -> HashMapStorageProvider {
     StorageHandle::enter(&mut provider, |s| {
         seed_rate(&s, ANCHOR, ENTRY_PRICE);
         schedule(&s);
-        runtime::schedule_tick(&s, NOW).unwrap();
+        runtime::advance_intex_auctions_at(&s, NOW).unwrap();
         assert_eq!(stage_of(&s), AuctionStage::CommittingBids);
     });
     provider
@@ -913,13 +936,13 @@ fn auction_starts_before_its_size() {
     assert_eq!(sent_starts(&mut provider), vec![EMISSION_DAY.value()]);
     StorageHandle::enter(&mut provider, |s| {
         let brief_at = ANCHOR + 12 * 3600;
-        runtime::schedule_tick(&s, brief_at).unwrap();
+        runtime::advance_intex_auctions_at(&s, brief_at).unwrap();
         assert_eq!(
-            crate::api::set_desis_limit(s.clone(), live_brief(U256::from(7 * LOAD_MINOR), true))
+            crate::api::start_desis(s.clone(), live_brief(U256::from(7 * LOAD_MINOR), true))
                 .unwrap(),
             DesisLimitReceipt::Accepted
         );
-        runtime::schedule_tick(&s, REVEAL_END).unwrap();
+        runtime::advance_intex_auctions_at(&s, REVEAL_END).unwrap();
         let contract = s.contract::<DesisContract>();
         assert_eq!(
             contract.read_stage(EMISSION_DAY).unwrap(),
@@ -941,12 +964,16 @@ fn auction_starts_before_its_size() {
 fn cancel_before_the_result() {
     let mut provider = started_without_brief();
     let returned = StorageHandle::enter(&mut provider, |s| {
-        runtime::schedule_tick(&s, ANCHOR + crate::constants::COMMIT_WINDOW_SECONDS).unwrap();
+        runtime::advance_intex_auctions_at(&s, ANCHOR + crate::constants::COMMIT_WINDOW_SECONDS)
+            .unwrap();
         assert_eq!(stage_of(&s), AuctionStage::RevealingBids);
         let limit = U256::from(LOAD_MINOR - 1);
-        crate::api::set_desis_limit(s.clone(), live_brief(limit, true)).unwrap();
-        runtime::schedule_tick(&s, ANCHOR + crate::constants::COMMIT_WINDOW_SECONDS + 3_600)
-            .unwrap();
+        crate::api::start_desis(s.clone(), live_brief(limit, true)).unwrap();
+        runtime::advance_intex_auctions_at(
+            &s,
+            ANCHOR + crate::constants::COMMIT_WINDOW_SECONDS + 3_600,
+        )
+        .unwrap();
         assert_eq!(stage_of(&s), AuctionStage::Canceled);
         assert_eq!(
             s.contract::<DesisContract>()
@@ -969,8 +996,8 @@ fn cancel_before_the_result() {
 fn a_brief_with_no_limit_cancels_the_started_auction() {
     let mut provider = started_without_brief();
     StorageHandle::enter(&mut provider, |s| {
-        crate::api::set_desis_limit(s.clone(), live_brief(U256::ZERO, false)).unwrap();
-        runtime::schedule_tick(&s, NOW + 3_600).unwrap();
+        crate::api::start_desis(s.clone(), live_brief(U256::ZERO, false)).unwrap();
+        runtime::advance_intex_auctions_at(&s, NOW + 3_600).unwrap();
         assert_eq!(stage_of(&s), AuctionStage::Canceled);
     });
     assert_eq!(
@@ -983,13 +1010,14 @@ fn a_brief_with_no_limit_cancels_the_started_auction() {
 fn no_brief_at_the_end_of_the_reveal_stage_cancels_the_auction() {
     let mut provider = started_without_brief();
     StorageHandle::enter(&mut provider, |s| {
-        runtime::schedule_tick(&s, ANCHOR + crate::constants::COMMIT_WINDOW_SECONDS).unwrap();
-        runtime::schedule_tick(&s, REVEAL_END).unwrap();
+        runtime::advance_intex_auctions_at(&s, ANCHOR + crate::constants::COMMIT_WINDOW_SECONDS)
+            .unwrap();
+        runtime::advance_intex_auctions_at(&s, REVEAL_END).unwrap();
         assert_eq!(stage_of(&s), AuctionStage::Canceled);
 
         let late = U256::from(7 * LOAD_MINOR);
         assert_eq!(
-            crate::api::set_desis_limit(s.clone(), live_brief(late, true)).unwrap(),
+            crate::api::start_desis(s.clone(), live_brief(late, true)).unwrap(),
             closed(late)
         );
     });
@@ -1004,15 +1032,15 @@ fn no_brief_at_the_end_of_the_reveal_stage_cancels_the_auction() {
 fn a_failed_metadosis_cancels_the_started_auction() {
     let mut provider = started_without_brief();
     StorageHandle::enter(&mut provider, |s| {
-        crate::api::cancel_auction(s.clone(), EMISSION_DAY).unwrap();
+        crate::api::cancel_desis(s.clone(), EMISSION_DAY).unwrap();
         assert_eq!(stage_of(&s), AuctionStage::CommittingBids);
         let limit = U256::from(7 * LOAD_MINOR);
         assert_eq!(
-            crate::api::set_desis_limit(s.clone(), live_brief(limit, true)).unwrap(),
+            crate::api::start_desis(s.clone(), live_brief(limit, true)).unwrap(),
             closed(limit),
             "a day that waits for its cancel takes no brief"
         );
-        runtime::schedule_tick(&s, NOW + 3_600).unwrap();
+        runtime::advance_intex_auctions_at(&s, NOW + 3_600).unwrap();
         assert_eq!(stage_of(&s), AuctionStage::Canceled);
     });
     assert_eq!(
@@ -1026,8 +1054,8 @@ fn a_cancel_of_a_day_that_never_started_sends_no_message() {
     let mut provider = fixture_provider(&[SRC_CHAIN]);
     StorageHandle::enter(&mut provider, |s| {
         schedule(&s);
-        crate::api::cancel_auction(s.clone(), EMISSION_DAY).unwrap();
-        runtime::schedule_tick(&s, NOW).unwrap();
+        crate::api::cancel_desis(s.clone(), EMISSION_DAY).unwrap();
+        runtime::advance_intex_auctions_at(&s, NOW).unwrap();
         assert_eq!(stage_of(&s), AuctionStage::Canceled);
     });
     assert!(sent_cancels(&mut provider).is_empty());
@@ -1040,7 +1068,7 @@ fn a_cancel_after_the_clearing_start_has_no_effect() {
     StorageHandle::enter(&mut provider, |s| {
         open_clearing(&s, 3);
         assert_eq!(stage_of(&s), AuctionStage::CollectingBids);
-        crate::api::cancel_auction(s.clone(), EMISSION_DAY).unwrap();
+        crate::api::cancel_desis(s.clone(), EMISSION_DAY).unwrap();
         assert_eq!(
             s.contract::<DesisContract>()
                 .cancel_reason
@@ -1087,14 +1115,14 @@ fn a_late_brief_keeps_its_emission_day_anchor_and_prices() {
         seed_rate(&s, ANCHOR + SECONDS_PER_DAY, 7 * ENTRY_PRICE);
         let late = ANCHOR + 4 * 3600;
         brief_at(&s, EMISSION_DAY, 10 * LOAD_MINOR, true);
-        runtime::schedule_tick(&s, late).unwrap();
+        runtime::advance_intex_auctions_at(&s, late).unwrap();
         let contract = s.contract::<DesisContract>();
         assert_eq!(
             contract.read_stage(EMISSION_DAY).unwrap(),
             AuctionStage::CommittingBids
         );
         assert_eq!(
-            u64::from(contract.auction_at.read(&EMISSION_DAY).unwrap()),
+            u64::from(runtime::auction_anchor(EMISSION_DAY).unwrap()),
             ANCHOR
         );
         let rows = contract
@@ -1122,7 +1150,7 @@ fn a_start_with_the_minimum_commit_window_opens() {
                 has_limit: true,
             },
         );
-        runtime::schedule_tick(&s, LAST_START).unwrap();
+        runtime::advance_intex_auctions_at(&s, LAST_START).unwrap();
         assert_eq!(
             s.contract::<DesisContract>()
                 .read_stage(EMISSION_DAY)
@@ -1151,7 +1179,7 @@ fn start_at(
     let (stage, pool) = StorageHandle::enter(&mut storage, |s| {
         brief(&s);
         seed_rate(&s, ANCHOR, ENTRY_PRICE);
-        match runtime::schedule_tick(&s, start) {
+        match runtime::advance_intex_auctions_at(&s, start) {
             Err(outbe_primitives::error::PrecompileError::SubCall(
                 outbe_primitives::storage::SubCallError::NotAvailable,
             )) if !router => {}
@@ -1219,8 +1247,8 @@ fn a_late_day_is_cancelled_with_no_message() {
 }
 
 fn native_brief_at_now(s: &StorageHandle) {
-    crate::api::schedule_auction(s.clone(), EMISSION_DAY).unwrap();
-    crate::api::set_desis_limit(
+    crate::tests::schedule_auction(s.clone(), EMISSION_DAY).unwrap();
+    crate::api::start_desis(
         s.clone(),
         crate::api::DesisLimit {
             emission_day: EMISSION_DAY,
@@ -1276,7 +1304,7 @@ fn a_price_lost_between_brief_and_start_cancels_the_day_and_returns_its_limit() 
         brief(&s, true);
         unprice_day(&s, NOW);
 
-        runtime::schedule_tick(&s, NOW).unwrap();
+        runtime::advance_intex_auctions_at(&s, NOW).unwrap();
         assert_eq!(
             s.contract::<DesisContract>()
                 .read_stage(EMISSION_DAY)
@@ -1317,7 +1345,7 @@ fn the_price_chosen_at_start_is_the_one_the_series_carries() {
 fn schedule_starts_a_brief_with_a_limit() {
     with_storage(|s| {
         brief(&s, true);
-        runtime::schedule_tick(&s, NOW).unwrap();
+        runtime::advance_intex_auctions_at(&s, NOW).unwrap();
         let contract = s.contract::<DesisContract>();
         assert_eq!(
             contract.read_stage(EMISSION_DAY).unwrap(),
@@ -1336,8 +1364,8 @@ fn schedule_starts_a_brief_with_a_limit() {
 fn schedule_flips_to_revealing_at_commit_end() {
     with_storage(|s| {
         brief(&s, true);
-        runtime::schedule_tick(&s, NOW).unwrap();
-        runtime::schedule_tick(&s, ANCHOR + SECONDS_PER_DAY).unwrap();
+        runtime::advance_intex_auctions_at(&s, NOW).unwrap();
+        runtime::advance_intex_auctions_at(&s, ANCHOR + SECONDS_PER_DAY).unwrap();
         let contract = s.contract::<DesisContract>();
         assert_eq!(
             contract.read_stage(EMISSION_DAY).unwrap(),
@@ -1351,9 +1379,9 @@ fn schedule_flips_to_revealing_at_commit_end() {
 fn schedule_arms_the_clearing_gate_at_reveal_end() {
     with_storage(|s| {
         brief(&s, true);
-        runtime::schedule_tick(&s, NOW).unwrap();
-        runtime::schedule_tick(&s, ANCHOR + SECONDS_PER_DAY).unwrap();
-        runtime::schedule_tick(&s, ANCHOR + 2 * SECONDS_PER_DAY).unwrap();
+        runtime::advance_intex_auctions_at(&s, NOW).unwrap();
+        runtime::advance_intex_auctions_at(&s, ANCHOR + SECONDS_PER_DAY).unwrap();
+        runtime::advance_intex_auctions_at(&s, ANCHOR + 2 * SECONDS_PER_DAY).unwrap();
         let contract = s.contract::<DesisContract>();
         assert_eq!(
             contract.read_stage(EMISSION_DAY).unwrap(),
@@ -1379,8 +1407,8 @@ fn schedule_arms_the_clearing_gate_at_reveal_end() {
 fn schedule_catches_up_over_missed_ticks() {
     with_storage(|s| {
         brief(&s, true);
-        runtime::schedule_tick(&s, NOW).unwrap();
-        runtime::schedule_tick(&s, ANCHOR + 2 * SECONDS_PER_DAY + 3600).unwrap();
+        runtime::advance_intex_auctions_at(&s, NOW).unwrap();
+        runtime::advance_intex_auctions_at(&s, ANCHOR + 2 * SECONDS_PER_DAY + 3600).unwrap();
         let contract = s.contract::<DesisContract>();
         assert_eq!(
             contract.read_stage(EMISSION_DAY).unwrap(),
@@ -1394,7 +1422,7 @@ fn schedule_catches_up_over_missed_ticks() {
 fn schedule_cancels_a_brief_with_no_limit() {
     with_storage(|s| {
         brief(&s, false);
-        runtime::schedule_tick(&s, NOW).unwrap();
+        runtime::advance_intex_auctions_at(&s, NOW).unwrap();
         let contract = s.contract::<DesisContract>();
         assert_eq!(
             contract.read_stage(EMISSION_DAY).unwrap(),
@@ -1409,7 +1437,7 @@ fn schedule_cancels_a_missed_start() {
     use outbe_promislimit::PromisLimitContract;
     with_storage(|s| {
         brief(&s, true);
-        runtime::schedule_tick(&s, ANCHOR + SECONDS_PER_DAY + 3600).unwrap();
+        runtime::advance_intex_auctions_at(&s, ANCHOR + SECONDS_PER_DAY + 3600).unwrap();
         let contract = s.contract::<DesisContract>();
         assert_eq!(
             contract.read_stage(EMISSION_DAY).unwrap(),
@@ -1431,13 +1459,8 @@ const LAST_CLEARING: u64 = ANCHOR
     + crate::constants::INTEX_ISSUANCE_WINDOW_SECONDS
     - crate::constants::RESULT_DELIVERY_MARGIN_SECONDS;
 
-fn last_clearing_for(s: &StorageHandle) -> u64 {
-    u64::from(
-        s.contract::<DesisContract>()
-            .auction_at
-            .read(&EMISSION_DAY)
-            .unwrap(),
-    ) + (LAST_CLEARING - ANCHOR)
+fn last_clearing_for(_s: &StorageHandle) -> u64 {
+    u64::from(runtime::auction_anchor(EMISSION_DAY).unwrap()) + (LAST_CLEARING - ANCHOR)
 }
 
 #[test]
@@ -1454,8 +1477,8 @@ fn a_started_day_with_no_result_fails_at_its_last_clearing_time_without_a_messag
     );
     StorageHandle::enter(&mut storage, |s| {
         brief(&s, true);
-        runtime::schedule_tick(&s, NOW).unwrap();
-        runtime::schedule_tick(&s, LAST_CLEARING - 1).unwrap();
+        runtime::advance_intex_auctions_at(&s, NOW).unwrap();
+        runtime::advance_intex_auctions_at(&s, LAST_CLEARING - 1).unwrap();
         assert_eq!(
             s.contract::<DesisContract>()
                 .read_stage(EMISSION_DAY)
@@ -1467,7 +1490,7 @@ fn a_started_day_with_no_result_fails_at_its_last_clearing_time_without_a_messag
     let sends_before = router_sends(&mut storage);
     StorageHandle::enter(&mut storage, |s| {
         use outbe_promislimit::PromisLimitContract;
-        runtime::schedule_tick(&s, LAST_CLEARING).unwrap();
+        runtime::advance_intex_auctions_at(&s, LAST_CLEARING).unwrap();
         let contract = s.contract::<DesisContract>();
         assert_eq!(
             contract.read_stage(EMISSION_DAY).unwrap(),
@@ -1553,7 +1576,7 @@ fn a_failed_day_queues_its_bids_for_bounded_deletion() {
     with_storage(|s| {
         open_clearing(&s, 100);
         relay_bids(&s, SRC_CHAIN, 3, 200);
-        runtime::schedule_tick(&s, last_clearing_for(&s)).unwrap();
+        runtime::advance_intex_auctions_at(&s, last_clearing_for(&s)).unwrap();
         let contract = s.contract::<DesisContract>();
         assert_eq!(
             contract.read_stage(EMISSION_DAY).unwrap(),
@@ -1578,9 +1601,9 @@ fn failed_auction_needs_no_message() {
     );
     StorageHandle::enter(&mut storage, |s| {
         brief(&s, true);
-        runtime::schedule_tick(&s, NOW).unwrap();
-        runtime::schedule_tick(&s, ANCHOR + 2 * SECONDS_PER_DAY).unwrap();
-        runtime::schedule_tick(&s, LAST_CLEARING - 1).unwrap();
+        runtime::advance_intex_auctions_at(&s, NOW).unwrap();
+        runtime::advance_intex_auctions_at(&s, ANCHOR + 2 * SECONDS_PER_DAY).unwrap();
+        runtime::advance_intex_auctions_at(&s, LAST_CLEARING - 1).unwrap();
         let contract = s.contract::<DesisContract>();
         assert_eq!(
             contract.read_stage(EMISSION_DAY).unwrap(),
@@ -1594,7 +1617,7 @@ fn failed_auction_needs_no_message() {
     let sends = |storage: &mut HashMapStorageProvider| outbox_messages(storage).len();
     let sends_before = sends(&mut storage);
     StorageHandle::enter(&mut storage, |s| {
-        runtime::schedule_tick(&s, LAST_CLEARING).unwrap();
+        runtime::advance_intex_auctions_at(&s, LAST_CLEARING).unwrap();
         assert_eq!(
             s.contract::<DesisContract>()
                 .read_stage(EMISSION_DAY)
@@ -1617,7 +1640,7 @@ fn desis_deletes_bids_of_closed_auction() {
             if completes {
                 clear(&s);
             } else {
-                runtime::schedule_tick(&s, last_clearing_for(&s)).unwrap();
+                runtime::advance_intex_auctions_at(&s, last_clearing_for(&s)).unwrap();
             }
             assert_eq!(
                 s.contract::<DesisContract>()
@@ -1674,11 +1697,11 @@ fn a_decade_step_rescales_both_the_tirage_and_the_min_bid_floor() {
                 has_limit: true,
             },
         );
-        runtime::schedule_tick(&s, ANCHOR + SECONDS_PER_DAY).unwrap();
+        runtime::advance_intex_auctions_at(&s, ANCHOR + SECONDS_PER_DAY).unwrap();
         // One bounded poll retires yesterday; the next starts the new day.
-        runtime::schedule_tick(&s, ANCHOR + SECONDS_PER_DAY).unwrap();
-        runtime::schedule_tick(&s, ANCHOR + 2 * SECONDS_PER_DAY).unwrap();
-        runtime::schedule_tick(&s, ANCHOR + 3 * SECONDS_PER_DAY).unwrap();
+        runtime::advance_intex_auctions_at(&s, ANCHOR + SECONDS_PER_DAY).unwrap();
+        runtime::advance_intex_auctions_at(&s, ANCHOR + 2 * SECONDS_PER_DAY).unwrap();
+        runtime::advance_intex_auctions_at(&s, ANCHOR + 3 * SECONDS_PER_DAY).unwrap();
 
         let contract = s.contract::<DesisContract>();
         assert_eq!(
@@ -1724,8 +1747,8 @@ fn schedule_derives_min_bid_qty_from_prior_clearing() {
         clear(&s);
 
         brief_at(&s, NEXT_EMISSION_DAY, 10 * LOAD_MINOR, true);
-        runtime::schedule_tick(&s, ANCHOR + SECONDS_PER_DAY).unwrap();
-        runtime::schedule_tick(&s, ANCHOR + SECONDS_PER_DAY).unwrap();
+        runtime::advance_intex_auctions_at(&s, ANCHOR + SECONDS_PER_DAY).unwrap();
+        runtime::advance_intex_auctions_at(&s, ANCHOR + SECONDS_PER_DAY).unwrap();
         let contract = s.contract::<DesisContract>();
         let min_qty = contract
             .config_min_bid_quantity
@@ -2044,7 +2067,7 @@ fn start_day(
     seed_targets(&mut storage, &[SRC_CHAIN]);
     let (stage, unallocated) = StorageHandle::enter(&mut storage, |s| {
         brief_at(&s, EMISSION_DAY, desis_limit_minor, has_limit);
-        runtime::schedule_tick(&s, NOW).unwrap();
+        runtime::advance_intex_auctions_at(&s, NOW).unwrap();
         (
             s.contract::<DesisContract>()
                 .read_stage(EMISSION_DAY)
@@ -2082,7 +2105,7 @@ fn the_load_steps_on_a_day_the_new_load_cancels() {
     seed_targets(&mut storage, &[SRC_CHAIN]);
     StorageHandle::enter(&mut storage, |s| {
         brief_at(&s, EMISSION_DAY, 10 * LOAD_MINOR, true);
-        runtime::schedule_tick(&s, NOW).unwrap();
+        runtime::advance_intex_auctions_at(&s, NOW).unwrap();
         // COEN a decade cheaper: ten times the PROMIS per Intex, more than the day's limit holds.
         brief_at_rate_from(
             &s,
@@ -2093,8 +2116,8 @@ fn the_load_steps_on_a_day_the_new_load_cancels() {
                 has_limit: true,
             },
         );
-        runtime::schedule_tick(&s, ANCHOR + SECONDS_PER_DAY).unwrap();
-        runtime::schedule_tick(&s, ANCHOR + SECONDS_PER_DAY).unwrap();
+        runtime::advance_intex_auctions_at(&s, ANCHOR + SECONDS_PER_DAY).unwrap();
+        runtime::advance_intex_auctions_at(&s, ANCHOR + SECONDS_PER_DAY).unwrap();
         let contract = s.contract::<DesisContract>();
         assert_eq!(
             contract.read_stage(NEXT_EMISSION_DAY).unwrap(),
@@ -2160,7 +2183,7 @@ fn overflow_limit_events(logs: &[alloy_primitives::LogData]) -> Vec<U256> {
     ]
 }
 
-/// Amounts that Desis adds back to the Promis Limit with code 13.
+/// Amounts that Desis adds back to the Promis Limit with code 12.
 pub(crate) fn desis_limit_returns(storage: &HashMapStorageProvider) -> Vec<U256> {
     use alloy_sol_types::SolEvent;
     use outbe_promislimit::precompile::IPromisLimit::PromisLimitAdded;
@@ -2218,8 +2241,8 @@ fn a_failed_day_records_a_zero_desis_allocation() {
     );
     StorageHandle::enter(&mut storage, |s| {
         brief(&s, true);
-        runtime::schedule_tick(&s, NOW).unwrap();
-        runtime::schedule_tick(&s, ANCHOR + 3 * SECONDS_PER_DAY).unwrap();
+        runtime::advance_intex_auctions_at(&s, NOW).unwrap();
+        runtime::advance_intex_auctions_at(&s, ANCHOR + 3 * SECONDS_PER_DAY).unwrap();
     });
 
     let events = storage.get_events(outbe_system_common::addresses::DESIS_ADDRESS);
@@ -2263,7 +2286,7 @@ fn a_day_briefed_with_no_limit_is_cancelled_with_no_limit() {
         unprice_day(&s, NOW);
         let contract = s.contract::<DesisContract>();
         assert_eq!(contract.has_desis_limit.read(&EMISSION_DAY).unwrap(), 0);
-        runtime::schedule_tick(&s, NOW).unwrap();
+        runtime::advance_intex_auctions_at(&s, NOW).unwrap();
         s.contract::<DesisContract>()
             .read_stage(EMISSION_DAY)
             .unwrap()
@@ -2444,8 +2467,8 @@ fn clearing_returns_the_unused_limit_and_dust_to_promis() {
 
     with_storage(|s| {
         brief_at(&s, EMISSION_DAY, 3 * LOAD_MINOR + 7, true);
-        runtime::schedule_tick(&s, NOW).unwrap();
-        runtime::schedule_tick(&s, ANCHOR + SECONDS_PER_DAY).unwrap();
+        runtime::advance_intex_auctions_at(&s, NOW).unwrap();
+        runtime::advance_intex_auctions_at(&s, ANCHOR + SECONDS_PER_DAY).unwrap();
         arm_clearing(&s);
         runtime::collect_intex_auction_bids(
             s.clone(),
@@ -2683,7 +2706,7 @@ fn complete_auctions_without_active_days_is_noop() {
             },
             s.clone(),
         );
-        runtime::complete_auctions(&ctx).unwrap();
+        runtime::complete_intex_auctions(&ctx).unwrap();
     });
 }
 
@@ -2720,7 +2743,7 @@ fn complete_auctions_clears_a_ready_day() {
             },
             s.clone(),
         );
-        runtime::complete_auctions(&ctx).unwrap();
+        runtime::complete_intex_auctions(&ctx).unwrap();
         let contract = s.contract::<DesisContract>();
         assert_eq!(
             contract.read_stage(EMISSION_DAY).unwrap(),
@@ -2755,8 +2778,8 @@ fn open_clearing_priced(s: &StorageHandle, units: u128, references: &[u16]) {
             ENTRY_PRICE * u128::from(iso_code),
         );
     }
-    runtime::schedule_tick(s, NOW).unwrap();
-    runtime::schedule_tick(s, ANCHOR + SECONDS_PER_DAY).unwrap();
+    runtime::advance_intex_auctions_at(s, NOW).unwrap();
+    runtime::advance_intex_auctions_at(s, ANCHOR + SECONDS_PER_DAY).unwrap();
     arm_clearing(s);
 }
 
@@ -2982,7 +3005,7 @@ fn a_day_nobody_priced_carries_the_launch_load_and_captures_nothing() {
     with_storage(|s| {
         brief_at(&s, EMISSION_DAY, 10 * LOAD_MINOR, true);
         unprice_day(&s, NOW);
-        runtime::schedule_tick(&s, NOW).unwrap();
+        runtime::advance_intex_auctions_at(&s, NOW).unwrap();
 
         let contract = s.contract::<DesisContract>();
         assert_eq!(
@@ -3011,8 +3034,8 @@ fn a_day_nobody_could_price_is_cancelled_rather_than_failed() {
         brief_at(&s, EMISSION_DAY, 4 * LOAD_MINOR, true);
         unprice_day(&s, NOW);
 
-        runtime::schedule_tick(&s, NOW).unwrap();
-        runtime::schedule_tick(&s, ANCHOR + SECONDS_PER_DAY).unwrap();
+        runtime::advance_intex_auctions_at(&s, NOW).unwrap();
+        runtime::advance_intex_auctions_at(&s, ANCHOR + SECONDS_PER_DAY).unwrap();
 
         let contract = s.contract::<DesisContract>();
         assert_eq!(

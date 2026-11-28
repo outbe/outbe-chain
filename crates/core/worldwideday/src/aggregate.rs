@@ -81,7 +81,7 @@ pub fn open_worldwide_day(
     worldwide_day: WorldwideDay,
     schedule: NewWwdSchedule,
 ) -> Result<bool> {
-    crate::lease::require_worldwide_day_lease(&factory.storage, worldwide_day)?;
+    crate::lease::require_worldwide_day_lease(&factory.storage)?;
     if let Some(existing) = factory.worldwide_days.get(worldwide_day)? {
         if existing.emission_day != schedule.emission_day {
             return Err(WwdStorageCorruptionError::WwdDayLinkMismatch {

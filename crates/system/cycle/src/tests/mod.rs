@@ -145,10 +145,8 @@ pub(super) fn seed_fresh_reward_oracle(ctx: &BlockRuntimeContext) {
 
 pub(super) fn seed_daily_voters(ctx: &BlockRuntimeContext, day: u32, voters: &[(Address, u64)]) {
     let rewards = ctx.storage.contract::<outbe_rewards::schema::Rewards<'_>>();
-    let voter_at = rewards.day_voter_at.get_nested(&day);
     let participation = rewards.day_votes.get_nested(&day);
-    for (index, (voter, count)) in voters.iter().enumerate() {
-        voter_at.write(&(index as u32), *voter).unwrap();
+    for (voter, count) in voters {
         participation.write(voter, *count).unwrap();
     }
     rewards
@@ -192,10 +190,46 @@ pub(super) fn run_cycle_tick_at_activation(
     crate::runtime::handle_cycle_tick(ctx, metadosis_genesis_activation_height)
 }
 
+/// Starts the day before the block and runs its Metadosis, as the steps at 00:00 and 12:00 after
+/// the day do. A day with no record gets one with no WWD.
 pub(super) fn run_emission_limit_daily(
     ctx: &BlockRuntimeContext,
 ) -> outbe_primitives::error::Result<()> {
-    crate::handler::run_emission_limit_daily(ctx)
+    let day = outbe_system_common::time::previous_date_key(
+        outbe_system_common::time::timestamp_to_date_key(ctx.block.timestamp),
+    )
+    .expect("date step");
+    let record = match outbe_emission::api::get_emission_day(ctx.storage.clone(), day)? {
+        Some(record) => record,
+        None => outbe_emission::api::create_emission_day(
+            ctx,
+            day,
+            outbe_system_common::time::WorldwideDay::new(0),
+        )?,
+    };
+    if record.state == outbe_emission::schema::emission_day_state::PENDING {
+        crate::handler::start_day_emission_limit(ctx, day)?;
+        for pool in [
+            outbe_agentreward::api::RewardPool::Waa,
+            outbe_agentreward::api::RewardPool::Sra,
+        ] {
+            outbe_agentreward::api::set_agent_reward_rate(ctx, day, pool)?;
+        }
+    }
+    outbe_metadosis::commands::start_metadosis(ctx, day)
+}
+
+/// The reward of `account` in `pool` and emission day `day`, at the rate of the day.
+pub(super) fn day_reward(
+    ctx: &BlockRuntimeContext,
+    pool: outbe_agentreward::api::RewardPool,
+    day: u32,
+    account: Address,
+) -> U256 {
+    outbe_agentreward::AgentRewardContract::new(ctx.storage.clone())
+        .agent_reward(pool, day, account)
+        .unwrap()
+        .1
 }
 
 mod budgets;
@@ -257,16 +291,12 @@ pub(super) fn dispatch_at(
     ctx
 }
 
-/// Day-0 emission allocation of `sink`.
-pub(super) fn day_zero_allocation(sink: outbe_emission::allocation::EmissionSinkId) -> U256 {
-    outbe_emission::allocation::allocate_day_emission_limit(
+/// The limits of the parts of the genesis day.
+pub(super) fn day_zero_shares() -> outbe_emission::api::EmissionShares {
+    outbe_emission::api::compute_emission_shares(
         outbe_emission::day_emission::emission_limit_of_day(0),
     )
     .unwrap()
-    .iter()
-    .find(|allocation| allocation.id == sink)
-    .unwrap()
-    .amount
 }
 
 /// Block time of the dispatcher anchor in [`with_anchored_cycle`].

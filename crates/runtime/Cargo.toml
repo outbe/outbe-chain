@@ -145,6 +145,8 @@ commonware-actor.workspace = true
 outbe-nod = { workspace = true, features = ["test-utils", "test-enclave"] }
 outbe-nodfactory = { workspace = true, features = ["test-utils"] }
 outbe-oracle = { workspace = true, features = ["test-utils"] }
+outbe-desis = { workspace = true, features = ["test-utils"] }
+outbe-emission = { workspace = true, features = ["test-utils"] }
 outbe-tee = { workspace = true, features = ["test-utils"] }
 outbe-vaultrouter = { workspace = true, features = ["test-utils"] }
 outbe-teeregistry.workspace = true

@@ -63,16 +63,3 @@ impl From<CcaError> for PrecompileError {
         }
     }
 }
-
-#[derive(Debug, Error)]
-#[non_exhaustive]
-pub enum CcaFatalError {
-    #[error("CCA reward day index or cleanup queue is corrupt")]
-    RewardDayIndexCorrupt,
-}
-
-impl From<CcaFatalError> for PrecompileError {
-    fn from(error: CcaFatalError) -> Self {
-        Self::fatal(error.to_string())
-    }
-}

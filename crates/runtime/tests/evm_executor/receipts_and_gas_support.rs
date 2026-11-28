@@ -56,10 +56,6 @@ pub(super) fn seed_dense_voter_participation(
         .write(&prev_day, U256::from(validator_count))?;
     for index in 0..validator_count {
         let voter = numbered_test_address(0x12, u64::from(index));
-        rewards
-            .day_voter_at
-            .get_nested(&prev_day)
-            .write(&index, voter)?;
         rewards.day_votes.get_nested(&prev_day).write(&voter, 1)?;
     }
 
@@ -75,54 +71,50 @@ pub(super) fn seed_dense_agent_recipients(
     for n in 0..address_count {
         let waa = numbered_test_address(0x10, n);
         let sra = numbered_test_address(0x11, n);
-        agent.increment_waa_offer(prev_day.into(), waa)?;
-        agent.increment_sra_offer(prev_day.into(), sra)?;
+        agent.increment_waa_offer(prev_day, waa)?;
+        agent.increment_sra_offer(prev_day, sra)?;
     }
     assert_eq!(
-        agent.get_all_waa_counts(prev_day.into()).unwrap().len(),
-        address_count as usize,
+        agent.waa_address_count.read(&prev_day)?,
+        address_count as u32,
         "GAS-05 fixture must seed all dense WAA recipients"
     );
     assert_eq!(
-        agent.get_all_sra_counts(prev_day.into()).unwrap().len(),
-        address_count as usize,
+        agent.sra_address_count.read(&prev_day)?,
+        address_count as u32,
         "GAS-05 fixture must seed all dense SRA recipients"
     );
 
     Ok(())
 }
 
+/// The step at 00:00 sets the Validator and CCA rates. The WAA and SRA weights wait for the
+/// offering end, and the record of the day stays `Processing`.
 pub(super) fn assert_dense_agent_accrual_pending(
     storage: StorageHandle<'_>,
     prev_day: u32,
     address_count: u64,
 ) -> Result<(), outbe_primitives::error::PrecompileError> {
+    use outbe_agentreward::schema::RewardPool;
     let agent = outbe_agentreward::AgentRewardContract::new(storage.clone());
     assert_eq!(
-        agent.get_all_waa_counts(prev_day.into())?.len(),
-        address_count as usize,
-        "GAS-05: pending WAA inputs must survive the validator-only slice"
+        agent.waa_address_count.read(&prev_day)?,
+        address_count as u32,
+        "GAS-05: WAA weights wait for the offering end"
     );
-    assert_eq!(
-        agent.get_all_sra_counts(prev_day.into())?.len(),
-        address_count as usize,
-        "GAS-05: pending SRA inputs must survive the validator-only slice"
-    );
-
+    for pool in [RewardPool::Waa, RewardPool::Sra] {
+        assert_eq!(
+            agent.agent_reward_rate(pool, prev_day)?,
+            (U256::ZERO, 0, U256::ZERO),
+            "GAS-05: the WAA and SRA rates come at the offering end"
+        );
+    }
     for n in 0..address_count {
         let waa = numbered_test_address(0x10, n);
-        let sra = numbered_test_address(0x11, n);
-        let waa_claimable = agent.agent_reward_total(waa)?;
-        let sra_claimable = agent.agent_reward_total(sra)?;
         assert_eq!(
-            waa_claimable,
-            U256::ZERO,
-            "GAS-05: WAA must not receive a second accrual budget in the same block"
-        );
-        assert_eq!(
-            sra_claimable,
-            U256::ZERO,
-            "GAS-05: SRA must not receive a second accrual budget in the same block"
+            agent.weight(RewardPool::Waa, prev_day, waa)?,
+            U256::from(1),
+            "GAS-05: each WAA keeps its weight"
         );
     }
     assert_eq!(
@@ -130,54 +122,34 @@ pub(super) fn assert_dense_agent_accrual_pending(
         U256::ZERO,
         "GAS-05: AgentReward holds no native COEN"
     );
-    assert_eq!(
-        agent.accrual_head.read()?,
-        1,
-        "GAS-05: only the validator job is terminal"
-    );
-    assert_eq!(
-        agent.accrual_tail.read()?,
-        4,
-        "GAS-05: all four pool descriptors must be queued"
-    );
-    assert_eq!(agent.pending_jobs_by_day.read(&prev_day)?, 3);
-    let waa_job = agent
-        .accrual_jobs
-        .get(1)?
-        .expect("GAS-05: WAA job must remain queued");
-    assert_eq!(
-        waa_job.pool,
-        outbe_agentreward::schema::RewardPool::Waa as u8
-    );
-    assert_eq!(u64::from(waa_job.recipient_count), address_count);
-    assert_eq!(waa_job.total_weight, U256::from(address_count));
-    assert_eq!(waa_job.next_index, 0);
-    assert_eq!(waa_job.credited_minor, U256::ZERO);
-    assert!(!waa_job.pool_minor.is_zero());
     let emission_day = outbe_emission::api::get_emission_day(storage.clone(), prev_day)?
-        .expect("GAS-05: previous-day emission allocation must exist");
+        .expect("GAS-05: the record of the previous day must exist");
     assert!(
         !emission_day.metadosis_limit_minor().is_zero(),
-        "GAS-05: previous-day emission allocation must be nonzero"
+        "GAS-05: the record of the previous day has its limits"
     );
     assert_eq!(
         emission_day.state,
         outbe_emission::schema::emission_day_state::PROCESSING,
-        "GAS-05: monetary settlement must wait for the queued agent pools"
+        "GAS-05: the day started"
     );
     Ok(())
 }
 
-/// Every dense voter holds a nonzero validator claimable and no Gem.
+/// Every dense voter has a nonzero validator reward at the rate of the day and no Gem.
 pub(super) fn assert_dense_validator_settlement(
     storage: StorageHandle<'_>,
+    prev_day: u32,
     validator_count: u32,
 ) -> outbe_primitives::error::Result<()> {
     let agent_reward = outbe_agentreward::AgentRewardContract::new(storage);
     for index in 0..validator_count {
         let voter = numbered_test_address(0x12, u64::from(index));
-        let claimable = agent_reward
-            .get_agent_reward(outbe_agentreward::schema::RewardPool::Validator, voter)?;
+        let (_, claimable) = agent_reward.agent_reward(
+            outbe_agentreward::schema::RewardPool::Validator,
+            prev_day,
+            voter,
+        )?;
         assert!(
             !claimable.is_zero(),
             "GAS-05: dense validator {voter} received zero claimable reward"

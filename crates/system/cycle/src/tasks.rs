@@ -14,8 +14,7 @@ use crate::errors::CycleError;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum CycleWorkerId {
-    AgentRewards = 1,
-    DesisCleanup = 2,
+    DesisCleanup = 1,
 }
 
 impl CycleWorkerId {
@@ -163,9 +162,9 @@ impl TaskHandler {
             Self::Test(handler) => handler(ctx),
             Self::ProcessEmissionDay => return crate::handler::process_emission_day(ctx),
             Self::ScheduleIntexCallPass => outbe_intexfactory::call::schedule_call_pass(ctx),
-            Self::AdvanceAuctions => outbe_desis::advance_auctions(ctx),
+            Self::AdvanceAuctions => outbe_desis::advance_intex_auctions(ctx),
             Self::ScheduleGemCallPass => outbe_gemfactory::call::schedule_call_pass(ctx),
-            Self::CompleteAuctions => outbe_desis::complete_auctions(ctx),
+            Self::CompleteAuctions => outbe_desis::complete_intex_auctions(ctx),
             Self::ScheduleCredisCallPass => outbe_credisfactory::call::schedule_call_pass(ctx),
             Self::ScheduleNodCallPass => outbe_nodfactory::call::schedule_call_pass(ctx),
         };
@@ -174,7 +173,7 @@ impl TaskHandler {
 }
 
 /// Each tick advances every scheduled day that has a due step. So the days due at the
-/// same midnight all move on the first tick after it. A brief only becomes a live auction
+/// same midnight all move on the first tick after it. A started day only becomes a live auction
 /// on this tick: a slower cadence would spend the commit window on waiting for the start.
 /// `complete_auctions` uses the same cadence.
 const ADVANCE_AUCTIONS_PERIOD_SECONDS: u64 = 3_600;
@@ -196,12 +195,9 @@ macro_rules! const_spec {
 /// Hourly cadence of `process_emission_day`.
 pub const PROCESS_EMISSION_DAY_PERIOD_SECONDS: u64 = 3_600;
 /// `process_emission_day` runs from one second into each hour, so Metadosis of E runs in the
-/// slot at 12:00:01 of E+1. The auction tasks share the offset to land in the slot of the brief.
+/// slot at 12:00:01 of E+1. The auction tasks share the offset to land in the slot of the day start.
 pub const PROCESS_EMISSION_DAY_START_OFFSET_SECONDS: u64 = 1;
 
-/// Agent rewards: 16,505,700 measured storage gas for 256 accrual and 3x256 cleanup
-/// entries, multiplied by four and rounded up to 1,000 gas.
-pub const AGENT_REWARDS_WORKER_BUDGET_GAS: u64 = 66_023_000;
 /// Desis cleanup: 2,880,000 worst-case gas for four headers and 256 bid clears,
 /// multiplied by four and rounded up to 1,000 gas.
 pub const DESIS_CLEANUP_WORKER_BUDGET_GAS: u64 = 11_520_000;
@@ -213,12 +209,11 @@ pub const DESIS_CLEANUP_WORKER_BUDGET_GAS: u64 = 11_520_000;
 /// A due task whose dependency failed in this walk records its slot
 /// and does not run.
 /// AdvanceAuctions must stay after ProcessEmissionDay.
-/// Same-slot brief and auction order depends on that sequence.
+/// The auction of a day starts in the slot that starts the day only in that order.
 ///
-/// Budgets use measured successful gross maxima from
-/// `crates/blockchain/evm/src/executor/tests/receipts_and_gas/calibration.rs`, multiplied by four
-/// and rounded up to 1,000 gas. In stable-id order those maxima are
-/// [401900, 50300, 991492, 50300, 2583089, 50300, 50300].
+/// Budgets use measured successful gross maxima, multiplied by four and rounded up to 1,000 gas.
+/// In stable-id order those maxima are [720000, 50300, 991492, 50300, 2583089, 50300, 50300].
+/// `an_emission_day_run_stays_within_its_measured_maximum` pins the first one.
 /// The supported nested bridge profile performs calldata copy/hash, persistent
 /// reads/writes, logs, and a real relay call. It is not a universal contract bound.
 /// `advance_auctions` takes the step bounds of Desis, measured on the deployed bridge.
@@ -226,8 +221,8 @@ pub const fn active_tasks() -> core::result::Result<[TaskSpec; 7], CycleError> {
     Ok([
         // ProcessEmissionDay settles a contiguous completed UTC day. It MUST
         // observe the parent block's Phase 1 accounting before it fires.
-        // Otherwise validator-pool top-ups and daily-fee reads would
-        // race the parent-finalization tx.
+        // Otherwise the seal of the votes of the day would race the
+        // parent-finalization tx.
         // The handler owns the calendar decision, so missed hourly slots
         // collapse to one execution at the latest due boundary.
         {
@@ -238,7 +233,7 @@ pub const fn active_tasks() -> core::result::Result<[TaskSpec; 7], CycleError> {
                     PROCESS_EMISSION_DAY_PERIOD_SECONDS,
                     PROCESS_EMISSION_DAY_START_OFFSET_SECONDS
                 ),
-                1_608_000,
+                2_880_000,
                 TaskHandler::ProcessEmissionDay,
             ));
             spec.requires_accounting_window = true;
@@ -262,7 +257,7 @@ pub const fn active_tasks() -> core::result::Result<[TaskSpec; 7], CycleError> {
             spec.isolates_panic = true;
             spec
         },
-        // Gated like `process_emission_day`, so the brief it writes and this start
+        // Gated like `process_emission_day`, so the day it starts and this auction start
         // land in the same slot.
         // A poll, not a calendar slot. The handler reads the block clock and
         // sweeps every scheduled day. So replaying a missed slot does nothing
@@ -438,8 +433,7 @@ mod protocol_parameter_tests {
         use crate::ICycle::{CycleTask, CycleTaskCompleted};
         use alloy_sol_types::SolEvent;
 
-        assert_eq!(CycleWorkerId::AgentRewards.as_u8(), 1);
-        assert_eq!(CycleWorkerId::DesisCleanup.as_u8(), 2);
+        assert_eq!(CycleWorkerId::DesisCleanup.as_u8(), 1);
         for (id, task) in [
             (TaskId::ProcessEmissionDay, CycleTask::ProcessEmissionDay),
             (
@@ -481,20 +475,17 @@ mod protocol_parameter_tests {
                 .unwrap()
                 .isolates_panic
         );
-        assert_eq!(AGENT_REWARDS_WORKER_BUDGET_GAS, 66_023_000);
         assert_eq!(DESIS_CLEANUP_WORKER_BUDGET_GAS, 11_520_000);
-        for (budget, measured) in [
-            (AGENT_REWARDS_WORKER_BUDGET_GAS, 16_505_700u64),
-            (DESIS_CLEANUP_WORKER_BUDGET_GAS, 2_880_000),
-        ] {
-            assert_eq!(budget, (measured * 4).div_ceil(1_000) * 1_000);
-        }
+        assert_eq!(
+            DESIS_CLEANUP_WORKER_BUDGET_GAS,
+            (2_880_000u64 * 4).div_ceil(1_000) * 1_000
+        );
     }
 
     #[test]
     fn calibrated_budgets_are_nonzero_and_follow_checked_headroom_rule() {
         let maxima = [
-            401_900u64, 50_300, 991_492, 50_300, 2_583_089, 50_300, 50_300,
+            720_000u64, 50_300, 991_492, 50_300, 2_583_089, 50_300, 50_300,
         ];
         let tasks = active_tasks().expect("calibrated task table");
         let mut total = 0u64;
@@ -513,6 +504,6 @@ mod protocol_parameter_tests {
                 .checked_add(spec.work_budget_gas())
                 .expect("combined allowances fit u64");
         }
-        assert_eq!(total, 22_175_000);
+        assert_eq!(total, 23_447_000);
     }
 }

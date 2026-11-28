@@ -9,42 +9,36 @@ use thiserror::Error;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 #[non_exhaustive]
 pub enum AgentRewardError {
-    #[error("agentreward day {0} is sealed or out of order")]
-    DaySealed(u32),
-    #[error("agentreward queue or job invariant violated")]
-    InvalidJob,
+    #[error("agentreward rate of pool {pool} and day {day} is not due")]
+    RateNotDue { pool: u8, day: u32 },
+    #[error("agentreward rate arithmetic overflow")]
+    RateOverflow,
+    #[error("agentreward claims of pool {pool} and day {day} exceed its allocated amount")]
+    UnclaimedUnderflow { pool: u8, day: u32 },
     #[error("agentreward offer counter overflow")]
     OfferCounterOverflow,
-    #[error("agentreward distribute_daily overflow")]
-    DistributeDailyOverflow,
-    #[error("reward distribution arithmetic overflow")]
-    DistributionOverflow,
-    #[error("agentreward total overflow")]
-    AgentRewardTotalOverflow,
-    #[error("agentreward pool total disagrees with its balances")]
-    PoolTotalMismatch,
-    #[error("agentreward pool reward overflow")]
-    AgentRewardOverflow,
-    #[error("no agent reward in this pool")]
+    #[error("agentreward rate of pool {pool} and day {day} is already set")]
+    AgentRewardRateAlreadySet { pool: u8, day: u32 },
+    #[error("agentreward pool {pool} has no rate for day {day}")]
+    AgentRewardRateMissing { pool: u8, day: u32 },
+    #[error("agentreward claim names {0} days")]
+    InvalidRewardDays(usize),
+    #[error("no agent reward weight in day {0}")]
+    NoAgentRewardWeight(u32),
+    #[error("no agent reward in these days")]
     NoAgentReward,
-    #[error("insufficient agent reward")]
-    InsufficientAgentReward,
     #[error("agent reward deadline {0} has passed")]
     AgentRewardDeadlinePassed(u64),
     #[error("agent reward has not expired at deadline {0}")]
     AgentRewardNotExpired(u64),
-    #[error("reward balance deadline overflow")]
+    #[error("reward deadline overflow")]
     RewardDeadlineOverflow,
-    #[error("nonempty reward balance has no deadline")]
-    RewardDeadlineMissing,
     #[error("agentreward has no 24-hour COEN price in {0} at the redemption hour")]
     RedeemPriceUnavailable(u16),
     #[error("agentreward entry price overflow")]
     EntryPriceOverflow,
     #[error("agentreward unknown reward pool {0}")]
     UnknownRewardPool(u8),
-    #[error("agentreward accrual job {0} is missing")]
-    AccrualJobMissing(u64),
 }
 
 fn revert_with<E: SolError>(error: E) -> PrecompileError {
@@ -55,19 +49,30 @@ impl From<AgentRewardError> for PrecompileError {
     fn from(err: AgentRewardError) -> Self {
         use IAgentReward as I;
         match err {
-            AgentRewardError::DaySealed(_) | AgentRewardError::InvalidJob => {
+            AgentRewardError::RateNotDue { .. } => PrecompileError::FatalWithCause(Box::new(err)),
+            AgentRewardError::RateOverflow | AgentRewardError::UnclaimedUnderflow { .. } => {
                 PrecompileError::Fatal(err.to_string())
             }
             AgentRewardError::OfferCounterOverflow => revert_with(I::OfferCounterOverflow {}),
-            AgentRewardError::DistributeDailyOverflow => revert_with(I::DistributeDailyOverflow {}),
-            AgentRewardError::DistributionOverflow => revert_with(I::DistributionOverflow {}),
-            AgentRewardError::AgentRewardTotalOverflow => {
-                revert_with(I::AgentRewardTotalOverflow {})
+            AgentRewardError::AgentRewardRateAlreadySet { pool, day } => {
+                revert_with(I::AgentRewardRateAlreadySet {
+                    pool,
+                    emissionDay: day,
+                })
             }
-            AgentRewardError::PoolTotalMismatch => revert_with(I::PoolTotalMismatch {}),
-            AgentRewardError::AgentRewardOverflow => revert_with(I::AgentRewardOverflow {}),
+            AgentRewardError::AgentRewardRateMissing { pool, day } => {
+                revert_with(I::AgentRewardRateMissing {
+                    pool,
+                    emissionDay: day,
+                })
+            }
+            AgentRewardError::InvalidRewardDays(count) => revert_with(I::InvalidRewardDays {
+                count: alloy_primitives::U256::from(count),
+            }),
+            AgentRewardError::NoAgentRewardWeight(day) => {
+                revert_with(I::NoAgentRewardWeight { emissionDay: day })
+            }
             AgentRewardError::NoAgentReward => revert_with(I::NoAgentReward {}),
-            AgentRewardError::InsufficientAgentReward => revert_with(I::InsufficientAgentReward {}),
             AgentRewardError::AgentRewardDeadlinePassed(deadline) => {
                 revert_with(I::AgentRewardDeadlinePassed { deadline })
             }
@@ -75,16 +80,12 @@ impl From<AgentRewardError> for PrecompileError {
                 revert_with(I::AgentRewardNotExpired { deadline })
             }
             AgentRewardError::RewardDeadlineOverflow => revert_with(I::RewardDeadlineOverflow {}),
-            AgentRewardError::RewardDeadlineMissing => revert_with(I::RewardDeadlineMissing {}),
             AgentRewardError::RedeemPriceUnavailable(iso_code) => {
                 revert_with(I::RedeemPriceUnavailable { isoCode: iso_code })
             }
             AgentRewardError::EntryPriceOverflow => revert_with(I::EntryPriceOverflow {}),
             AgentRewardError::UnknownRewardPool(value) => {
                 revert_with(I::UnknownRewardPool { value })
-            }
-            AgentRewardError::AccrualJobMissing(value) => {
-                revert_with(I::AccrualJobMissing { value })
             }
         }
     }
@@ -98,8 +99,37 @@ mod tests {
     use outbe_primitives::error::PrecompileError;
 
     #[test]
-    fn agent_reward_error_converts_to_canonical_abi_revert_bytes() {
+    fn user_errors_convert_to_their_abi_revert_bytes() {
         for (error, expected) in [
+            (
+                AgentRewardError::AgentRewardRateMissing {
+                    pool: 1,
+                    day: 20_231_113,
+                },
+                IAgentReward::AgentRewardRateMissing {
+                    pool: 1,
+                    emissionDay: 20_231_113,
+                }
+                .abi_encode(),
+            ),
+            (
+                AgentRewardError::InvalidRewardDays(65),
+                IAgentReward::InvalidRewardDays {
+                    count: alloy_primitives::U256::from(65),
+                }
+                .abi_encode(),
+            ),
+            (
+                AgentRewardError::NoAgentRewardWeight(20_231_113),
+                IAgentReward::NoAgentRewardWeight {
+                    emissionDay: 20_231_113,
+                }
+                .abi_encode(),
+            ),
+            (
+                AgentRewardError::NoAgentReward,
+                IAgentReward::NoAgentReward {}.abi_encode(),
+            ),
             (
                 AgentRewardError::AgentRewardDeadlinePassed(u64::MAX),
                 IAgentReward::AgentRewardDeadlinePassed { deadline: u64::MAX }.abi_encode(),
@@ -110,14 +140,6 @@ mod tests {
                     deadline: 31_536_000,
                 }
                 .abi_encode(),
-            ),
-            (
-                AgentRewardError::RewardDeadlineOverflow,
-                IAgentReward::RewardDeadlineOverflow {}.abi_encode(),
-            ),
-            (
-                AgentRewardError::RewardDeadlineMissing,
-                IAgentReward::RewardDeadlineMissing {}.abi_encode(),
             ),
             (
                 AgentRewardError::RedeemPriceUnavailable(840),
@@ -131,6 +153,10 @@ mod tests {
                 AgentRewardError::OfferCounterOverflow,
                 IAgentReward::OfferCounterOverflow {}.abi_encode(),
             ),
+            (
+                AgentRewardError::UnknownRewardPool(4),
+                IAgentReward::UnknownRewardPool { value: 4 }.abi_encode(),
+            ),
         ] {
             let err = PrecompileError::from(error);
             let PrecompileError::RevertBytes(bytes) = err else {
@@ -141,14 +167,22 @@ mod tests {
     }
 
     #[test]
-    fn entry_price_overflow_converts_to_canonical_abi_revert_bytes() {
-        let err = PrecompileError::from(AgentRewardError::EntryPriceOverflow);
-        let PrecompileError::RevertBytes(bytes) = err else {
-            panic!("expected RevertBytes, got {err:?}");
-        };
-        assert_eq!(
-            bytes.as_ref(),
-            IAgentReward::EntryPriceOverflow {}.abi_encode()
-        );
+    fn chain_errors_do_not_revert() {
+        for error in [
+            AgentRewardError::RateNotDue {
+                pool: 0,
+                day: 20_231_113,
+            },
+            AgentRewardError::RateOverflow,
+            AgentRewardError::UnclaimedUnderflow {
+                pool: 0,
+                day: 20_231_113,
+            },
+        ] {
+            assert!(!matches!(
+                PrecompileError::from(error),
+                PrecompileError::Revert(_) | PrecompileError::RevertBytes(_)
+            ));
+        }
     }
 }

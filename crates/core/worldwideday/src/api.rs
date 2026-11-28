@@ -43,7 +43,7 @@ pub fn is_worldwide_day_sealed(storage: StorageHandle<'_>, wwd: WorldwideDay) ->
 
 /// Seals `wwd` under a Worldwide Day lease.
 pub fn seal_worldwide_day(storage: StorageHandle<'_>, wwd: WorldwideDay) -> Result<()> {
-    crate::lease::require_worldwide_day_lease(&storage, wwd)?;
+    crate::lease::require_worldwide_day_lease(&storage)?;
     let mut contract = WorldwideDayContract::new(storage);
     contract.sealed.write(&wwd, true)?;
     contract.emit(IWorldwideDay::WorldwideDaySealed {

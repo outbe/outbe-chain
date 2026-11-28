@@ -6,23 +6,19 @@ use crate::constants::{ADVANCE_DAY_BASE_GAS, MAX_TARGET_CHAINS};
 const COMMITTING: EmissionDate = EmissionDate::new(20231112);
 /// At `NOW`, the reveal stage of this day ends.
 const REVEALING: EmissionDate = EmissionDate::new(20231111);
-/// At `NOW`, this day waits for its bids. Nothing is due.
-const WAITING: EmissionDate = EmissionDate::new(20231110);
+/// At `NOW`, this day waits for its bids, and its last clearing time is ahead. Nothing is due.
+const WAITING: EmissionDate = EmissionDate::new(20231114);
 
-/// Put a started day in the schedule at `stage`, with its windows from `anchor`.
+/// Put a started day in the schedule at `stage`; its windows come from the day.
 fn schedule_started(
     s: &StorageHandle,
     day: EmissionDate,
     stage: AuctionStage,
-    anchor: u64,
     promis_load_minor: u128,
 ) {
+    crate::tests::record_started_day(s, day);
     let mut contract = s.contract::<DesisContract>();
     contract.write_stage(day, stage).unwrap();
-    contract
-        .auction_at
-        .write(&day, u32::try_from(anchor).unwrap())
-        .unwrap();
     contract
         .config_promis_load_minor
         .write(&day, U256::from(promis_load_minor))
@@ -41,29 +37,16 @@ fn schedule_committing(s: &StorageHandle) {
         s,
         COMMITTING,
         AuctionStage::CommittingBids,
-        ANCHOR - SECONDS_PER_DAY,
         PROMIS_LOAD_MINOR,
     );
 }
 
 fn schedule_revealing(s: &StorageHandle, promis_load_minor: u128) {
-    schedule_started(
-        s,
-        REVEALING,
-        AuctionStage::RevealingBids,
-        ANCHOR - 2 * SECONDS_PER_DAY,
-        promis_load_minor,
-    );
+    schedule_started(s, REVEALING, AuctionStage::RevealingBids, promis_load_minor);
 }
 
 fn schedule_waiting(s: &StorageHandle) {
-    schedule_started(
-        s,
-        WAITING,
-        AuctionStage::CollectingBids,
-        ANCHOR - 2 * SECONDS_PER_DAY,
-        PROMIS_LOAD_MINOR,
-    );
+    schedule_started(s, WAITING, AuctionStage::CollectingBids, PROMIS_LOAD_MINOR);
 }
 
 /// Meter storage as in production, so that a trigger budget applies.
@@ -97,8 +80,10 @@ fn advance_auctions_moves_each_due_auction() {
     });
     metered(&mut provider);
     StorageHandle::enter(&mut provider, |s| {
-        s.with_trigger_budget(ADVANCE_BUDGET, || runtime::schedule_tick(&s, NOW))
-            .unwrap();
+        s.with_trigger_budget(ADVANCE_BUDGET, || {
+            runtime::advance_intex_auctions_at(&s, NOW)
+        })
+        .unwrap();
         assert_eq!(stage(&s, EMISSION_DAY), AuctionStage::CommittingBids);
         assert_eq!(stage(&s, COMMITTING), AuctionStage::RevealingBids);
         assert_eq!(stage(&s, REVEALING), AuctionStage::CollectingBids);
@@ -134,7 +119,7 @@ fn a_reverting_day_does_not_stop_the_other_days() {
         schedule_revealing(&s, 0);
         schedule_committing(&s);
         brief(&s, true);
-        runtime::schedule_tick(&s, NOW).unwrap();
+        runtime::advance_intex_auctions_at(&s, NOW).unwrap();
         assert_eq!(stage(&s, REVEALING), AuctionStage::RevealingBids);
         assert!(is_scheduled(&s, REVEALING));
         assert_eq!(
@@ -156,7 +141,7 @@ fn a_day_above_the_target_cap_reverts_and_the_other_days_move() {
         schedule_revealing(&s, PROMIS_LOAD_MINOR);
         schedule_committing(&s);
         brief(&s, true);
-        runtime::schedule_tick(&s, NOW).unwrap();
+        runtime::advance_intex_auctions_at(&s, NOW).unwrap();
         assert_eq!(stage(&s, REVEALING), AuctionStage::RevealingBids);
         assert!(is_scheduled(&s, REVEALING));
         assert_eq!(stage(&s, COMMITTING), AuctionStage::RevealingBids);
@@ -178,7 +163,9 @@ fn the_own_chain_asks_for_the_same_round_gas_as_another_chain() {
         }
         schedule_revealing(&s, PROMIS_LOAD_MINOR);
     });
-    StorageHandle::enter(&mut provider, |s| runtime::schedule_tick(&s, NOW).unwrap());
+    StorageHandle::enter(&mut provider, |s| {
+        runtime::advance_intex_auctions_at(&s, NOW).unwrap()
+    });
     let asks: Vec<_> = outbox_of_type(
         &mut provider,
         outbe_intexfactory::transport::wire::MSG_INTEX_AUCTION_CLEARING_START,
@@ -206,8 +193,10 @@ fn a_small_budget_stops_before_overrun_and_the_next_run_moves_the_rest() {
     StorageHandle::enter(&mut provider, |s| {
         // Below the bound of the first day: the run moves no day and spends no write.
         let before = s.gas_used().unwrap();
-        s.with_trigger_budget(commit_end - 1, || runtime::schedule_tick(&s, NOW))
-            .unwrap();
+        s.with_trigger_budget(commit_end - 1, || {
+            runtime::advance_intex_auctions_at(&s, NOW)
+        })
+        .unwrap();
         assert!(s.gas_used().unwrap() - before < commit_end);
         assert_eq!(stage(&s, COMMITTING), AuctionStage::CommittingBids);
         assert_eq!(
@@ -221,7 +210,7 @@ fn a_small_budget_stops_before_overrun_and_the_next_run_moves_the_rest() {
         // Pays for the commit end, not for the reveal end of the second day.
         let small = commit_end + 1_000;
         let before = s.gas_used().unwrap();
-        s.with_trigger_budget(small, || runtime::schedule_tick(&s, NOW))
+        s.with_trigger_budget(small, || runtime::advance_intex_auctions_at(&s, NOW))
             .unwrap();
         assert!(s.gas_used().unwrap() - before <= small);
         assert_eq!(stage(&s, COMMITTING), AuctionStage::RevealingBids);
@@ -236,8 +225,10 @@ fn a_small_budget_stops_before_overrun_and_the_next_run_moves_the_rest() {
             1
         );
 
-        s.with_trigger_budget(ADVANCE_BUDGET, || runtime::schedule_tick(&s, NOW + 3_600))
-            .unwrap();
+        s.with_trigger_budget(ADVANCE_BUDGET, || {
+            runtime::advance_intex_auctions_at(&s, NOW + 3_600)
+        })
+        .unwrap();
         assert_eq!(stage(&s, REVEALING), AuctionStage::CollectingBids);
         assert_eq!(stage(&s, EMISSION_DAY), AuctionStage::CommittingBids);
         assert_eq!(stage(&s, COMMITTING), AuctionStage::RevealingBids);
@@ -273,13 +264,15 @@ fn a_brief_cancel_of_a_started_day_is_budgeted_as_a_cancel() {
         // Enough for a commit end, not for the cancel the brief asks for.
         let small = commit_end + 1_000;
         let before = s.gas_used().unwrap();
-        s.with_trigger_budget(small, || runtime::schedule_tick(&s, NOW))
+        s.with_trigger_budget(small, || runtime::advance_intex_auctions_at(&s, NOW))
             .unwrap();
         assert!(s.gas_used().unwrap() - before <= small);
         assert_eq!(stage(&s, COMMITTING), AuctionStage::CommittingBids);
 
-        s.with_trigger_budget(ADVANCE_BUDGET, || runtime::schedule_tick(&s, NOW))
-            .unwrap();
+        s.with_trigger_budget(ADVANCE_BUDGET, || {
+            runtime::advance_intex_auctions_at(&s, NOW)
+        })
+        .unwrap();
         assert_eq!(stage(&s, COMMITTING), AuctionStage::Canceled);
     });
 }
@@ -292,7 +285,7 @@ fn a_canceled_started_day_queues_its_bid_intake_cleanup() {
             .cancel_reason
             .write(&REVEALING, crate::constants::CANCELED_NO_LIMIT)
             .unwrap();
-        runtime::schedule_tick(&s, NOW).unwrap();
+        runtime::advance_intex_auctions_at(&s, NOW).unwrap();
         assert_eq!(stage(&s, REVEALING), AuctionStage::Canceled);
         assert_eq!(
             s.contract::<DesisContract>()
@@ -317,7 +310,7 @@ fn a_brief_above_the_auction_domain_is_returned_once_and_cancels_the_day() {
             .write(&COMMITTING, U256::ZERO)
             .unwrap();
         let limit_before = promis_limit(&s);
-        let receipt = crate::api::set_desis_limit(
+        let receipt = crate::api::start_desis(
             s.clone(),
             crate::api::DesisLimit {
                 emission_day: COMMITTING,
@@ -330,7 +323,7 @@ fn a_brief_above_the_auction_domain_is_returned_once_and_cancels_the_day() {
             receipt,
             DesisLimitReceipt::ReturnedToPromisLimit { .. }
         ));
-        runtime::schedule_tick(&s, NOW).unwrap();
+        runtime::advance_intex_auctions_at(&s, NOW).unwrap();
         assert_eq!(stage(&s, COMMITTING), AuctionStage::Canceled);
         assert_eq!(promis_limit(&s), limit_before);
     });

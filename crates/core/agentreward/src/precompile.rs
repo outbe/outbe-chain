@@ -15,28 +15,6 @@ alloy_sol_types::sol!(
 /// without flipping the route fails the build.
 pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];
 
-impl AgentRewardContract<'_> {
-    fn abi_redeem_agent_reward(
-        &mut self,
-        sender: Address,
-        pool: u8,
-        amount: U256,
-        currencies: (u16, u16),
-    ) -> Result<U256> {
-        let pool = RewardPool::from_abi(pool)?;
-        // A zero amount claims the whole pool balance. Empty WAA, SRA and validator pools
-        // permit no-op claims.
-        // CCA claims still require registration history and revert when the balance is zero.
-        if pool != RewardPool::Cca
-            && amount.is_zero()
-            && self.get_agent_reward(pool, sender)?.is_zero()
-        {
-            return Ok(U256::ZERO);
-        }
-        self.redeem_agent_reward(pool, sender, amount, currencies)
-    }
-}
-
 /// ABI surface for the AgentReward precompile.
 ///
 /// Each method is annotated with `#[contract_public("<Solidity signature>")]`.
@@ -45,59 +23,62 @@ impl AgentRewardContract<'_> {
 /// The dispatcher reads and writes the Gem through EVM state.
 #[contract_dispatch]
 impl AgentRewardContract<'_> {
-    #[contract_public("agentRewardTotal(address) view returns (uint256)")]
+    #[contract_public("getAgentRewardRate(uint8,uint32) view returns (uint256,uint64,uint256)")]
     #[contract_view]
-    fn _abi_agent_reward_total(&mut self, account: Address) -> Result<U256> {
-        self.agent_reward_total(account)
+    fn _abi_get_agent_reward_rate(
+        &mut self,
+        pool: u8,
+        emission_day: u32,
+    ) -> Result<__AgentRewardContractAbi::getAgentRewardRateReturn> {
+        let (rate, deadline, unclaimed) =
+            self.agent_reward_rate(RewardPool::from_abi(pool)?, emission_day)?;
+        Ok(__AgentRewardContractAbi::getAgentRewardRateReturn {
+            _0: rate,
+            _1: deadline,
+            _2: unclaimed,
+        })
     }
 
-    #[contract_public("getAgentReward(address,uint8) view returns (uint256)")]
+    #[contract_public("getAgentReward(address,uint8,uint32) view returns (uint256,uint256)")]
     #[contract_view]
-    fn _abi_get_agent_reward(&mut self, account: Address, pool: u8) -> Result<U256> {
-        self.get_agent_reward(RewardPool::from_abi(pool)?, account)
+    fn _abi_get_agent_reward(
+        &mut self,
+        account: Address,
+        pool: u8,
+        emission_day: u32,
+    ) -> Result<__AgentRewardContractAbi::getAgentRewardReturn> {
+        let (weight, amount) =
+            self.agent_reward(RewardPool::from_abi(pool)?, emission_day, account)?;
+        Ok(__AgentRewardContractAbi::getAgentRewardReturn {
+            _0: weight,
+            _1: amount,
+        })
     }
 
-    #[contract_public("agentRewardDeadline(address,uint8) view returns (uint64)")]
-    #[contract_view]
-    fn _abi_agent_reward_deadline(&mut self, account: Address, pool: u8) -> Result<u64> {
-        self.agent_reward_deadline(RewardPool::from_abi(pool)?, account)
-    }
-
-    #[contract_public("poolAgentRewardTotal(uint8) view returns (uint256)")]
-    #[contract_view]
-    fn _abi_pool_agent_reward_total(&mut self, pool: u8) -> Result<U256> {
-        self.pool_agent_reward_total(RewardPool::from_abi(pool)?)
-    }
-
-    #[contract_public("poolPendingAgentRewardTotal(uint8) view returns (uint256)")]
-    #[contract_view]
-    fn _abi_pool_pending_agent_reward_total(&mut self, pool: u8) -> Result<U256> {
-        self.pool_pending_agent_reward_total(RewardPool::from_abi(pool)?)
-    }
-
-    #[contract_public("expireAgentReward(address,uint8) returns (uint256)")]
+    #[contract_public("expireAgentReward(address,uint8,uint32[]) returns (uint256)")]
     fn _abi_expire_agent_reward(
         &mut self,
         _sender: Address,
         account: Address,
         pool: u8,
+        emission_days: Vec<u32>,
     ) -> Result<U256> {
-        self.expire_agent_reward(RewardPool::from_abi(pool)?, account)
+        self.expire_agent_reward(RewardPool::from_abi(pool)?, account, &emission_days)
     }
 
-    #[contract_public("redeemAgentReward(uint8,uint256,uint16,uint16) returns (uint256)")]
+    #[contract_public("redeemAgentReward(uint8,uint32[],uint16,uint16) returns (uint256)")]
     fn _abi_redeem_agent_reward(
         &mut self,
         sender: Address,
         pool: u8,
-        amount: U256,
+        emission_days: Vec<u32>,
         issuance_currency: u16,
         reference_currency: u16,
     ) -> Result<U256> {
-        self.abi_redeem_agent_reward(
+        self.redeem_agent_reward(
+            RewardPool::from_abi(pool)?,
             sender,
-            pool,
-            amount,
+            &emission_days,
             (issuance_currency, reference_currency),
         )
     }

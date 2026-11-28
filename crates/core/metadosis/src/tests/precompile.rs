@@ -124,7 +124,7 @@ pub(super) fn seed_offering_day(storage: StorageHandle<'_>) {
         .unwrap();
     outbe_emission::api::put_emission_day(
         storage,
-        &outbe_emission::EmissionDay::new_with_limit(day, wwd, 50, 100, metadosis_state::PENDING),
+        &outbe_emission::EmissionDay::new(day, wwd, 50, 100, [0, 0, 0, 0, 100]),
     )
     .unwrap();
 }

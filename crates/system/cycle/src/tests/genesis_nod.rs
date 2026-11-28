@@ -14,18 +14,18 @@ fn genesis_midday_first_cycle_at_next_midnight_settles_genesis_day() {
         // Block 1 at 10:00 - genesis block establishes start_date = day D.
         let ctx_anchor = genesis_block(handle.clone(), DAY_D_10AM);
         run_cycle_tick(&ctx_anchor).unwrap();
-        let canonical_wwd = outbe_system_common::time::WorldwideDay::new(20_240_102);
+        let canonical_wwd = outbe_system_common::time::WorldwideDay::new(20_240_101);
         assert!(
             outbe_worldwideday::api::get_worldwide_day(ctx_anchor.storage.clone(), canonical_wwd)
                 .unwrap()
                 .is_some(),
-            "block 1 at the UTC+14 boundary must create the canonical WWD"
+            "block 1 must create the WWD of its date"
         );
     });
     storage.set_block_number(2);
     storage.enter(|handle| {
         let canonical_wwd = outbe_system_common::time::WorldwideDay::new(20_240_102);
-        // Block at 00:00:01 UTC day D+1 - CycleTick fires.
+        // Block at 00:00:01 UTC day D+1 - CycleTick fires and opens the WWD of the date.
         // prev_day = D = start_date -> day_number_since_genesis = 0.
         let fire_ts = DAY_D_MIDNIGHT + SECONDS_PER_DAY + 1;
         let ctx_fire = runtime_context(block_ctx(2, fire_ts), handle);
@@ -42,7 +42,7 @@ fn genesis_midday_first_cycle_at_next_midnight_settles_genesis_day() {
             outbe_worldwideday::api::get_worldwide_day(ctx_fire.storage.clone(), canonical_wwd)
                 .unwrap()
                 .is_some(),
-            "the first UTC midnight must retain the canonical genesis WWD"
+            "the first UTC midnight must open the WWD of its date"
         );
 
         let genesis_day =

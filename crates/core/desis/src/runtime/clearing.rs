@@ -10,7 +10,7 @@ pub fn force_clear(
     emission_day: EmissionDate,
     now: u64,
 ) -> Result<Option<ClearingResult>> {
-    if now >= super::schedule::last_clearing(&storage.contract::<DesisContract>(), emission_day)? {
+    if now >= super::schedule::last_clearing(emission_day)? {
         return Ok(None);
     }
     let snapshot = fetch_targets(&storage, emission_day)?;
@@ -27,7 +27,7 @@ pub fn force_clear(
 
 /// Poll one fan-in gate per invocation, rotating through the active set. A day
 /// runs in its own checkpoint; ordinary reverts do not block other days.
-pub fn complete_auctions(ctx: &BlockRuntimeContext) -> Result<()> {
+pub fn complete_intex_auctions(ctx: &BlockRuntimeContext) -> Result<()> {
     ctx.storage.with_checkpoint(|| poll_gate(ctx))
 }
 
@@ -212,6 +212,11 @@ fn clear_inner(
         emissionDay: emission_day.into(),
         amountMinor: desis_allocation_minor,
     })?;
+    outbe_emission::api::record_desis_completed(
+        storage.clone(),
+        emission_day.value(),
+        desis_allocation_minor,
+    )?;
     if !unused_desis_limit_minor.is_zero() {
         PromisLimitContract::new(storage.clone()).add(
             outbe_promislimit::LimitSource::DesisLimit,

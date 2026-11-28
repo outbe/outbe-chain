@@ -627,7 +627,6 @@ mod tests {
                             .get_nested(&FB)
                             .read(&V0)
                             .unwrap(),
-                        rewards.day_fee_sum_native.read(&19700101).unwrap(),
                         rewards.day_total_votes.read(&19700101).unwrap(),
                     ),
                 )
@@ -868,27 +867,21 @@ mod tests {
                 },
                 handle,
             );
-            let daily_base = U256::from(10_000);
             let utc_day = outbe_system_common::time::timestamp_to_date_key(timestamp);
-            outbe_emission::api::record_day_allocation(
-                ctx.storage.clone(),
+            outbe_emission::api::create_emission_day(
+                &ctx,
                 utc_day,
-                outbe_emission::api::DayAllocationAmounts {
-                    emission_limit: daily_base,
-                    metadosis_limit: daily_base,
-                    validators: U256::ZERO,
-                    waa: U256::ZERO,
-                    sra: U256::ZERO,
-                    cca: U256::ZERO,
-                    promis_limit: U256::ZERO,
-                },
+                outbe_system_common::time::WorldwideDay::new(0),
             )
             .unwrap();
 
             let emission_day = outbe_emission::api::get_emission_day(ctx.storage.clone(), utc_day)
                 .unwrap()
                 .unwrap();
-            assert_eq!(U256::from(emission_day.emission_limit), daily_base);
+            assert_eq!(
+                U256::from(emission_day.emission_limit),
+                outbe_emission::api::emission_limit_of(&ctx, utc_day).unwrap()
+            );
             assert_eq!(
                 PromisLimitContract::new(ctx.storage.clone())
                     .promis_limit()

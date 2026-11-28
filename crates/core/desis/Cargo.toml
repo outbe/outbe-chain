@@ -14,6 +14,7 @@ outbe-intexfactory.workspace = true
 outbe-intex.workspace = true
 outbe-oracle.workspace = true
 outbe-promislimit.workspace = true
+outbe-emission.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 thiserror.workspace = true
@@ -22,8 +23,10 @@ tracing.workspace = true
 [dev-dependencies]
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-intexfactory = { workspace = true, features = ["test-utils"] }
+outbe-emission = { workspace = true, features = ["test-utils"] }
 
 [lints]
 workspace = true
 
 [features]
+test-utils = []

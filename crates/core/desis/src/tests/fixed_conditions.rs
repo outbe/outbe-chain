@@ -51,7 +51,7 @@ fn the_start_fixes_the_call_terms_of_each_currency_from_the_profile() {
     with_storage(|s| {
         brief(&s, true);
         seed_price(&s, NOW, EUR_ISO, OTHER_PAIR_ID, EUR_ENTRY_PRICE);
-        runtime::schedule_tick(&s, NOW).unwrap();
+        runtime::advance_intex_auctions_at(&s, NOW).unwrap();
 
         let config = read_config(&s);
         assert_eq!(
@@ -79,7 +79,7 @@ fn the_start_message_carries_only_the_stored_day_config() {
     with_storage(|s| {
         brief(&s, true);
         seed_price(&s, NOW, EUR_ISO, OTHER_PAIR_ID, EUR_ENTRY_PRICE);
-        runtime::schedule_tick(&s, NOW).unwrap();
+        runtime::advance_intex_auctions_at(&s, NOW).unwrap();
         let config = read_config(&s);
         // A profile change after the start does not change what the day announces.
         select_profile(&s, outbe_intex::config::PROFILE_TESTNET);
@@ -113,7 +113,7 @@ fn an_unpriced_day_still_fixes_the_call_trigger() {
     with_storage(|s| {
         brief(&s, true);
         unprice_day(&s, NOW);
-        runtime::schedule_tick(&s, NOW).unwrap();
+        runtime::advance_intex_auctions_at(&s, NOW).unwrap();
         assert_eq!(
             s.contract::<DesisContract>()
                 .read_stage(EMISSION_DAY)
@@ -136,7 +136,7 @@ fn a_profile_change_after_the_start_leaves_the_series_conditions_fixed() {
 
     with_storage(|s| {
         brief_at(&s, EMISSION_DAY, 2 * LOAD_MINOR, true);
-        runtime::schedule_tick(&s, NOW).unwrap();
+        runtime::advance_intex_auctions_at(&s, NOW).unwrap();
         let config = read_config(&s);
         let message = announced(&config);
         let wire_row = &message.prices[0];
@@ -155,7 +155,7 @@ fn a_profile_change_after_the_start_leaves_the_series_conditions_fixed() {
             trigger_of(IntexParams::MAINNET)
         );
 
-        runtime::schedule_tick(&s, ANCHOR + SECONDS_PER_DAY).unwrap();
+        runtime::advance_intex_auctions_at(&s, ANCHOR + SECONDS_PER_DAY).unwrap();
         arm_clearing(&s);
         relay_bids(&s, SRC_CHAIN, 2, 200);
         let result = clear(&s);
@@ -209,7 +209,7 @@ fn a_series_is_dated_by_its_emission_day() {
 
     with_storage(|s| {
         brief_at(&s, EMISSION_DAY, 2 * LOAD_MINOR, true);
-        runtime::schedule_tick(&s, NOW).unwrap();
+        runtime::advance_intex_auctions_at(&s, NOW).unwrap();
         let result = crate::schema::ClearingResult {
             issued_units: 1,
             winner_currencies: vec![(REFERENCE_ISO, REFERENCE_ISO)],
@@ -231,7 +231,7 @@ fn a_series_is_dated_by_its_emission_day() {
 fn a_winner_in_an_unpriced_reference_currency_is_an_error() {
     with_storage(|s| {
         brief_at(&s, EMISSION_DAY, 2 * LOAD_MINOR, true);
-        runtime::schedule_tick(&s, NOW).unwrap();
+        runtime::advance_intex_auctions_at(&s, NOW).unwrap();
         let config = read_config(&s);
         let result = crate::schema::ClearingResult {
             issued_units: 1,

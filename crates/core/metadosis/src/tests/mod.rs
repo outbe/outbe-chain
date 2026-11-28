@@ -19,23 +19,28 @@ fn with_storage<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
     StorageHandle::enter(&mut storage, |storage| f(storage.clone()))
 }
 
-/// Allocates `day` as the Cycle does, with all of its limit to Metadosis.
+/// Starts `day` as the Cycle does, with all of its limit to Metadosis.
 fn allocate_to_metadosis(ctx: &BlockRuntimeContext<'_>, day: u32, limit: U256) {
-    crate::commands::set_metadosis_limit(ctx, day, limit).unwrap();
-    outbe_emission::api::record_day_allocation(
-        ctx.storage.clone(),
-        day,
-        outbe_emission::api::DayAllocationAmounts {
-            emission_limit: limit,
-            metadosis_limit: limit,
-            validators: U256::ZERO,
-            waa: U256::ZERO,
-            sra: U256::ZERO,
-            cca: U256::ZERO,
-            promis_limit: U256::ZERO,
-        },
-    )
-    .unwrap();
+    let mut record = outbe_emission::api::get_emission_day(ctx.storage.clone(), day)
+        .unwrap()
+        .unwrap_or_else(|| {
+            outbe_emission::EmissionDay::new(
+                day,
+                outbe_system_common::time::WorldwideDay::new(0),
+                outbe_emission::api::compute_metadosis_start(day).unwrap(),
+                0,
+                [0; 5],
+            )
+        });
+    let limit = u128::try_from(limit).unwrap();
+    record.emission_limit = limit;
+    record.validators_limit = 0;
+    record.cca_limit = 0;
+    record.waa_limit = 0;
+    record.sra_limit = 0;
+    record.metadosis_limit = limit;
+    record.state = outbe_emission::schema::emission_day_state::PROCESSING;
+    outbe_emission::api::put_emission_day(ctx.storage.clone(), &record).unwrap();
 }
 
 fn install_test_enclaves() {

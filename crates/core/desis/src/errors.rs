@@ -48,7 +48,7 @@ pub enum DesisError {
     #[error("collectIntexAuctionBids: array length mismatch")]
     PageArrayLengthMismatch,
 
-    #[error("brief anchor exceeds u32")]
+    #[error("auction anchor exceeds u32")]
     DesisLimitAnchorExceedsU32,
 
     #[error("min bid quantity scaling overflow")]

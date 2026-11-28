@@ -17,6 +17,20 @@ const VOTERS: [Address; 4] = [
     Address::repeat_byte(4),
 ];
 
+/// The votes of the voters of the test in `day`, leaving out a voter with none.
+fn votes(ctx: &BlockRuntimeContext, day: u32) -> Vec<(Address, U256)> {
+    VOTERS
+        .iter()
+        .map(|voter| {
+            (
+                *voter,
+                api::validator_weight(&ctx.storage, day, *voter).unwrap(),
+            )
+        })
+        .filter(|(_, weight)| !weight.is_zero())
+        .collect()
+}
+
 fn block(height: u64) -> BlockContext {
     BlockContext {
         block_gas_limit: 0,
@@ -68,10 +82,10 @@ fn midnight_late_vote_survives_reentry_and_counts_once() {
         block_fees::record_late_vote(&ctx, HASH, VOTERS[3], 3).unwrap();
         block_fees::record_late_vote(&ctx, HASH, VOTERS[0], 2).unwrap();
         assert_eq!(
-            api::get_day_voters(&ctx, DAY).unwrap(),
-            VOTERS.map(|v| (v, 1)).to_vec()
+            votes(&ctx, DAY),
+            VOTERS.map(|v| (v, U256::from(1))).to_vec()
         );
-        assert!(api::get_day_voters(&ctx, DAY + 1).unwrap().is_empty());
+        assert!(votes(&ctx, DAY + 1).is_empty());
         assert!(!api::is_voting_complete(&ctx, DAY).unwrap());
         ctx.storage
             .with_checkpoint(|| block_fees::seal_block_votes(&ctx, 13, 3))
@@ -92,8 +106,8 @@ fn midnight_late_vote_survives_reentry_and_counts_once() {
         assert!(api::is_voting_complete(&ctx, DAY).unwrap());
         // Every voter weighs the same in the day's validator pool.
         assert_eq!(
-            api::get_day_voters(&ctx, DAY).unwrap(),
-            VOTERS.map(|v| (v, 1)).to_vec()
+            votes(&ctx, DAY),
+            VOTERS.map(|v| (v, U256::from(1))).to_vec()
         );
     });
 }
@@ -106,8 +120,8 @@ fn last_admissible_slot_counts_for_the_reward_even_when_fee_weight_is_zero() {
         seed(&ctx);
         block_fees::record_late_vote(&ctx, HASH, VOTERS[3], 3).unwrap();
         assert_eq!(
-            api::get_day_voters(&ctx, DAY).unwrap(),
-            VOTERS.map(|v| (v, 1)).to_vec()
+            votes(&ctx, DAY),
+            VOTERS.map(|v| (v, U256::from(1))).to_vec()
         );
         assert_eq!(outbe_rewards::constants::decay_weight(3), U256::ZERO);
     });
@@ -119,9 +133,9 @@ fn unknown_or_out_of_window_credit_cannot_add_reward_participation() {
     storage.enter(|handle| {
         let ctx = BlockRuntimeContext::new(block(11), handle);
         seed(&ctx);
-        let before = api::get_day_voters(&ctx, DAY).unwrap();
+        let before = votes(&ctx, DAY);
         assert!(block_fees::record_late_vote(&ctx, B256::repeat_byte(0x99), VOTERS[3], 1).is_err());
         assert!(block_fees::record_late_vote(&ctx, HASH, VOTERS[3], 4).is_err());
-        assert_eq!(api::get_day_voters(&ctx, DAY).unwrap(), before);
+        assert_eq!(votes(&ctx, DAY), before);
     });
 }

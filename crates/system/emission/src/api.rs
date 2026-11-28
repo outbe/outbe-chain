@@ -1,27 +1,18 @@
 use alloy_primitives::U256;
-use outbe_primitives::{error::Result, storage::StorageHandle};
+use outbe_primitives::{block::BlockRuntimeContext, error::Result, storage::StorageHandle};
 use outbe_system_common::time::{
-    date_key_to_utc_timestamp, next_date_key, EmissionDate, WorldwideDay,
+    date_key_to_utc_timestamp, day_number_between, next_date_key, timestamp_to_date_key,
+    EmissionDate, WorldwideDay,
 };
 
+pub use crate::allocation::{compute_emission_shares, EmissionShares};
 use crate::{
+    day_emission::emission_limit_of_day,
     errors::EmissionError,
-    schema::{emission_day_state, metadosis_state, EmissionContract, EmissionDay},
+    schema::{desis_state, emission_day_state, metadosis_state, EmissionContract, EmissionDay},
 };
 
-/// Amounts produced by daily `EmissionDay(E)` limit allocation.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct DayAllocationAmounts {
-    pub emission_limit: U256,
-    pub metadosis_limit: U256,
-    pub validators: U256,
-    pub waa: U256,
-    pub sra: U256,
-    pub cca: U256,
-    pub promis_limit: U256,
-}
-
-/// Reward buckets in the Emission ledger, independent of reward-job storage or ABI pool IDs.
+/// The reward pools of a day in the Emission ledger.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RewardPool {
     Validator,
@@ -36,6 +27,10 @@ const METADOSIS_START_AFTER_MIDNIGHT_SECONDS: u64 = 12 * 60 * 60;
 #[inline]
 pub fn to_u128_checked(amount: U256) -> Result<u128> {
     u128::try_from(amount).map_err(|_| EmissionError::AmountOverflow.into())
+}
+
+fn to_i128_checked(amount: u128) -> Result<i128> {
+    i128::try_from(amount).map_err(|_| EmissionError::AmountOverflow.into())
 }
 
 /// Metadosis of `day` starts at 12:00 UTC of the next day, when the offering window of `day` ends.
@@ -84,62 +79,248 @@ pub fn delete_emission_day(storage: StorageHandle<'_>, day: u32) -> Result<()> {
     EmissionContract::new(storage).emission_days.delete(day)
 }
 
-/// Links `WorldwideDay` `wwd` (`D`) to `EmissionDay` `day` (`E`).
-///
-/// - Creates a `Pending` shell with `metadosis_start = 12:00 UTC` of `E+1` if `day` does not exist.
-/// - Idempotent no-op if `day` is already linked to the same `wwd`.
-/// - Reverts with `DayAlreadyAllocated` if `day` has already left `Pending` with a different `wwd`.
-/// - Reverts with `ConflictingWwdLink` if `day` is already linked to a different non-zero `wwd`.
-pub fn link_wwd(storage: StorageHandle<'_>, day: u32, wwd: WorldwideDay) -> Result<()> {
+/// The Emission Limit of `day`, by its number of days since the genesis day.
+pub fn emission_limit_of(ctx: &BlockRuntimeContext<'_>, day: u32) -> Result<U256> {
+    let genesis_day = timestamp_to_date_key(ctx.block.genesis_timestamp);
+    let day_number = day_number_between(genesis_day, day).map_err(EmissionError::from)?;
+    Ok(emission_limit_of_day(day_number))
+}
+
+/// Makes the `Pending` record of `day` with its Emission Limit and the limit of each part.
+/// `wwd` is the WorldwideDay of the spends of `day`, or 0 when it has none.
+pub fn create_emission_day(
+    ctx: &BlockRuntimeContext<'_>,
+    day: u32,
+    wwd: WorldwideDay,
+) -> Result<EmissionDay> {
     if !EmissionDate::new(day).is_valid() || (wwd.value() != 0 && !wwd.is_valid()) {
         return Err(EmissionError::InvalidEmissionDay { day }.into());
     }
-    let contract = EmissionContract::new(storage);
-    if let Some(mut existing) = contract.emission_days.get(day)? {
-        if existing.wwd == wwd {
-            return Ok(());
-        }
-        if existing.state != emission_day_state::PENDING {
-            return Err(EmissionError::DayAlreadyAllocated {
-                day,
-                state: existing.state,
-            }
-            .into());
-        }
-        if existing.wwd.value() != 0 {
-            return Err(EmissionError::ConflictingWwdLink {
-                day,
-                existing_wwd: existing.wwd.value(),
-                attempted_wwd: wwd.value(),
-            }
-            .into());
-        }
-        existing.wwd = wwd;
-        contract.emission_days.update(&existing)?;
-        return Ok(());
+    let contract = EmissionContract::new(ctx.storage.clone());
+    if contract.emission_days.get(day)?.is_some() {
+        return Err(EmissionError::EmissionDayExists { day }.into());
     }
-
-    let metadosis_start = compute_metadosis_start(day)?;
-    let record = EmissionDay::new_pending(day, wwd, metadosis_start);
-    contract.emission_days.create(&record)
-}
-
-/// Ensures an `EmissionDay` record exists for `day` (creating an empty-day `wwd = 0` shell if absent).
-pub fn ensure_emission_day_shell(storage: StorageHandle<'_>, day: u32) -> Result<EmissionDay> {
-    let contract = EmissionContract::new(storage);
-    if let Some(existing) = contract.emission_days.get(day)? {
-        return Ok(existing);
-    }
-    let metadosis_start = compute_metadosis_start(day)?;
-    let record = EmissionDay::new_pending(day, WorldwideDay::new(0), metadosis_start);
+    let limit = emission_limit_of(ctx, day)?;
+    let shares = compute_emission_shares(limit)?;
+    let record = EmissionDay::new(
+        day,
+        wwd,
+        compute_metadosis_start(day)?,
+        to_u128_checked(limit)?,
+        [
+            to_u128_checked(shares.validators)?,
+            to_u128_checked(shares.cca)?,
+            to_u128_checked(shares.waa)?,
+            to_u128_checked(shares.sra)?,
+            to_u128_checked(shares.metadosis)?,
+        ],
+    );
     contract.emission_days.create(&record)?;
     Ok(record)
 }
 
-/// Validates the conservation rule `emission_limit == validators + waa + sra + cca + nods + promis_limit`.
+fn load(contract: &EmissionContract<'_>, day: u32) -> Result<EmissionDay> {
+    contract
+        .emission_days
+        .get(day)?
+        .ok_or_else(|| EmissionError::EmissionDayNotFound.into())
+}
+
+/// Moves the record of `day` from `Pending` to `Processing`: the votes and fees of `day` are
+/// sealed and the step of 00:00 after it ran.
+pub fn record_day_started(storage: StorageHandle<'_>, day: u32) -> Result<EmissionDay> {
+    let contract = EmissionContract::new(storage);
+    let mut record = load(&contract, day)?;
+    if record.state != emission_day_state::PENDING {
+        return Err(EmissionError::InvalidStateTransition {
+            day,
+            from_state: record.state,
+            to_state: emission_day_state::PROCESSING,
+        }
+        .into());
+    }
+    record.state = emission_day_state::PROCESSING;
+    contract.emission_days.update(&record)?;
+    Ok(record)
+}
+
+/// Adds `amount` that a part sent to the Promis Limit to the net of the day.
+fn add_to_promis_limit(record: &mut EmissionDay, amount: u128) -> Result<()> {
+    record.promis_limit = record
+        .promis_limit
+        .checked_add(to_i128_checked(amount)?)
+        .ok_or(EmissionError::AmountOverflow)?;
+    Ok(())
+}
+
+fn require_open(record: &EmissionDay) -> Result<()> {
+    if record.state == emission_day_state::COMPLETED {
+        return Err(EmissionError::InvalidStateTransition {
+            day: record.day,
+            from_state: record.state,
+            to_state: record.state,
+        }
+        .into());
+    }
+    Ok(())
+}
+
+/// Writes what the reward `pool` of `day` gave out. The rest of its limit went to the Promis Limit.
+pub fn record_reward_pool(
+    storage: StorageHandle<'_>,
+    day: u32,
+    pool: RewardPool,
+    allocated: U256,
+) -> Result<EmissionDay> {
+    let contract = EmissionContract::new(storage);
+    let mut record = load(&contract, day)?;
+    require_open(&record)?;
+    let allocated = to_u128_checked(allocated)?;
+    let bit = 1u8 << pool as u8;
+    if record.pools_recorded & bit != 0 {
+        return Err(EmissionError::RewardPoolRecorded {
+            day,
+            pool: pool as u8,
+        }
+        .into());
+    }
+    record.pools_recorded |= bit;
+    let (limit, bucket) = match pool {
+        RewardPool::Validator => (record.validators_limit, &mut record.validators),
+        RewardPool::Waa => (record.waa_limit, &mut record.waa),
+        RewardPool::Sra => (record.sra_limit, &mut record.sra),
+        RewardPool::Cca => (record.cca_limit, &mut record.cca),
+    };
+    let rest = limit
+        .checked_sub(allocated)
+        .ok_or(EmissionError::AmountOverflow)?;
+    *bucket = allocated;
+    add_to_promis_limit(&mut record, rest)?;
+    contract.emission_days.update(&record)?;
+    Ok(record)
+}
+
+/// What Metadosis of a day read and gave out.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MetadosisAmounts {
+    pub nominal_amount: U256,
+    pub lysis_limit: U256,
+    /// The part of the Metadosis limit that covers Nod loads.
+    pub nods: U256,
+    pub desis_limit: U256,
+}
+
+fn metadosis_end(
+    storage: StorageHandle<'_>,
+    day: u32,
+    amounts: MetadosisAmounts,
+    to_state: u8,
+) -> Result<(EmissionDay, U256)> {
+    let contract = EmissionContract::new(storage);
+    let mut record = load(&contract, day)?;
+    if record.state != emission_day_state::PROCESSING
+        || record.metadosis_state != metadosis_state::PENDING
+    {
+        return Err(EmissionError::InvalidMetadosisStateTransition {
+            day,
+            from_state: record.metadosis_state,
+            to_state,
+        }
+        .into());
+    }
+    let nods = to_u128_checked(amounts.nods.min(U256::from(record.metadosis_limit)))?;
+    let rest = record.metadosis_limit - nods;
+    record.nominal_amount = to_u128_checked(amounts.nominal_amount)?;
+    record.lysis_limit = to_u128_checked(amounts.lysis_limit)?;
+    record.nods = nods;
+    record.desis_limit = to_u128_checked(amounts.desis_limit)?;
+    add_to_promis_limit(&mut record, rest)?;
+    record.metadosis_state = to_state;
+    complete_if_ended(&mut record)?;
+    contract.emission_days.update(&record)?;
+    Ok((record, U256::from(rest)))
+}
+
+/// Marks Metadosis of `day` `Completed`. The part of its limit that the loads do not take went
+/// to the Promis Limit.
+pub fn record_metadosis_completed(
+    storage: StorageHandle<'_>,
+    day: u32,
+    amounts: MetadosisAmounts,
+) -> Result<EmissionDay> {
+    metadosis_end(storage, day, amounts, metadosis_state::COMPLETED).map(|(record, _)| record)
+}
+
+/// Marks Metadosis of `day` `Failed` with no Desis limit. Returns the part of the limit that the
+/// loads do not take, which the caller sends to the Promis Limit.
+pub fn record_metadosis_failed(
+    storage: StorageHandle<'_>,
+    day: u32,
+    amounts: MetadosisAmounts,
+) -> Result<(EmissionDay, U256)> {
+    metadosis_end(
+        storage,
+        day,
+        MetadosisAmounts {
+            desis_limit: U256::ZERO,
+            ..amounts
+        },
+        metadosis_state::FAILED,
+    )
+}
+
+fn desis_end(
+    storage: StorageHandle<'_>,
+    day: u32,
+    intexes: U256,
+    to_state: u8,
+) -> Result<EmissionDay> {
+    let contract = EmissionContract::new(storage);
+    let mut record = load(&contract, day)?;
+    require_open(&record)?;
+    if record.desis_state != desis_state::PENDING {
+        return Err(EmissionError::InvalidDesisStateTransition {
+            day,
+            from_state: record.desis_state,
+            to_state,
+        }
+        .into());
+    }
+    let intexes = to_u128_checked(intexes)?;
+    record.intexes = intexes;
+    record.promis_limit = record
+        .promis_limit
+        .checked_sub(to_i128_checked(intexes)?)
+        .ok_or(EmissionError::AmountOverflow)?;
+    record.desis_state = to_state;
+    complete_if_ended(&mut record)?;
+    contract.emission_days.update(&record)?;
+    Ok(record)
+}
+
+/// Marks Desis of `day` `Completed`: its Intex auction gave `intexes` to the winners.
+pub fn record_desis_completed(
+    storage: StorageHandle<'_>,
+    day: u32,
+    intexes: U256,
+) -> Result<EmissionDay> {
+    desis_end(storage, day, intexes, desis_state::COMPLETED)
+}
+
+/// Marks Desis of `day` `Canceled`.
+pub fn record_desis_canceled(storage: StorageHandle<'_>, day: u32) -> Result<EmissionDay> {
+    desis_end(storage, day, U256::ZERO, desis_state::CANCELED)
+}
+
+/// Marks Desis of `day` `Failed`.
+pub fn record_desis_failed(storage: StorageHandle<'_>, day: u32) -> Result<EmissionDay> {
+    desis_end(storage, day, U256::ZERO, desis_state::FAILED)
+}
+
+/// Validates the rule `emission_limit == validators + waa + sra + cca + nods + intexes + promis_limit`.
 pub fn check_conservation(record: &EmissionDay) -> Result<()> {
     let landed_sum = record.landed_sum().ok_or(EmissionError::AmountOverflow)?;
-    if landed_sum != record.emission_limit {
+    if landed_sum != to_i128_checked(record.emission_limit)? {
         return Err(EmissionError::ConservationInvariantViolated {
             day: record.day,
             expected_limit: record.emission_limit,
@@ -150,736 +331,133 @@ pub fn check_conservation(record: &EmissionDay) -> Result<()> {
     Ok(())
 }
 
-/// Records the daily emission allocation for `day` and moves `state` from `Pending` to `Processing`.
-pub fn record_day_allocation(
-    storage: StorageHandle<'_>,
-    day: u32,
-    amounts: DayAllocationAmounts,
-) -> Result<EmissionDay> {
-    let mut record = ensure_emission_day_shell(storage.clone(), day)?;
-    if record.state != emission_day_state::PENDING {
-        return Err(EmissionError::DayAlreadyAllocated {
-            day,
-            state: record.state,
-        }
-        .into());
+/// Completes a `Processing` record once Metadosis and Desis of its day both ended.
+fn complete_if_ended(record: &mut EmissionDay) -> Result<()> {
+    if record.state == emission_day_state::PROCESSING
+        && record.metadosis_state != metadosis_state::PENDING
+        && record.desis_state != desis_state::PENDING
+    {
+        check_conservation(record)?;
+        record.state = emission_day_state::COMPLETED;
     }
-    record.emission_limit = to_u128_checked(amounts.emission_limit)?;
-    record.metadosis_limit = to_u128_checked(amounts.metadosis_limit)?;
-    record.validators = to_u128_checked(amounts.validators)?;
-    record.waa = to_u128_checked(amounts.waa)?;
-    record.sra = to_u128_checked(amounts.sra)?;
-    record.cca = to_u128_checked(amounts.cca)?;
-    record.promis_limit = to_u128_checked(amounts.promis_limit)?;
-    record.state = emission_day_state::PROCESSING;
-    EmissionContract::new(storage)
-        .emission_days
-        .update(&record)?;
-    Ok(record)
-}
-
-/// Records a failed daily allocation: all of `emission_limit` lands in `promis_limit` and the
-/// Metadosis limit is zero. The day stays `Processing` until its Metadosis settles the loads.
-pub fn record_failed_day_allocation(
-    storage: StorageHandle<'_>,
-    day: u32,
-    emission_limit: U256,
-) -> Result<EmissionDay> {
-    let mut record = ensure_emission_day_shell(storage.clone(), day)?;
-    if record.state != emission_day_state::PENDING {
-        return Err(EmissionError::DayAlreadyAllocated {
-            day,
-            state: record.state,
-        }
-        .into());
-    }
-    let limit_u128 = to_u128_checked(emission_limit)?;
-    record.emission_limit = limit_u128;
-    record.metadosis_limit = 0;
-    record.desis_limit = 0;
-    record.validators = 0;
-    record.waa = 0;
-    record.sra = 0;
-    record.cca = 0;
-    record.nods = 0;
-    record.promis_limit = limit_u128;
-    check_conservation(&record)?;
-    record.state = emission_day_state::PROCESSING;
-    EmissionContract::new(storage)
-        .emission_days
-        .update(&record)?;
-    Ok(record)
-}
-
-/// Settlement amounts produced when Metadosis completes an `EmissionDay`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct MetadosisCompletedAmounts {
-    pub desis_limit: U256,
-    pub nods: U256,
-    pub promis_limit_added: U256,
-}
-
-/// Marks Metadosis of `day` as `Completed` after the Desis brief, recording `desis_limit`, `nods`
-/// (the part of the Metadosis limit that covers Nod loads), and the part added to `PromisLimit`.
-pub fn record_metadosis_completed(
-    storage: StorageHandle<'_>,
-    day: u32,
-    amounts: MetadosisCompletedAmounts,
-) -> Result<EmissionDay> {
-    let contract = EmissionContract::new(storage);
-    let mut record = contract
-        .emission_days
-        .get(day)?
-        .ok_or(EmissionError::EmissionDayNotFound)?;
-    if record.metadosis_state != metadosis_state::PENDING {
-        return Err(EmissionError::InvalidMetadosisStateTransition {
-            day,
-            from_state: record.metadosis_state,
-            to_state: metadosis_state::COMPLETED,
-        }
-        .into());
-    }
-    record.desis_limit = to_u128_checked(amounts.desis_limit)?;
-    record.nods = to_u128_checked(amounts.nods)?;
-    let added = to_u128_checked(amounts.promis_limit_added)?;
-    record.promis_limit = record
-        .promis_limit
-        .checked_add(added)
-        .ok_or(EmissionError::AmountOverflow)?;
-    record.metadosis_state = metadosis_state::COMPLETED;
-    contract.emission_days.update(&record)?;
-    Ok(record)
-}
-
-/// Marks Metadosis of `day` as `CANCELED` when `metadosis_limit == 0`.
-pub fn record_metadosis_canceled(storage: StorageHandle<'_>, day: u32) -> Result<EmissionDay> {
-    let contract = EmissionContract::new(storage);
-    let mut record = contract
-        .emission_days
-        .get(day)?
-        .ok_or(EmissionError::EmissionDayNotFound)?;
-    if record.metadosis_state != metadosis_state::PENDING || record.metadosis_limit != 0 {
-        return Err(EmissionError::InvalidMetadosisStateTransition {
-            day,
-            from_state: record.metadosis_state,
-            to_state: metadosis_state::CANCELED,
-        }
-        .into());
-    }
-    record.desis_limit = 0;
-    record.nods = 0;
-    record.metadosis_state = metadosis_state::CANCELED;
-    contract.emission_days.update(&record)?;
-    Ok(record)
-}
-
-/// Records a failed Metadosis of `day`. `nods_minor` of the limit covers Nod loads, so the
-/// Promis Limit gets only the rest of the limit. Returns that rest.
-pub fn record_metadosis_failed(
-    storage: StorageHandle<'_>,
-    day: u32,
-    nods_minor: U256,
-) -> Result<(EmissionDay, U256)> {
-    let contract = EmissionContract::new(storage);
-    let mut record = contract
-        .emission_days
-        .get(day)?
-        .ok_or(EmissionError::EmissionDayNotFound)?;
-    if record.metadosis_state != metadosis_state::PENDING {
-        return Err(EmissionError::InvalidMetadosisStateTransition {
-            day,
-            from_state: record.metadosis_state,
-            to_state: metadosis_state::FAILED,
-        }
-        .into());
-    }
-    let nods = u128::try_from(nods_minor.min(U256::from(record.metadosis_limit)))
-        .map_err(|_| EmissionError::AmountOverflow)?;
-    let rest = record.metadosis_limit - nods;
-    let returned = U256::from(rest);
-    record.desis_limit = 0;
-    record.nods = nods;
-    record.promis_limit = record
-        .promis_limit
-        .checked_add(rest)
-        .ok_or(EmissionError::AmountOverflow)?;
-    record.metadosis_state = metadosis_state::FAILED;
-    contract.emission_days.update(&record)?;
-    Ok((record, returned))
-}
-
-/// Moves reward-pool rounding residue into the day's `promis_limit` ledger bucket.
-///
-/// Requires an existing `Processing` day and preserves conservation, including the unsettled
-/// Metadosis allocation while it is pending. The caller must atomically credit the actual
-/// Promis limit and finalize its reward job; this function only updates the Emission ledger.
-pub fn record_reward_pool_residue(
-    storage: StorageHandle<'_>,
-    day: u32,
-    pool: RewardPool,
-    residue: U256,
-) -> Result<EmissionDay> {
-    let contract = EmissionContract::new(storage);
-    let mut record = contract
-        .emission_days
-        .get(day)?
-        .ok_or(EmissionError::EmissionDayNotFound)?;
-    if record.state != emission_day_state::PROCESSING {
-        return Err(EmissionError::InvalidStateTransition {
-            day,
-            from_state: record.state,
-            to_state: emission_day_state::PROCESSING,
-        }
-        .into());
-    }
-    // EmissionDay stores protocol-unit buckets in u128; reject values outside that bound.
-    let residue_u128 = to_u128_checked(residue)?;
-    let bucket = match pool {
-        RewardPool::Validator => &mut record.validators,
-        RewardPool::Waa => &mut record.waa,
-        RewardPool::Sra => &mut record.sra,
-        RewardPool::Cca => &mut record.cca,
-    };
-    *bucket = bucket
-        .checked_sub(residue_u128)
-        .ok_or(EmissionError::AmountOverflow)?;
-    record.promis_limit = record
-        .promis_limit
-        .checked_add(residue_u128)
-        .ok_or(EmissionError::AmountOverflow)?;
-    let unsettled = match record.metadosis_state {
-        metadosis_state::PENDING => record.metadosis_limit,
-        metadosis_state::COMPLETED | metadosis_state::CANCELED | metadosis_state::FAILED => 0,
-        from_state => {
-            return Err(EmissionError::InvalidMetadosisStateTransition {
-                day,
-                from_state,
-                to_state: metadosis_state::COMPLETED,
-            }
-            .into());
-        }
-    };
-    let landed_sum = record
-        .landed_sum()
-        .and_then(|sum| sum.checked_add(unsettled))
-        .ok_or(EmissionError::AmountOverflow)?;
-    if landed_sum != record.emission_limit {
-        return Err(EmissionError::ConservationInvariantViolated {
-            day,
-            expected_limit: record.emission_limit,
-            landed_sum,
-        }
-        .into());
-    }
-    contract.emission_days.update(&record)?;
-    Ok(record)
-}
-
-/// Finalizes an `EmissionDay` into `Completed` after verifying the conservation invariant.
-pub fn complete_day_emission_limit(storage: StorageHandle<'_>, day: u32) -> Result<EmissionDay> {
-    let contract = EmissionContract::new(storage);
-    let mut record = contract
-        .emission_days
-        .get(day)?
-        .ok_or(EmissionError::EmissionDayNotFound)?;
-    if record.state == emission_day_state::COMPLETED {
-        return Ok(record);
-    }
-    if record.state != emission_day_state::PROCESSING {
-        return Err(EmissionError::InvalidStateTransition {
-            day,
-            from_state: record.state,
-            to_state: emission_day_state::COMPLETED,
-        }
-        .into());
-    }
-    if record.metadosis_state == metadosis_state::PENDING {
-        return Err(EmissionError::InvalidMetadosisStateTransition {
-            day,
-            from_state: record.metadosis_state,
-            to_state: metadosis_state::COMPLETED,
-        }
-        .into());
-    }
-    check_conservation(&record)?;
-    record.state = emission_day_state::COMPLETED;
-    contract.emission_days.update(&record)?;
-    Ok(record)
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use outbe_primitives::error::PrecompileError;
     use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 
-    fn assert_emission_error(actual: PrecompileError, expected: EmissionError) {
-        match (actual, PrecompileError::from(expected)) {
-            (PrecompileError::RevertBytes(actual), PrecompileError::RevertBytes(expected)) => {
-                assert_eq!(actual, expected);
-            }
-            (
-                PrecompileError::FatalWithCause(actual),
-                PrecompileError::FatalWithCause(expected),
-            ) => {
-                assert_eq!(actual.to_string(), expected.to_string());
-            }
-            (actual, expected) => panic!("expected {expected:?}, got {actual:?}"),
-        }
-    }
+    const DAY: u32 = 20261022;
 
-    #[test]
-    fn the_record_of_e_accepts_a_utc_date_and_rejects_an_invalid_one() {
-        let mut provider = HashMapStorageProvider::new(1);
-        let storage = StorageHandle::new(&mut provider);
-        for day in [20240229, 20261231] {
-            link_wwd(storage.clone(), day, WorldwideDay::new(0)).unwrap();
-        }
-        for day in [20230229, 20261301, 20261232, 0] {
-            let error = link_wwd(storage.clone(), day, WorldwideDay::new(0)).unwrap_err();
-            assert_emission_error(error, EmissionError::InvalidEmissionDay { day });
-        }
-    }
-
-    #[test]
-    fn link_wwd_is_idempotent_and_rejects_conflicts_or_allocated_days() {
-        let mut provider = HashMapStorageProvider::new(1);
-        let storage = StorageHandle::new(&mut provider);
-
-        let day = 20261022;
-        let wwd = WorldwideDay::new(20261001);
-        link_wwd(storage.clone(), day, wwd).unwrap();
-        // Idempotent repeat:
-        link_wwd(storage.clone(), day, wwd).unwrap();
-
-        let record = get_emission_day(storage.clone(), day).unwrap().unwrap();
-        assert_eq!(record.wwd, wwd);
-        assert_eq!(record.state, emission_day_state::PENDING);
-        assert_eq!(
-            record.metadosis_start,
-            compute_metadosis_start(day).unwrap()
+    /// A started day whose four pools gave out 40, 39, 40 and 0 of their 40 each.
+    fn started_day(storage: StorageHandle<'_>) {
+        let record = EmissionDay::new(
+            DAY,
+            WorldwideDay::new(20261021),
+            compute_metadosis_start(DAY).unwrap(),
+            1_000,
+            [40, 40, 40, 40, 840],
         );
-
-        // Conflicting WWD is rejected:
-        let err = link_wwd(storage.clone(), day, WorldwideDay::new(20261002)).unwrap_err();
-        assert!(matches!(
-            err,
-            outbe_primitives::error::PrecompileError::RevertBytes(_)
-        ));
-
-        // Empty day shell (`wwd = 0`) can be linked while Pending, then rejected once allocated:
-        let empty_day = 20261023;
-        ensure_emission_day_shell(storage.clone(), empty_day).unwrap();
-        link_wwd(storage.clone(), empty_day, WorldwideDay::new(20261002)).unwrap();
-
-        record_day_allocation(
-            storage.clone(),
-            empty_day,
-            DayAllocationAmounts {
-                emission_limit: U256::from(100u64),
-                metadosis_limit: U256::from(84u64),
-                validators: U256::from(4u64),
-                waa: U256::from(4u64),
-                sra: U256::from(4u64),
-                cca: U256::from(4u64),
-                promis_limit: U256::ZERO,
-            },
-        )
-        .unwrap();
-        assert!(link_wwd(storage, empty_day, WorldwideDay::new(20261003)).is_err());
-    }
-
-    #[test]
-    fn conservation_invariant_checked_before_completed() {
-        let mut provider = HashMapStorageProvider::new(1);
-        let storage = StorageHandle::new(&mut provider);
-        let day = 20261001;
-
-        record_day_allocation(
-            storage.clone(),
-            day,
-            DayAllocationAmounts {
-                emission_limit: U256::from(1000u64),
-                metadosis_limit: U256::from(840u64),
-                validators: U256::from(40u64),
-                waa: U256::from(40u64),
-                sra: U256::from(40u64),
-                cca: U256::from(40u64),
-                promis_limit: U256::ZERO,
-            },
-        )
-        .unwrap();
-
-        // Cannot complete while metadosis_state is still Pending:
-        assert!(complete_day_emission_limit(storage.clone(), day).is_err());
-
-        // Complete empty-day metadosis (routes 840 -> promis_limit):
-        record_metadosis_completed(
-            storage.clone(),
-            day,
-            MetadosisCompletedAmounts {
-                desis_limit: U256::ZERO,
-                nods: U256::ZERO,
-                promis_limit_added: U256::from(840u64),
-            },
-        )
-        .unwrap();
-
-        // Conservation holds: 40+40+40+40+0+840 == 1000
-        let completed = complete_day_emission_limit(storage.clone(), day).unwrap();
-        assert_eq!(completed.state, emission_day_state::COMPLETED);
-        assert_eq!(completed.promis_limit, 840);
-    }
-
-    #[test]
-    fn day_emission_limit_states() {
-        let mut provider = HashMapStorageProvider::new(1);
-        let storage = StorageHandle::new(&mut provider);
-        let amounts = DayAllocationAmounts {
-            emission_limit: U256::from(100u64),
-            metadosis_limit: U256::from(84u64),
-            validators: U256::from(4u64),
-            waa: U256::from(4u64),
-            sra: U256::from(4u64),
-            cca: U256::from(4u64),
-            promis_limit: U256::ZERO,
-        };
-
-        let day = 20261001;
-        let shell = ensure_emission_day_shell(storage.clone(), day).unwrap();
-        assert_eq!(shell.state, emission_day_state::PENDING);
-        assert_emission_error(
-            complete_day_emission_limit(storage.clone(), day).unwrap_err(),
-            EmissionError::InvalidStateTransition {
-                day,
-                from_state: emission_day_state::PENDING,
-                to_state: emission_day_state::COMPLETED,
-            },
-        );
-        let allocated = record_day_allocation(storage.clone(), day, amounts).unwrap();
-        assert_eq!(allocated.state, emission_day_state::PROCESSING);
-        record_metadosis_failed(storage.clone(), day, U256::ZERO).unwrap();
-        let completed = complete_day_emission_limit(storage.clone(), day).unwrap();
-        assert_eq!(completed.state, emission_day_state::COMPLETED);
-
-        let failed_day = 20261002;
-        let failed =
-            record_failed_day_allocation(storage.clone(), failed_day, U256::from(100u64)).unwrap();
-        assert_eq!(failed.state, emission_day_state::PROCESSING);
-        assert_eq!(failed.promis_limit, 100);
-
-        let unknown_state = 20261003;
-        let mut record = EmissionDay::new_pending(unknown_state, WorldwideDay::new(0), 1);
-        record.state = 3;
         put_emission_day(storage.clone(), &record).unwrap();
-        let expected = EmissionError::DayAlreadyAllocated {
-            day: unknown_state,
-            state: 3,
-        };
-        assert_emission_error(
-            record_day_allocation(storage.clone(), unknown_state, amounts).unwrap_err(),
-            expected,
-        );
-        assert_emission_error(
-            record_failed_day_allocation(storage.clone(), unknown_state, U256::from(100u64))
-                .unwrap_err(),
-            expected,
-        );
-        assert_emission_error(
-            complete_day_emission_limit(storage, unknown_state).unwrap_err(),
-            EmissionError::InvalidStateTransition {
-                day: unknown_state,
-                from_state: 3,
-                to_state: emission_day_state::COMPLETED,
-            },
-        );
+        record_day_started(storage.clone(), DAY).unwrap();
+        for (pool, allocated) in [
+            (RewardPool::Validator, 40),
+            (RewardPool::Waa, 39),
+            (RewardPool::Sra, 40),
+            (RewardPool::Cca, 0),
+        ] {
+            record_reward_pool(storage.clone(), DAY, pool, U256::from(allocated)).unwrap();
+        }
+    }
+
+    fn metadosis_amounts() -> MetadosisAmounts {
+        MetadosisAmounts {
+            nominal_amount: U256::from(1_000),
+            lysis_limit: U256::from(320),
+            nods: U256::from(320),
+            desis_limit: U256::from(900),
+        }
     }
 
     #[test]
-    fn day_emission_limit_rule_holds() {
+    fn the_record_completes_when_desis_ends_after_metadosis() {
         let mut provider = HashMapStorageProvider::new(1);
         let storage = StorageHandle::new(&mut provider);
-        let amounts = DayAllocationAmounts {
-            emission_limit: U256::from(100u64),
-            metadosis_limit: U256::from(84u64),
-            validators: U256::from(4u64),
-            waa: U256::from(4u64),
-            sra: U256::from(4u64),
-            cca: U256::from(4u64),
-            promis_limit: U256::ZERO,
-        };
+        started_day(storage.clone());
 
-        let day = 20261001;
-        record_day_allocation(storage.clone(), day, amounts).unwrap();
-        record_metadosis_failed(storage.clone(), day, U256::ZERO).unwrap();
-        let completed = complete_day_emission_limit(storage.clone(), day).unwrap();
-        assert_eq!(completed.landed_sum(), Some(completed.emission_limit));
+        let record = record_metadosis_completed(storage.clone(), DAY, metadosis_amounts()).unwrap();
+        assert_eq!(record.state, emission_day_state::PROCESSING);
+        assert_eq!(record.promis_limit, 41 + 520);
 
-        let broken = 20261002;
-        record_day_allocation(storage.clone(), broken, amounts).unwrap();
-        record_metadosis_failed(storage.clone(), broken, U256::ZERO).unwrap();
-        let mut record = get_emission_day(storage.clone(), broken).unwrap().unwrap();
-        record.validators += 1;
-        put_emission_day(storage.clone(), &record).unwrap();
-        let mismatch = EmissionError::ConservationInvariantViolated {
-            day: broken,
-            expected_limit: 100,
-            landed_sum: 101,
-        };
-
-        let error = complete_day_emission_limit(storage.clone(), broken).unwrap_err();
-        assert_eq!(
-            error.pass_failure(),
-            outbe_primitives::error::PassFailure::Propagate
-        );
-        assert_emission_error(error, mismatch);
-        let error =
-            record_reward_pool_residue(storage.clone(), broken, RewardPool::Waa, U256::from(1))
-                .unwrap_err();
-        assert_emission_error(error, mismatch);
-        assert_eq!(get_emission_day(storage, broken).unwrap(), Some(record));
+        // The Desis limit took the Promis Limit of older days, so the net of the day is negative.
+        let record = record_desis_completed(storage, DAY, U256::from(700)).unwrap();
+        assert_eq!(record.state, emission_day_state::COMPLETED);
+        assert_eq!(record.desis_state, desis_state::COMPLETED);
+        assert_eq!(record.intexes, 700);
+        assert_eq!(record.promis_limit, 41 + 520 - 700);
+        check_conservation(&record).unwrap();
     }
 
     #[test]
-    fn reward_residue_moves_each_pool_before_or_after_metadosis() {
-        for settle_metadosis_first in [false, true] {
+    fn a_desis_that_ended_first_completes_the_record_at_the_end_of_metadosis() {
+        for end in [record_desis_canceled, record_desis_failed] {
             let mut provider = HashMapStorageProvider::new(1);
             let storage = StorageHandle::new(&mut provider);
-            let day = 20261001;
-            record_day_allocation(
-                storage.clone(),
-                day,
-                DayAllocationAmounts {
-                    emission_limit: U256::from(100),
-                    metadosis_limit: U256::from(60),
-                    validators: U256::from(10),
-                    waa: U256::from(10),
-                    sra: U256::from(10),
-                    cca: U256::from(10),
-                    promis_limit: U256::ZERO,
-                },
-            )
-            .unwrap();
-            if settle_metadosis_first {
-                record_metadosis_completed(
-                    storage.clone(),
-                    day,
-                    MetadosisCompletedAmounts {
-                        desis_limit: U256::ZERO,
-                        nods: U256::ZERO,
-                        promis_limit_added: U256::from(60u64),
-                    },
-                )
-                .unwrap();
-            }
-            for (index, pool) in [
-                RewardPool::Validator,
-                RewardPool::Waa,
-                RewardPool::Sra,
-                RewardPool::Cca,
-            ]
-            .into_iter()
-            .enumerate()
-            {
-                let before = get_emission_day(storage.clone(), day).unwrap().unwrap();
-                let after =
-                    record_reward_pool_residue(storage.clone(), day, pool, U256::from(3)).unwrap();
-                let mut expected = before;
-                match pool {
-                    RewardPool::Validator => expected.validators -= 3,
-                    RewardPool::Waa => expected.waa -= 3,
-                    RewardPool::Sra => expected.sra -= 3,
-                    RewardPool::Cca => expected.cca -= 3,
-                }
-                expected.promis_limit += 3;
-                assert_eq!(after, expected);
-                assert_eq!(
-                    after.promis_limit,
-                    if settle_metadosis_first { 60 } else { 0 } + 3 * (index as u128 + 1)
-                );
-                assert_eq!(get_emission_day(storage.clone(), day).unwrap(), Some(after));
-            }
-            if !settle_metadosis_first {
-                record_metadosis_failed(storage.clone(), day, U256::ZERO).unwrap();
-            }
-            let completed = complete_day_emission_limit(storage, day).unwrap();
-            assert_eq!(completed.promis_limit, 72);
-            assert_eq!(completed.landed_sum(), Some(100));
+            started_day(storage.clone());
+
+            let record = end(storage.clone(), DAY).unwrap();
+            assert_eq!(record.state, emission_day_state::PROCESSING);
+            assert_eq!(record.intexes, 0);
+            assert!(end(storage.clone(), DAY).is_err(), "Desis ends once");
+
+            let (record, rest) =
+                record_metadosis_failed(storage.clone(), DAY, metadosis_amounts()).unwrap();
+            assert_eq!(rest, U256::from(520));
+            assert_eq!(record.state, emission_day_state::COMPLETED);
+            assert_eq!(record.desis_limit, 0);
+            assert_eq!(record.promis_limit, 41 + 520);
+            check_conservation(&record).unwrap();
+            assert!(record_desis_completed(storage, DAY, U256::ZERO).is_err());
         }
     }
 
     #[test]
-    fn reward_residue_requires_existing_processing_day_even_for_zero() {
+    fn a_pool_result_is_written_once() {
         let mut provider = HashMapStorageProvider::new(1);
         let storage = StorageHandle::new(&mut provider);
-        let day = 20261001;
-        let error = record_reward_pool_residue(storage.clone(), day, RewardPool::Waa, U256::ZERO)
-            .unwrap_err();
-        assert_emission_error(error, EmissionError::EmissionDayNotFound);
-        assert_eq!(get_emission_day(storage.clone(), day).unwrap(), None);
-
-        for state in [
-            emission_day_state::PENDING,
-            emission_day_state::COMPLETED,
-            u8::MAX,
-        ] {
-            let mut record = EmissionDay::new_pending(day, WorldwideDay::new(0), 1);
-            record.state = state;
-            put_emission_day(storage.clone(), &record).unwrap();
-            let error =
-                record_reward_pool_residue(storage.clone(), day, RewardPool::Waa, U256::ZERO)
-                    .unwrap_err();
-            assert_emission_error(
-                error,
-                EmissionError::InvalidStateTransition {
-                    day,
-                    from_state: state,
-                    to_state: emission_day_state::PROCESSING,
-                },
-            );
-            assert_eq!(
-                get_emission_day(storage.clone(), day).unwrap(),
-                Some(record)
-            );
-        }
-    }
-
-    #[test]
-    fn reward_residue_checks_narrowing_underflow_and_promis_overflow_before_writing() {
-        let mut provider = HashMapStorageProvider::new(1);
-        let storage = StorageHandle::new(&mut provider);
-        let day = 20261001;
-        let mut record = EmissionDay::new_pending(day, WorldwideDay::new(0), 1);
-        record.state = emission_day_state::PROCESSING;
-        record.metadosis_state = metadosis_state::COMPLETED;
-        record.emission_limit = u128::MAX;
-        record.validators = u128::MAX;
-        put_emission_day(storage.clone(), &record).unwrap();
-        for (pool, residue) in [
-            (RewardPool::Validator, U256::from(u128::MAX) + U256::from(1)),
-            (RewardPool::Waa, U256::from(1)),
-            (RewardPool::Sra, U256::from(1)),
-            (RewardPool::Cca, U256::from(1)),
-        ] {
-            let error =
-                record_reward_pool_residue(storage.clone(), day, pool, residue).unwrap_err();
-            assert_emission_error(error, EmissionError::AmountOverflow);
-            assert_eq!(
-                get_emission_day(storage.clone(), day).unwrap(),
-                Some(record)
-            );
-        }
-        let after = record_reward_pool_residue(
-            storage.clone(),
-            day,
+        started_day(storage.clone());
+        let before = get_emission_day(storage.clone(), DAY).unwrap().unwrap();
+        for pool in [
             RewardPool::Validator,
-            U256::from(u128::MAX),
-        )
-        .unwrap();
-        assert_eq!(after.validators, 0);
-        assert_eq!(after.promis_limit, u128::MAX);
-        check_conservation(&after).unwrap();
-
-        record.promis_limit = u128::MAX;
-        put_emission_day(storage.clone(), &record).unwrap();
-        let error =
-            record_reward_pool_residue(storage.clone(), day, RewardPool::Validator, U256::from(1))
-                .unwrap_err();
-        assert_emission_error(error, EmissionError::AmountOverflow);
-        assert_eq!(get_emission_day(storage, day).unwrap(), Some(record));
-    }
-
-    #[test]
-    fn reward_residue_rejects_corrupt_conservation_and_metadosis_state() {
-        let mut provider = HashMapStorageProvider::new(1);
-        let storage = StorageHandle::new(&mut provider);
-        let day = 20261001;
-        let mut record = EmissionDay::new_pending(day, WorldwideDay::new(0), 1);
-        record.state = emission_day_state::PROCESSING;
-        record.emission_limit = 100;
-        record.metadosis_limit = 80;
-        record.waa = 10;
-        for metadosis_state in [metadosis_state::PENDING, metadosis_state::COMPLETED] {
-            record.metadosis_state = metadosis_state;
-            put_emission_day(storage.clone(), &record).unwrap();
-            let error =
-                record_reward_pool_residue(storage.clone(), day, RewardPool::Waa, U256::from(1))
-                    .unwrap_err();
-            assert_emission_error(
-                error,
-                EmissionError::ConservationInvariantViolated {
-                    day,
-                    expected_limit: 100,
-                    landed_sum: if metadosis_state == metadosis_state::PENDING {
-                        90
-                    } else {
-                        10
-                    },
-                },
-            );
-            assert_eq!(
-                get_emission_day(storage.clone(), day).unwrap(),
-                Some(record)
-            );
+            RewardPool::Waa,
+            RewardPool::Sra,
+            RewardPool::Cca,
+        ] {
+            let err = record_reward_pool(storage.clone(), DAY, pool, U256::ZERO).unwrap_err();
+            assert!(matches!(
+                err,
+                outbe_primitives::error::PrecompileError::FatalWithCause(_)
+            ));
         }
-        record.metadosis_state = u8::MAX;
-        put_emission_day(storage.clone(), &record).unwrap();
-        assert!(
-            record_reward_pool_residue(storage.clone(), day, RewardPool::Waa, U256::ZERO).is_err()
-        );
-        assert_eq!(get_emission_day(storage, day).unwrap(), Some(record));
+        assert_eq!(get_emission_day(storage, DAY).unwrap().unwrap(), before);
     }
 
     #[test]
-    fn record_metadosis_canceled_requires_pending_zero_limit_and_sets_canceled() {
+    fn a_record_that_breaks_the_rule_cannot_complete() {
         let mut provider = HashMapStorageProvider::new(1);
         let storage = StorageHandle::new(&mut provider);
-        let day = 20261001;
+        started_day(storage.clone());
+        record_metadosis_completed(storage.clone(), DAY, metadosis_amounts()).unwrap();
+        let mut record = get_emission_day(storage.clone(), DAY).unwrap().unwrap();
+        record.cca = 1;
+        put_emission_day(storage.clone(), &record).unwrap();
 
-        record_day_allocation(
-            storage.clone(),
-            day,
-            DayAllocationAmounts {
-                emission_limit: U256::from(100u64),
-                metadosis_limit: U256::from(20u64),
-                validators: U256::from(20u64),
-                waa: U256::from(20u64),
-                sra: U256::from(20u64),
-                cca: U256::from(20u64),
-                promis_limit: U256::ZERO,
-            },
-        )
-        .unwrap();
-
-        let err = record_metadosis_canceled(storage.clone(), day).unwrap_err();
-        assert_emission_error(
-            err,
-            EmissionError::InvalidMetadosisStateTransition {
-                day,
-                from_state: metadosis_state::PENDING,
-                to_state: metadosis_state::CANCELED,
-            },
-        );
-
-        let mut zero_limit_record = get_emission_day(storage.clone(), day).unwrap().unwrap();
-        zero_limit_record.metadosis_limit = 0;
-        zero_limit_record.promis_limit = 20;
-        put_emission_day(storage.clone(), &zero_limit_record).unwrap();
-
-        let canceled = record_metadosis_canceled(storage.clone(), day).unwrap();
-        assert_eq!(canceled.metadosis_state, metadosis_state::CANCELED);
-        let completed = complete_day_emission_limit(storage.clone(), day).unwrap();
-        assert_eq!(completed.state, emission_day_state::COMPLETED);
-        assert_eq!(completed.metadosis_state, metadosis_state::CANCELED);
-
-        let repeat_err = record_metadosis_canceled(storage, day).unwrap_err();
-        assert_emission_error(
-            repeat_err,
-            EmissionError::InvalidMetadosisStateTransition {
-                day,
-                from_state: metadosis_state::CANCELED,
-                to_state: metadosis_state::CANCELED,
-            },
+        let err = record_desis_completed(storage.clone(), DAY, U256::from(700)).unwrap_err();
+        assert!(err.to_string().contains("onservation"), "{err}");
+        assert_eq!(
+            get_emission_day(storage, DAY).unwrap().unwrap().state,
+            emission_day_state::PROCESSING
         );
     }
 }

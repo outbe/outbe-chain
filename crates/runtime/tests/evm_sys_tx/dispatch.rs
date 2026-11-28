@@ -79,6 +79,7 @@ fn dispatch_rejects_out_of_range_stage_step_indices() {
 #[test]
 fn dispatch_cycle_tick_records_preloaded_proposer() {
     let mut provider = configured_storage(1, 1_700_000_000);
+    provider.set_genesis_timestamp(1_700_000_000);
     provider.enable_production_storage_gas_metering();
     provider.set_gas_limit(outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT);
     provider.enable_scoped_mutation_frame(

@@ -2,6 +2,33 @@ use super::receipts_and_gas_calibration_cleanup::*;
 use super::receipts_and_gas_support::*;
 use super::*;
 
+/// The record of `day`, started as the Cycle leaves it and linked as its WWD links it, so an
+/// auction of the day can end.
+fn record_started_day(storage: &StorageHandle<'_>, day: EmissionDate) {
+    if outbe_emission::api::get_emission_day(storage.clone(), day.value())
+        .unwrap()
+        .is_some()
+    {
+        return;
+    }
+    let wwd = outbe_system_common::time::previous_date_key(day.value()).unwrap();
+    let mut record = outbe_emission::EmissionDay::new(
+        day.value(),
+        outbe_system_common::time::WorldwideDay::new(wwd),
+        outbe_emission::api::compute_metadosis_start(day.value()).unwrap(),
+        0,
+        [0; 5],
+    );
+    record.state = outbe_emission::schema::emission_day_state::PROCESSING;
+    outbe_emission::api::put_emission_day(storage.clone(), &record).unwrap();
+}
+
+/// Takes `day` into the Desis schedule after its record started.
+fn take_day(storage: &StorageHandle<'_>, day: EmissionDate) {
+    record_started_day(storage, day);
+    outbe_desis::test_support::take_day(storage.clone(), day).unwrap();
+}
+
 #[test]
 fn calibration_populated_auction_handlers() {
     let (_, samples, logs, _) = populated_auction(16);
@@ -37,15 +64,12 @@ fn populated_auction(chain_count: u32) -> Calibration {
         |storage| {
             seed_cycle_tick_genesis(storage.clone(), GENESIS, proposer).unwrap();
             let day = EmissionDate::new(20240101);
+            record_started_day(&storage, day);
             seed_intex_targets(&storage, &targets, &[day, EmissionDate::new(20240102)]);
             let auction = outbe_desis::DesisContract::new(storage.clone());
             auction
                 .auction_stage
                 .write(&day, outbe_desis::AuctionStage::CollectingBids as u8)
-                .unwrap();
-            auction
-                .auction_at
-                .write(&day, u32::try_from(timestamp).unwrap())
                 .unwrap();
             auction.gate_active_count.write(1).unwrap();
             auction.gate_active_at.write(&0, day.value()).unwrap();
@@ -76,9 +100,8 @@ fn populated_auction(chain_count: u32) -> Calibration {
                 }
             }
             auction.day_bid_count.write(&day, chain_count * 2).unwrap();
-            outbe_desis::api::schedule_auction(storage.clone(), EmissionDate::new(20240102))
-                .unwrap();
-            outbe_desis::api::set_desis_limit(
+            take_day(&storage, EmissionDate::new(20240102));
+            outbe_desis::api::start_desis(
                 storage.clone(),
                 outbe_desis::api::DesisLimit {
                     emission_day: EmissionDate::new(20240102),
@@ -124,9 +147,8 @@ fn calibration_live_auction_start() {
                 .utc_day_vwap_last_finalized
                 .write(20240101)
                 .unwrap();
-            outbe_desis::api::schedule_auction(storage.clone(), EmissionDate::new(20240101))
-                .unwrap();
-            outbe_desis::api::set_desis_limit(
+            take_day(&storage, EmissionDate::new(20240101));
+            outbe_desis::api::start_desis(
                 storage.clone(),
                 outbe_desis::api::DesisLimit {
                     emission_day: EmissionDate::new(20240101),
@@ -181,7 +203,7 @@ impl DueStep {
             Self::Start => 20240101,
             Self::CommitEnd => 20231231,
             Self::RevealEnd => 20231230,
-            Self::Waiting => 20231229,
+            Self::Waiting => 20240102,
         })
     }
 
@@ -194,31 +216,20 @@ impl DueStep {
         }
     }
 
-    /// Put a started day in the schedule. The brief schedules `Start` itself.
-    fn schedule(self, storage: &StorageHandle<'_>, midnight: u64) {
-        let (stage, anchor) = match self {
+    /// Put a started day in the schedule; its windows come from the day. The Desis limit
+    /// schedules `Start` itself.
+    fn schedule(self, storage: &StorageHandle<'_>) {
+        let stage = match self {
             Self::Start => return,
-            Self::CommitEnd => (
-                outbe_desis::AuctionStage::CommittingBids,
-                midnight - SECONDS_PER_DAY,
-            ),
-            Self::RevealEnd => (
-                outbe_desis::AuctionStage::RevealingBids,
-                midnight - 2 * SECONDS_PER_DAY,
-            ),
-            // Started with `RevealEnd`, so it is still inside its last clearing time.
-            Self::Waiting => (
-                outbe_desis::AuctionStage::CollectingBids,
-                midnight - 2 * SECONDS_PER_DAY,
-            ),
+            Self::CommitEnd => outbe_desis::AuctionStage::CommittingBids,
+            Self::RevealEnd => outbe_desis::AuctionStage::RevealingBids,
+            // Its auction starts after this run, so nothing is due.
+            Self::Waiting => outbe_desis::AuctionStage::CollectingBids,
         };
         let day = self.day();
+        record_started_day(storage, day);
         let auction = outbe_desis::DesisContract::new(storage.clone());
         auction.auction_stage.write(&day, stage as u8).unwrap();
-        auction
-            .auction_at
-            .write(&day, u32::try_from(anchor).unwrap())
-            .unwrap();
         auction
             .config_promis_load_minor
             .write(&day, U256::from(1_000_000))
@@ -268,8 +279,8 @@ fn due_auctions(steps: &[DueStep]) -> (u64, Vec<Log>) {
                 .unwrap();
             for step in steps {
                 if matches!(step, DueStep::Start) {
-                    outbe_desis::api::schedule_auction(storage.clone(), step.day()).unwrap();
-                    outbe_desis::api::set_desis_limit(
+                    take_day(&storage, step.day());
+                    outbe_desis::api::start_desis(
                         storage.clone(),
                         outbe_desis::api::DesisLimit {
                             emission_day: step.day(),
@@ -279,7 +290,7 @@ fn due_auctions(steps: &[DueStep]) -> (u64, Vec<Log>) {
                     )
                     .unwrap();
                 }
-                step.schedule(&storage, midnight);
+                step.schedule(&storage);
             }
             for spec in outbe_cycle::tasks::ACTIVE_TASKS {
                 outbe_cycle::schema::Cycle::new(storage.clone())
@@ -383,14 +394,11 @@ fn calibration_four_due_auctions_at_midnight() {
 fn seed_accepted_auction(storage: StorageHandle<'_>, timestamp: u64, batches: u16) {
     let day = EmissionDate::new(20240101);
     seed_cycle_tick_genesis(storage.clone(), GENESIS, test_evm_signer().address()).unwrap();
+    record_started_day(&storage, day);
     let auction = outbe_desis::DesisContract::new(storage.clone());
     auction
         .auction_stage
         .write(&day, outbe_desis::AuctionStage::CollectingBids as u8)
-        .unwrap();
-    auction
-        .auction_at
-        .write(&day, u32::try_from(timestamp).unwrap())
         .unwrap();
     auction.gate_active_count.write(1).unwrap();
     auction.gate_active_at.write(&0, day.value()).unwrap();
@@ -493,7 +501,9 @@ fn accepted_1088_bid_auction_completes_before_incremental_cycle_cleanup() {
 #[test]
 fn accepted_bid_deadlines_retire_within_advance_budget() {
     let proposer = test_evm_signer().address();
-    let timestamp = GENESIS + SECONDS_PER_DAY + 60;
+    // The last clearing time of 20240101: its auction starts at 00:00 of 2024-01-02, and the
+    // clearing ends 8 hours before its issuance window ends three days later.
+    let timestamp = GENESIS + 3 * SECONDS_PER_DAY + 16 * 3_600 + 60;
     for batches in [1, 17] {
         let (_, samples, logs, _) = run_prefix_checked(
             (
@@ -505,10 +515,8 @@ fn accepted_bid_deadlines_retire_within_advance_budget() {
                 seed_accepted_auction(storage.clone(), timestamp, batches);
                 let auction = outbe_desis::DesisContract::new(storage);
                 let day = EmissionDate::new(20240101);
-                auction
-                    .auction_at
-                    .write(&day, u32::try_from(GENESIS - 2 * SECONDS_PER_DAY).unwrap())
-                    .unwrap();
+                // The later days are taken already, so the run measures the retirement alone.
+                auction.next_auction_day.write(20240105).unwrap();
                 auction.sched_active_count.write(1).unwrap();
                 auction.sched_active_at.write(&0, day.value()).unwrap();
                 auction.sched_active_slot.write(&day, 1).unwrap();

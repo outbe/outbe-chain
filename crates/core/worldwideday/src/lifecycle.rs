@@ -66,63 +66,52 @@ pub fn compute_wwd_schedule(wwd: WorldwideDay) -> Result<(NewWwdSchedule, u64)> 
     ))
 }
 
-pub fn open_worldwide_day_for_date(ctx: &BlockRuntimeContext<'_>, wwd: WorldwideDay) -> Result<()> {
+pub fn open_worldwide_day_for_date(
+    ctx: &BlockRuntimeContext<'_>,
+    wwd: WorldwideDay,
+) -> Result<bool> {
     let (schedule, _) = compute_wwd_schedule(wwd)?;
-    outbe_emission::api::link_wwd(ctx.storage.clone(), schedule.emission_day, wwd)?;
     let mut factory = WorldwideDayContract::new(ctx.storage.clone());
-    open_worldwide_day(&mut factory, wwd, schedule)?;
-    Ok(())
+    open_worldwide_day(&mut factory, wwd, schedule)
 }
 
-/// Runs the daily `WorldwideDay` lifecycle step (OIP-00343 item 25, step A6).
+/// Runs the `WorldwideDay` step of a Cycle run and returns the WWDs it opened.
 ///
-/// On UTC day `X` (evaluated against the daily cutoff `00:00:00 UTC` of `X`, or
-/// `ctx.block.timestamp` when `last_wwd_advance_day == 0` at genesis):
-/// 1. Seals every pipeline WWD whose `offering_end <= cutoff_ts`.
-/// 2. Creates every open WWD `D` up to `X + 1` (never earlier than `first_wwd_for_genesis`)
-///    whose `offering_end > cutoff_ts`.
-/// 3. Records `last_wwd_advance_day = X` so subsequent hourly ticks on day `X` are no-ops.
+/// 1. Seals every pipeline WWD whose offering ended at or before the block time.
+/// 2. Once per UTC day `X` (or at genesis), opens every WWD `D` up to `X` (never earlier than
+///    `first_wwd_for_genesis`) whose offering has not ended, and records `last_wwd_advance_day = X`.
 ///
-/// The step stores no price: an offer reads the 24-hour VWAP of its hour.
-pub fn advance_worldwide_days(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
+/// The caller makes the record of emission day `D + 1` for each opened WWD in the same checkpoint.
+pub fn advance_worldwide_days(ctx: &BlockRuntimeContext<'_>) -> Result<Vec<WorldwideDay>> {
     validate_wwd_timestamp(ctx.block.timestamp)?;
-    let block_utc_day = timestamp_to_date_key(ctx.block.timestamp);
-    let factory = WorldwideDayContract::new(ctx.storage.clone());
-    let last_day = factory.last_wwd_advance_day.read()?;
-    if last_day >= block_utc_day {
-        return Ok(());
-    }
-
-    let cutoff_ts =
-        date_key_to_utc_timestamp(block_utc_day).map_err(super::errors::date_step_error)?;
-
-    // 1. Seal every pipeline WWD whose offering window ended at or before 00:00 UTC of day X.
+    let now = ctx.block.timestamp;
     let aggregate = ValidatedWwdAggregate::load_and_validate(ctx.storage.clone())?;
     for current in aggregate.active_records() {
         verify_emission_day_link(&ctx.storage, current.emission_day, current.wwd)?;
-        if current.offering_end <= cutoff_ts {
+        if current.offering_end <= now {
             let mut factory_mut = WorldwideDayContract::new(ctx.storage.clone());
             close_worldwide_day(&mut factory_mut, current.wwd)?;
         }
     }
 
-    // 2. Create open WWDs up to X + 1 (whose forming window starts at 10:00 UTC on day X).
-    open_worldwide_days(ctx, block_utc_day, cutoff_ts, last_day == 0)?;
-
-    // 3. Record completion for UTC day X.
+    let block_utc_day = timestamp_to_date_key(now);
+    let factory = WorldwideDayContract::new(ctx.storage.clone());
+    let last_day = factory.last_wwd_advance_day.read()?;
+    if last_day >= block_utc_day {
+        return Ok(Vec::new());
+    }
+    let opened = open_worldwide_days(ctx, block_utc_day, last_day == 0)?;
     factory.last_wwd_advance_day.write(block_utc_day)?;
-    Ok(())
+    Ok(opened)
 }
 
 fn open_worldwide_days(
     ctx: &BlockRuntimeContext<'_>,
     block_utc_day: u32,
-    cutoff_ts: u64,
     is_initial_run: bool,
-) -> Result<()> {
-    let target_day = next_date_key(block_utc_day).map_err(super::errors::date_step_error)?;
+) -> Result<Vec<WorldwideDay>> {
     let target_ts =
-        date_key_to_utc_timestamp(target_day).map_err(super::errors::date_step_error)?;
+        date_key_to_utc_timestamp(block_utc_day).map_err(super::errors::date_step_error)?;
     let window_span_days = (MAX_PIPELINE_WWDS as u64).saturating_sub(1);
     let earliest_open_ts = target_ts.saturating_sub(window_span_days * SECONDS_PER_DAY);
 
@@ -150,22 +139,24 @@ fn open_worldwide_days(
     };
 
     let factory = WorldwideDayContract::new(ctx.storage.clone());
+    let mut opened = Vec::new();
     let mut wwd_ts = start_ts;
     while wwd_ts <= target_ts {
         let wwd = WorldwideDay::new(timestamp_to_date_key(wwd_ts));
         if factory.worldwide_days.get(wwd)?.is_none() {
             let (schedule, _) = compute_wwd_schedule(wwd)?;
-            if schedule.offering_end > cutoff_ts {
-                open_worldwide_day_for_date(ctx, wwd)?;
+            if schedule.offering_end > ctx.block.timestamp && open_worldwide_day_for_date(ctx, wwd)?
+            {
+                opened.push(wwd);
             }
         }
         wwd_ts = wwd_ts.saturating_add(SECONDS_PER_DAY);
     }
-    Ok(())
+    Ok(opened)
 }
 
 /// Command-bound entry point for `advance_worldwide_days` used by `outbe-cycle` during `ProcessEmissionDay`.
-pub fn advance_worldwide_days_command(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
+pub fn advance_worldwide_days_command(ctx: &BlockRuntimeContext<'_>) -> Result<Vec<WorldwideDay>> {
     run_with_wwd_mutation_binding(
         ctx,
         metadosis_advance_due_binding(
@@ -177,7 +168,9 @@ pub fn advance_worldwide_days_command(ctx: &BlockRuntimeContext<'_>) -> Result<(
 }
 
 /// Command-bound entry point used by `handle_cycle_tick` at activation height.
-pub fn bootstrap_genesis_worldwide_days_command(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
+pub fn bootstrap_genesis_worldwide_days_command(
+    ctx: &BlockRuntimeContext<'_>,
+) -> Result<Vec<WorldwideDay>> {
     run_with_wwd_mutation_binding(
         ctx,
         metadosis_init_genesis_binding(
@@ -191,15 +184,15 @@ pub fn bootstrap_genesis_worldwide_days_command(ctx: &BlockRuntimeContext<'_>) -
 fn run_with_wwd_mutation_binding(
     ctx: &BlockRuntimeContext<'_>,
     binding: alloy_primitives::B256,
-) -> Result<()> {
+) -> Result<Vec<WorldwideDay>> {
     let command_storage = ctx.storage.clone();
     ctx.storage
         .clone()
         .with_scoped_mutation::<CycleLifecyclePurpose, _>(binding, || {
             ValidatedWwdAggregate::load_and_validate(command_storage.clone())?;
-            advance_worldwide_days(ctx)?;
+            let opened = advance_worldwide_days(ctx)?;
             ValidatedWwdAggregate::load_and_validate(command_storage)?;
-            Ok(())
+            Ok(opened)
         })
 }
 

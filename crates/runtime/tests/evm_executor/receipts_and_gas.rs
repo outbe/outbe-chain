@@ -399,14 +399,9 @@ fn cycle_tick_gas_regression_exercises_dense_agentreward_state() {
     outbe_cycle::runtime::take_cycle_gas_samples();
     const GENESIS_TS: u64 = 1_704_067_200;
     use outbe_system_common::time::SECONDS_PER_DAY;
-    // Validators fill the first shared slice; WAA and SRA await a later block.
-    const DENSE_ADDRESS_COUNT: u64 =
-        outbe_agentreward::constants::ACCRUAL_RECIPIENTS_PER_BLOCK as u64 / 2;
+    // The Validator rate is set at 00:00; the WAA and SRA weights wait for the offering end.
+    const DENSE_ADDRESS_COUNT: u64 = 128;
     const DENSE_VALIDATOR_COUNT: u32 = outbe_consensus::bls::MAX_VALIDATORS;
-    assert_eq!(
-        DENSE_VALIDATOR_COUNT,
-        outbe_agentreward::constants::ACCRUAL_RECIPIENTS_PER_BLOCK
-    );
 
     let signer = test_evm_signer();
     let proposer = signer.address();
@@ -541,7 +536,7 @@ fn cycle_tick_gas_regression_exercises_dense_agentreward_state() {
     );
     StorageHandle::enter(&mut provider, |storage| {
         assert_dense_agent_accrual_pending(storage.clone(), prev_day, DENSE_ADDRESS_COUNT)?;
-        assert_dense_validator_settlement(storage.clone(), DENSE_VALIDATOR_COUNT)?;
+        assert_dense_validator_settlement(storage.clone(), prev_day, DENSE_VALIDATOR_COUNT)?;
         let day_record = outbe_emission::api::get_emission_day(storage.clone(), prev_day)?
             .expect("settled EmissionDay must exist");
         assert!(

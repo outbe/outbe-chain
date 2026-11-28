@@ -2,16 +2,12 @@
 //!
 //! The begin-zone CertifiedParentAccounting phase calls this hook.
 //! The call follows the fingerprint check and `record_finalized_participation`.
-//! The hook does the idempotent per-finalized-block work:
-//!
-//! 1. Add `validator_fee_sum` into `day_fee_sum_native`, guarded by
-//!    `block_metadata_counted[fb_hash]`.
-//! 2. Per-block fee ESCROW + participation count, guarded by `fb_hash` /
-//!    `(fb_hash, voter)` composite keys. The hook does NOT pay fees eagerly.
-//!    `block_fees::escrow_block_fee` escrows the `validator_fee_sum` of the
-//!    block (`pending_fees[fb_hash]`, base 2f+1 seeded at `k=0`). The fee settles
-//!    at `N+K` over the inclusion-window voter set. The daily emission top-up
-//!    lands later at the day-boundary settle.
+//! The hook does the idempotent per-finalized-block work: per-block fee ESCROW +
+//! participation count, guarded by `block_metadata_counted[fb_hash]` and
+//! `(fb_hash, voter)` composite keys. The hook does NOT pay fees eagerly.
+//! `block_fees::escrow_block_fee` escrows the `validator_fee_sum` of the
+//! block (`pending_fees[fb_hash]`, base 2f+1 seeded at `k=0`). The fee settles
+//! at `N+K` over the inclusion-window voter set.
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::{
@@ -102,9 +98,8 @@ pub fn record_votes_and_fees(
         return Ok(());
     }
 
-    // The per-day raw fee accumulation still feeds the daily-emission cap.
-    // But the hook now ESCROWS the fees per finalized block (it does not pay them
-    // eagerly), and they settle at N+K. Idempotent via `block_metadata_counted`.
+    // The hook escrows the fees per finalized block, and they settle at N+K.
+    // Idempotent via `block_metadata_counted`.
     if first_seen {
         if fb_day != 0 && fb_day <= rewards.last_sealed_day.read()? {
             return Err(RewardsError::ParticipationAfterDaySealed.into());
@@ -118,11 +113,6 @@ pub fn record_votes_and_fees(
         rewards
             .day_votes_sealed_at_block
             .write(&fb_day, previous_close.max(closes_at))?;
-        let prev_raw = rewards.day_fee_sum_native.read(&fb_day)?;
-        let next_raw = prev_raw
-            .checked_add(validator_fee_sum)
-            .ok_or(RewardsError::DayFeeSumNativeOverflow)?;
-        rewards.day_fee_sum_native.write(&fb_day, next_raw)?;
         rewards.block_metadata_counted.write(&fb_hash, true)?;
     }
 
@@ -169,7 +159,6 @@ pub(crate) fn record_reward_participation(
     let rewards = ctx.storage.contract::<Rewards>();
     let participation_guard = rewards.participation_counted_for_block.get_nested(&fb_hash);
     let day_votes = rewards.day_votes.get_nested(&fb_day);
-    let day_voter_at = rewards.day_voter_at.get_nested(&fb_day);
 
     if !participation_guard.read(&voter)? {
         if fb_day != 0 && fb_day <= rewards.last_sealed_day.read()? {
@@ -185,14 +174,12 @@ pub(crate) fn record_reward_participation(
             .checked_add(U256::from(1))
             .ok_or(RewardsError::DayTotalVotesOverflow)?;
         if prev_count == 0 {
-            // First time we see this voter for this day -> append to
-            // the deterministic ordered voter list.
-            let idx = rewards.day_voter_count.read(&fb_day)?;
-            let next_idx = idx
+            let next_voter_count = rewards
+                .day_voter_count
+                .read(&fb_day)?
                 .checked_add(1)
                 .ok_or(RewardsError::DayVoterCountOverflow)?;
-            day_voter_at.write(&idx, voter)?;
-            rewards.day_voter_count.write(&fb_day, next_idx)?;
+            rewards.day_voter_count.write(&fb_day, next_voter_count)?;
         }
         day_votes.write(&voter, next_count)?;
         rewards.day_total_votes.write(&fb_day, next_total)?;
@@ -250,13 +237,20 @@ mod tests {
                     .unwrap(),
                 U256::from(2)
             );
+            for voter in [VAL_X, VAL_Y] {
+                assert_eq!(
+                    crate::api::validator_weight(&ctx.storage, 20240101, voter).unwrap(),
+                    U256::from(1)
+                );
+            }
             assert_eq!(
-                crate::api::get_day_voters(&ctx, 20240101).unwrap(),
-                vec![(VAL_X, 1), (VAL_Y, 1)]
+                ctx.storage
+                    .contract::<Rewards>()
+                    .day_voter_count
+                    .read(&20240102)
+                    .unwrap(),
+                0
             );
-            assert!(crate::api::get_day_voters(&ctx, 20240102)
-                .unwrap()
-                .is_empty());
         });
     }
 
@@ -329,13 +323,11 @@ mod tests {
             assert_eq!(kmap.read(&VAL_X).unwrap(), 1);
             assert_eq!(kmap.read(&VAL_Y).unwrap(), 1);
             assert_eq!(rewards.late_voter_count.read(&FB_HASH_A).unwrap(), 2);
-            // Daily raw fee accounting (emission-cap input) still accumulates.
-            assert_eq!(rewards.day_fee_sum_native.read(&20240101).unwrap(), fees);
         });
     }
 
     #[test]
-    fn records_per_voter_participation_and_voter_list() {
+    fn records_per_voter_participation_and_voter_count() {
         with_funded_genesis_block(100, |ctx| {
             record_parent_xy(&ctx, FB_HASH_A, 1);
 
@@ -344,11 +336,6 @@ mod tests {
             assert_eq!(day_votes.read(&VAL_X).unwrap(), 1);
             assert_eq!(day_votes.read(&VAL_Y).unwrap(), 1);
             assert_eq!(rewards.day_voter_count.read(&20240101).unwrap(), 2);
-
-            let day_voter_at = rewards.day_voter_at.get_nested(&20240101);
-            // First-seen order: VAL_X at idx 0, VAL_Y at idx 1.
-            assert_eq!(day_voter_at.read(&0u32).unwrap(), VAL_X);
-            assert_eq!(day_voter_at.read(&1u32).unwrap(), VAL_Y);
         });
     }
 
@@ -376,11 +363,6 @@ mod tests {
                 "replay must not duplicate base voters"
             );
             assert_eq!(
-                rewards.day_fee_sum_native.read(&20240101).unwrap(),
-                U256::from(100u64),
-                "replay must not double-count raw fees"
-            );
-            assert_eq!(
                 rewards
                     .day_votes
                     .get_nested(&20240101)
@@ -399,11 +381,6 @@ mod tests {
             record_parent_xy(&ctx, FB_HASH_B, 2);
 
             let rewards = ctx.storage.contract::<Rewards>();
-            // Both blocks contributed 100 -> 200 raw (emission-cap input).
-            assert_eq!(
-                rewards.day_fee_sum_native.read(&20240101).unwrap(),
-                U256::from(200u64)
-            );
             // Each finalized block is escrowed separately under its own fb_hash.
             assert_eq!(
                 rewards.pending_fees.read(&FB_HASH_A).unwrap(),
@@ -433,10 +410,6 @@ mod tests {
             record_genesis_day_parent(&ctx, &meta_with_hash(FB_HASH_A, 1), 100, &[]);
 
             let rewards = ctx.storage.contract::<Rewards>();
-            assert_eq!(
-                rewards.day_fee_sum_native.read(&20240101).unwrap(),
-                U256::from(100u64)
-            );
             // Whole fee escrowed. No base voters -> the entire pool becomes
             // burnable residue at settle.
             assert_eq!(
@@ -484,8 +457,7 @@ mod tests {
     //
     // The test only exercises *duplicate* replays of already-applied
     // events. The test intentionally does NOT cover re-ordering of distinct
-    // events. `day_voter_at[day][i]` records first-seen order, so a different
-    // order produces a different (still valid) storage layout.
+    // events.
 
     use proptest::prelude::*;
 
@@ -496,9 +468,7 @@ mod tests {
     struct ReplaySnapshot {
         rewards_balance: U256,
         // Per-day aggregates.
-        day_fee_sum_native: std::collections::BTreeMap<u32, U256>,
         day_voter_count: std::collections::BTreeMap<u32, u32>,
-        day_voter_at: std::collections::BTreeMap<(u32, u32), Address>,
         day_votes_per_voter: std::collections::BTreeMap<(u32, Address), u64>,
         // Per-fb_hash guards.
         block_metadata_counted: std::collections::BTreeMap<B256, bool>,
@@ -513,18 +483,10 @@ mod tests {
         fb_hashes: &[B256],
     ) -> ReplaySnapshot {
         let rewards = ctx.storage.contract::<Rewards>();
-        let mut day_fee_sum_native = std::collections::BTreeMap::new();
         let mut day_voter_count = std::collections::BTreeMap::new();
-        let mut day_voter_at = std::collections::BTreeMap::new();
         let mut day_votes_per_voter = std::collections::BTreeMap::new();
         for &d in days {
-            day_fee_sum_native.insert(d, rewards.day_fee_sum_native.read(&d).unwrap());
-            let count = rewards.day_voter_count.read(&d).unwrap();
-            day_voter_count.insert(d, count);
-            let voter_at = rewards.day_voter_at.get_nested(&d);
-            for i in 0..count {
-                day_voter_at.insert((d, i), voter_at.read(&i).unwrap());
-            }
+            day_voter_count.insert(d, rewards.day_voter_count.read(&d).unwrap());
             let participation = rewards.day_votes.get_nested(&d);
             for &v in voters {
                 day_votes_per_voter.insert((d, v), participation.read(&v).unwrap());
@@ -540,9 +502,7 @@ mod tests {
         }
         ReplaySnapshot {
             rewards_balance: ctx.storage.balance(REWARDS_ADDRESS).unwrap(),
-            day_fee_sum_native,
             day_voter_count,
-            day_voter_at,
             day_votes_per_voter,
             block_metadata_counted,
             voter_balances,

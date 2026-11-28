@@ -104,49 +104,29 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
             s.clone(),
         );
         outbe_rewards::api::seal_votes_and_fees(&ctx, 20231115).unwrap();
-        let allocation = outbe_agentreward::api::allocate_day_agent_rewards(
-            &ctx,
-            20231115.into(),
-            outbe_agentreward::api::DayAgentPools {
-                cca: U256::from(1000),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-        assert_eq!(allocation.total_excess, U256::ZERO);
-        assert_eq!(
-            AgentRewardContract::new(s.clone())
-                .get_agent_reward(RewardPool::Cca, CCA)
-                .unwrap(),
-            U256::ZERO
-        );
-        outbe_emission::api::record_day_allocation(
-            s.clone(),
+        let record = outbe_emission::EmissionDay::new(
             20231115,
-            outbe_emission::api::DayAllocationAmounts {
-                emission_limit: U256::from(1000),
-                metadosis_limit: U256::ZERO,
-                validators: U256::ZERO,
-                waa: U256::ZERO,
-                sra: U256::ZERO,
-                cca: allocation.cca_allocated,
-                promis_limit: U256::ZERO,
-            },
-        )
-        .unwrap();
-        outbe_agentreward::api::process_agent_rewards(&ctx).unwrap();
+            outbe_system_common::time::WorldwideDay::new(0),
+            outbe_emission::api::compute_metadosis_start(20231115).unwrap(),
+            1000,
+            [0, 1000, 0, 0, 0],
+        );
+        outbe_emission::api::put_emission_day(s.clone(), &record).unwrap();
+        AgentRewardContract::new(s.clone())
+            .set_agent_reward_rate(RewardPool::Cca, 20231115)
+            .unwrap();
     });
     with_storage(&mut db, |s| {
         assert_eq!(
             AgentRewardContract::new(s)
-                .get_agent_reward(RewardPool::Cca, CCA)
-                .unwrap(),
+                .agent_reward(RewardPool::Cca, 20231115, CCA)
+                .unwrap()
+                .1,
             U256::from(1000)
         )
     });
     assert_eq!(balance(&db, AGENT_REWARD_ADDRESS), U256::ZERO);
-    // Claim cases use a fixed balance independent of the pool split.
-    let reward = U256::from(320);
+    let reward = U256::from(1000);
     assert_eq!(balance(&db, CCA_REGISTRY_ADDRESS), BOND_REQUIREMENT);
     assert!(tx(
         &mut db,
@@ -173,23 +153,15 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
         assert!(!api::is_active(&s, CCA).unwrap());
         assert!(api::credis_issued(&s, CCA, 20231115, U256::ONE).is_err());
     });
-    let claim = |amount| {
-        IAgentReward::redeemAgentRewardCall {
-            pool: 2,
-            promisLoadMinor: amount,
-            issuanceCurrency: 840,
-            referenceCurrency: 840,
-        }
-        .abi_encode()
-    };
+    let claim = |days: &[u32]| claim_call(RewardPool::Cca, days);
     let before = snapshot(&mut db);
     // Spot and the window of an earlier day are available. Neither prices the claim hour.
     with_storage(&mut db, |storage| seed_oracle(&storage));
     with_storage_at(&mut db, NOW - 2 * SECONDS_PER_DAY, |storage| {
         seed_hour_vwap(&storage, U256::from(9_000_000))
     });
-    for amount in [U256::ZERO, reward + U256::ONE, U256::ONE] {
-        assert!(redeem_agent_reward(&mut db, claim(amount), NOW).is_err());
+    for days in [&[20231115][..], &[], &[20231116]] {
+        assert!(redeem_agent_reward(&mut db, claim(days), NOW).is_err());
         assert_eq!(snapshot(&mut db), before);
     }
     // Retry a day later against the window of that hour, with a price distinct from spot.
@@ -225,7 +197,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
             .unwrap();
     });
     let before_failure = snapshot(&mut db);
-    assert!(redeem_agent_reward(&mut db, claim(U256::ZERO), claim_time).is_err());
+    assert!(redeem_agent_reward(&mut db, claim(&[20231115]), claim_time).is_err());
     assert_eq!(snapshot(&mut db), before_failure);
     with_storage(&mut db, |storage| {
         outbe_gemfactory::schema::GemFactoryContract::new(storage)
@@ -233,15 +205,10 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
             .write(U256::ZERO)
             .unwrap();
     });
-    with_storage(&mut db, |storage| {
-        AgentRewardContract::new(storage)
-            .cca_claimable_minor
-            .write(&CCA, reward)
-            .unwrap();
-    });
-    for (block, (load, requested)) in (1..).zip([(100, U256::from(100)), (220, U256::ZERO)]) {
+    {
+        let load = reward;
         let (output, logs) =
-            redeem_agent_reward_in_block(&mut db, claim(requested), claim_time, block).unwrap();
+            redeem_agent_reward_in_block(&mut db, claim(&[20231115]), claim_time, 1).unwrap();
         let gem_id = IAgentReward::redeemAgentRewardCall::abi_decode_returns(&output).unwrap();
         let claimed = logs
             .iter()
@@ -252,7 +219,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
         assert_eq!(claimed.pool, 2);
         assert!(logs.iter().any(|log| log.address == AGENT_REWARD_ADDRESS
             && IAgentReward::AgentRewardRedeemed::decode_log(log).is_ok()));
-        assert_eq!(claimed.promisLoadMinor, U256::from(load));
+        assert_eq!(claimed.promisLoadMinor, load);
         let issued = logs
             .iter()
             .find_map(|log| IGem::GemIssued::decode_log(log).ok())
@@ -263,7 +230,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
         with_storage(&mut db, |storage| {
             let gem = outbe_gem::api::get_view(&storage, gem_id).unwrap().unwrap();
             assert_eq!(gem.item.owner, CCA);
-            assert_eq!(gem.item.promis_load_minor, U256::from(load));
+            assert_eq!(gem.item.promis_load_minor, load);
             assert_eq!(gem.item.entry_price_minor, discounted(price));
             assert_eq!(gem.item.issuance_currency, 840);
             assert_eq!(gem.item.reference_currency, 840);
@@ -278,12 +245,12 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
     with_storage(&mut db, |storage| {
         assert_eq!(
             AgentRewardContract::new(storage)
-                .get_agent_reward(RewardPool::Cca, CCA)
+                .weight(RewardPool::Cca, 20231115, CCA)
                 .unwrap(),
             U256::ZERO
         )
     });
-    assert!(redeem_agent_reward(&mut db, claim(U256::ZERO), claim_time).is_err());
+    assert!(redeem_agent_reward(&mut db, claim(&[20231115]), claim_time).is_err());
     assert_eq!(balance(&db, CCA_REGISTRY_ADDRESS), BOND_REQUIREMENT);
     assert!(!tx(
         &mut db,
@@ -306,7 +273,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
         assert_eq!(record.state as u8, ICcaRegistry::State::Deregistered as u8);
         assert_eq!(record.bondedMinor, U256::ZERO);
         assert_eq!(record.name, "Test CCA");
-        // The terminal CCA job permits bounded deletion; its seal remains permanent.
+        // The claim took the weight of the day; the seal of the day remains.
         assert_eq!(api::reward_weight(&s, CCA, 20231115).unwrap(), U256::ZERO);
         assert!(api::credis_forfeited(&s, CCA, 20231115, U256::ONE).is_err());
     });

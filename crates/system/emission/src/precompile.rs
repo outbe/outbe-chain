@@ -43,14 +43,22 @@ pub fn dispatch(
                     metadosisStart: record.metadosis_start,
                     state: record.state,
                     metadosisState: record.metadosis_state,
+                    desisState: record.desis_state,
                     emissionLimit: record.emission_limit,
+                    validatorsLimit: record.validators_limit,
+                    ccaLimit: record.cca_limit,
+                    waaLimit: record.waa_limit,
+                    sraLimit: record.sra_limit,
                     metadosisLimit: record.metadosis_limit,
+                    lysisLimit: record.lysis_limit,
                     desisLimit: record.desis_limit,
+                    nominalAmount: record.nominal_amount,
                     validators: record.validators,
                     waa: record.waa,
                     sra: record.sra,
                     cca: record.cca,
                     nods: record.nods,
+                    intexes: record.intexes,
                     promisLimit: record.promis_limit,
                 })
             }),
@@ -61,7 +69,7 @@ pub fn dispatch(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema::{emission_day_state, metadosis_state, EmissionDay};
+    use crate::schema::{desis_state, emission_day_state, metadosis_state, EmissionDay};
     use alloy_sol_types::SolCall;
     use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
     use outbe_system_common::time::WorldwideDay;
@@ -80,25 +88,34 @@ mod tests {
         .unwrap_err();
         assert!(missing.to_string().contains("EmissionDay not found"));
 
-        let contract = EmissionContract::new(storage.clone());
-        contract
+        let record = EmissionDay {
+            day: 20261014,
+            wwd: WorldwideDay::new(20261013),
+            metadosis_start: 1_792_022_400,
+            state: emission_day_state::COMPLETED,
+            metadosis_state: metadosis_state::COMPLETED,
+            desis_state: desis_state::COMPLETED,
+            emission_limit: 1_000,
+            validators_limit: 40,
+            cca_limit: 40,
+            waa_limit: 40,
+            sra_limit: 40,
+            metadosis_limit: 840,
+            lysis_limit: 320,
+            desis_limit: 900,
+            nominal_amount: 1_000,
+            validators: 40,
+            waa: 39,
+            sra: 40,
+            cca: 40,
+            nods: 320,
+            intexes: 700,
+            promis_limit: -179,
+            pools_recorded: 0,
+        };
+        EmissionContract::new(storage.clone())
             .emission_days
-            .create(&EmissionDay {
-                day: 20261014,
-                wwd: WorldwideDay::new(20260923),
-                metadosis_start: 1_792_022_401,
-                state: emission_day_state::PROCESSING,
-                metadosis_state: metadosis_state::COMPLETED,
-                emission_limit: 1_000,
-                metadosis_limit: 840,
-                desis_limit: 540,
-                validators: 40,
-                waa: 40,
-                sra: 40,
-                cca: 40,
-                nods: 280,
-                promis_limit: 560,
-            })
+            .create(&record)
             .unwrap();
 
         let bytes = dispatch(
@@ -109,19 +126,14 @@ mod tests {
         )
         .unwrap();
         let decoded = IEmission::getEmissionDayCall::abi_decode_returns(&bytes).unwrap();
-        assert_eq!(decoded.day, 20261014);
-        assert_eq!(decoded.wwd, 20260923);
-        assert_eq!(decoded.metadosisStart, 1_792_022_401);
-        assert_eq!(decoded.state, emission_day_state::PROCESSING);
-        assert_eq!(decoded.metadosisState, metadosis_state::COMPLETED);
-        assert_eq!(decoded.emissionLimit, 1_000);
+        assert_eq!(decoded.wwd, 20261013);
+        assert_eq!(decoded.desisState, desis_state::COMPLETED);
+        assert_eq!(decoded.validatorsLimit, 40);
         assert_eq!(decoded.metadosisLimit, 840);
-        assert_eq!(decoded.desisLimit, 540);
-        assert_eq!(decoded.validators, 40);
-        assert_eq!(decoded.waa, 40);
-        assert_eq!(decoded.sra, 40);
-        assert_eq!(decoded.cca, 40);
-        assert_eq!(decoded.nods, 280);
-        assert_eq!(decoded.promisLimit, 560);
+        assert_eq!(decoded.lysisLimit, 320);
+        assert_eq!(decoded.nominalAmount, 1_000);
+        assert_eq!(decoded.waa, 39);
+        assert_eq!(decoded.intexes, 700);
+        assert_eq!(decoded.promisLimit, -179);
     }
 }

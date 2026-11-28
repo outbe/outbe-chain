@@ -10,26 +10,15 @@ use outbe_promislimit::PromisLimitContract;
 use outbe_system_common::time::WorldwideDay;
 
 use crate::{
-    errors::{MetadosisCallerError, MetadosisStorageCorruptionError},
-    limits::LoadsCoverage,
-    precompile::IMetadosis,
+    errors::MetadosisStorageCorruptionError, limits::LoadsCoverage, precompile::IMetadosis,
     schema::MetadosisContract,
 };
-
-pub(crate) fn date_step_error(
-    err: outbe_system_common::time::TimeError,
-) -> outbe_primitives::error::PrecompileError {
-    match err.date_step() {
-        Some((kind, date_key)) => MetadosisCallerError::DateStep { kind, date_key }.into(),
-        None => outbe_primitives::error::PrecompileError::Fatal(err.to_string()),
-    }
-}
 
 pub(crate) fn validate_metadosis_timestamp(timestamp: u64) -> Result<()> {
     outbe_worldwideday::validate_wwd_timestamp(timestamp)
 }
 
-/// The record of `day` when its Metadosis is due: the allocation gave it its limit, and
+/// The record of `day` when its Metadosis is due: the day started, its offering ended, and
 /// Metadosis has not run.
 pub(crate) fn ready_emission_day(
     metadosis: &MetadosisContract<'_>,
@@ -70,83 +59,38 @@ fn verify_record_wwd_backlink(ctx: &BlockRuntimeContext<'_>, record: &EmissionDa
     Ok(())
 }
 
-pub(crate) fn complete_metadosis(
-    metadosis: &mut MetadosisContract<'_>,
-    emission_day: &EmissionDay,
-) -> Result<()> {
-    if !outbe_agentreward::distribution::has_pending_accruals_for_day(
-        &metadosis.storage,
-        emission_day.day,
-    )? {
-        outbe_emission::api::complete_day_emission_limit(
-            metadosis.storage.clone(),
-            emission_day.day,
-        )?;
-    }
-    Ok(())
-}
-
-/// Ask Desis to cancel the auction of a day whose Metadosis did not complete. A Desis revert does
-/// not stop the failure path: an auction with no brief cancels itself at the end of its reveal stage.
-fn cancel_auction_of(metadosis: &MetadosisContract<'_>, day: u32) -> Result<()> {
+/// Ask Desis to cancel the auction of a day whose Metadosis failed. A Desis revert does not stop
+/// the failure path: an auction with no Desis limit cancels itself at the end of its reveal stage.
+fn cancel_desis_of(metadosis: &MetadosisContract<'_>, day: u32) -> Result<()> {
     let storage = metadosis.storage.clone();
     match storage
         .clone()
-        .with_checkpoint(|| outbe_desis::api::cancel_auction(storage.clone(), day.into()))
+        .with_checkpoint(|| outbe_desis::api::cancel_desis(storage.clone(), day.into()))
     {
         Err(err) if err.record_pass_failure() == PassFailure::Skip => {
-            tracing::warn!(target: "outbe::metadosis", day, error = ?err, "auction cancel skipped");
+            tracing::warn!(target: "outbe::metadosis", day, error = ?err, "Desis cancel skipped");
             Ok(())
         }
         result => result,
     }
 }
 
-/// How the limit of the day covers its loads and `excess`, or `None` when the day sum cannot be read.
+/// The loads of the day and how its limit covers them and `excess`, or `None` when the day sums
+/// cannot be read.
 fn cover_loads(
     metadosis: &MetadosisContract<'_>,
     pending: &EmissionDay,
     excess: U256,
-) -> Result<Option<LoadsCoverage>> {
+) -> Result<Option<(crate::loads::DayLoads, LoadsCoverage)>> {
     match crate::loads::day_loads(&metadosis.storage, pending.wwd) {
-        Ok(loads) => Ok(Some(LoadsCoverage::of(
-            pending.metadosis_limit_minor(),
-            loads.loads_minor,
-            excess,
-        )?)),
+        Ok(loads) => Ok(Some((
+            loads,
+            LoadsCoverage::of(pending.metadosis_limit_minor(), loads.loads_minor, excess)?,
+        ))),
         // Only corrupt sealed data fails the read; the whole limit stays with the Nods.
         Err(err) if err.record_pass_failure() == PassFailure::Skip => Ok(None),
         Err(err) => Err(err),
     }
-}
-
-pub(crate) fn cancel_metadosis(
-    metadosis: &mut MetadosisContract<'_>,
-    day: u32,
-    reason: u8,
-) -> Result<()> {
-    cancel_auction_of(metadosis, day)?;
-    if let Some(pending) = get_emission_day(metadosis.storage.clone(), day)? {
-        let excess = outbe_emission::api::excess_nod_loads(metadosis.storage.clone())?;
-        if let Some(coverage) = cover_loads(metadosis, &pending, excess)? {
-            crate::loads::carry_excess(metadosis, day, excess, &coverage)?;
-        }
-        let record =
-            outbe_emission::api::record_metadosis_canceled(metadosis.storage.clone(), day)?;
-        if !outbe_agentreward::distribution::has_pending_accruals_for_day(
-            &metadosis.storage,
-            record.day,
-        )? {
-            outbe_emission::api::complete_day_emission_limit(
-                metadosis.storage.clone(),
-                record.day,
-            )?;
-        }
-    }
-    metadosis.emit(IMetadosis::MetadosisCanceled {
-        emissionDay: day,
-        reason,
-    })
 }
 
 pub(crate) fn fail_metadosis(
@@ -154,30 +98,26 @@ pub(crate) fn fail_metadosis(
     day: u32,
     reason: u8,
 ) -> Result<()> {
-    cancel_auction_of(metadosis, day)?;
+    cancel_desis_of(metadosis, day)?;
     if let Some(pending) = get_emission_day(metadosis.storage.clone(), day)? {
         let excess = outbe_emission::api::excess_nod_loads(metadosis.storage.clone())?;
-        let coverage = cover_loads(metadosis, &pending, excess)?;
-        let (record, limit_minor) = outbe_emission::api::record_metadosis_failed(
-            metadosis.storage.clone(),
-            day,
-            coverage.map_or(U256::MAX, |coverage| coverage.covered_minor),
-        )?;
-        if !limit_minor.is_zero() {
+        let covered = cover_loads(metadosis, &pending, excess)?;
+        let limit = pending.metadosis_limit_minor();
+        let amounts = match &covered {
+            Some((loads, coverage)) => loads.amounts(limit, coverage.covered_minor, U256::ZERO),
+            None => outbe_emission::api::MetadosisAmounts {
+                nods: U256::MAX,
+                ..Default::default()
+            },
+        };
+        let (_, rest) =
+            outbe_emission::api::record_metadosis_failed(metadosis.storage.clone(), day, amounts)?;
+        if !rest.is_zero() {
             PromisLimitContract::new(metadosis.storage.clone())
-                .add(outbe_promislimit::LimitSource::MetadosisLimit, limit_minor)?;
+                .add(outbe_promislimit::LimitSource::MetadosisLimit, rest)?;
         }
-        if let Some(coverage) = coverage {
+        if let Some((_, coverage)) = covered {
             crate::loads::carry_excess(metadosis, day, excess, &coverage)?;
-        }
-        if !outbe_agentreward::distribution::has_pending_accruals_for_day(
-            &metadosis.storage,
-            record.day,
-        )? {
-            outbe_emission::api::complete_day_emission_limit(
-                metadosis.storage.clone(),
-                record.day,
-            )?;
         }
     }
     metadosis.emit(IMetadosis::MetadosisFailed {

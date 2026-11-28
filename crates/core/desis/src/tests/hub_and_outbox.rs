@@ -203,7 +203,7 @@ fn a_page_from_a_chain_outside_the_day_is_ignored() {
 fn a_page_before_the_reveal_reverts_so_the_hub_delivers_it_again() {
     with_targets(&[SRC_CHAIN], |s| {
         brief(&s, true);
-        runtime::schedule_tick(&s, NOW).unwrap();
+        runtime::advance_intex_auctions_at(&s, NOW).unwrap();
         assert!(deliver(
             &s,
             ERC7786_HUB_ADDRESS,
@@ -251,7 +251,7 @@ fn a_day_with_no_chain_in_auctions_is_canceled_before_its_start() {
     let mut storage = fixture_provider(&[]);
     StorageHandle::enter(&mut storage, |s| {
         brief(&s, true);
-        runtime::schedule_tick(&s, NOW).unwrap();
+        runtime::advance_intex_auctions_at(&s, NOW).unwrap();
         assert_eq!(stage_of(&s), AuctionStage::Canceled);
     });
     let cancels: Vec<u8> = storage
@@ -275,7 +275,7 @@ fn the_start_freezes_only_the_chains_in_auctions() {
             .push(pack_target(series_only, TargetMode::Series))
             .unwrap();
         brief(&s, true);
-        runtime::schedule_tick(&s, NOW).unwrap();
+        runtime::advance_intex_auctions_at(&s, NOW).unwrap();
         assert_eq!(
             outbe_intexfactory::targets::day_targets(&s, EMISSION_DAY).unwrap(),
             vec![SRC_CHAIN]
@@ -297,7 +297,7 @@ fn flush_sends_with_the_bridge_and_emits_the_sent_event() {
     );
     StorageHandle::enter(&mut storage, |s| {
         brief(&s, true);
-        runtime::schedule_tick(&s, NOW).unwrap();
+        runtime::advance_intex_auctions_at(&s, NOW).unwrap();
         crate::outbox::flush(&s).unwrap();
     });
     assert!(outbox_messages(&mut storage).is_empty());
@@ -317,7 +317,7 @@ fn a_failed_send_emits_its_send_failed_event_and_stays() {
     let mut storage = fixture_provider(&[SRC_CHAIN]);
     StorageHandle::enter(&mut storage, |s| {
         brief(&s, true);
-        runtime::schedule_tick(&s, NOW).unwrap();
+        runtime::advance_intex_auctions_at(&s, NOW).unwrap();
         crate::outbox::flush(&s).unwrap();
     });
     assert_eq!(outbox_messages(&mut storage).len(), 1);

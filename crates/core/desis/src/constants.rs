@@ -15,7 +15,7 @@ pub const MAX_TARGET_CHAINS: usize = 16;
 /// deployed testnet stack × 1.2 (`OriginStageSendGas.t.sol`) plus the Desis side (`calibration.rs`).
 pub const ADVANCE_START_GAS: u64 = 4_224_000;
 pub const ADVANCE_REVEAL_END_GAS: u64 = 5_102_000;
-pub const ADVANCE_FAIL_GAS: u64 = 99_000;
+pub const ADVANCE_FAIL_GAS: u64 = 110_000;
 /// Any small step of a day: a stage flip, a removal from the schedule, or nothing due.
 pub const ADVANCE_DAY_BASE_GAS: u64 = 20_000;
 
@@ -46,8 +46,8 @@ const _: () = assert!(
 pub const MIN_COMMIT_WINDOW_SECONDS: u64 = 16 * 3600;
 
 /// `IDesis.DesisCanceled` reason codes. At the start, a missing limit comes first, then a
-/// day with no price, a sub-unit limit and a late start. A cancel after the start whose brief
-/// never came, or whose Metadosis failed, is a missing limit too.
+/// day with no price, a sub-unit limit and a late start. A cancel after the start whose Desis
+/// limit never came, or whose Metadosis failed, is a missing limit too.
 pub const CANCELED_NO_LIMIT: u8 = 1;
 pub const CANCELED_UNPRICED: u8 = 2;
 pub const CANCELED_BELOW_ONE_UNIT: u8 = 3;

@@ -2,34 +2,10 @@
 //! Promis Limit and the Desis Limit.
 
 use alloy_primitives::U256;
-use outbe_primitives::{
-    block::BlockRuntimeContext, error::Result, storage::CycleLifecyclePurpose,
-    storage::StorageHandle,
-};
+use outbe_primitives::{error::Result, storage::StorageHandle};
 use outbe_promislimit::PromisLimitContract;
-use outbe_system_common::metadosis_bindings::metadosis_cycle_allocation_binding;
-use outbe_system_common::time::date_key_to_utc_timestamp;
 
 use crate::errors::MetadosisError;
-use crate::precompile::IMetadosis;
-use crate::schema::MetadosisContract;
-
-/// Records that Metadosis of `day` holds `amount`. The Cycle writes the amount to the record of `day`.
-pub(crate) fn set_metadosis_limit(ctx: &BlockRuntimeContext, day: u32, amount: U256) -> Result<()> {
-    let day_ts = date_key_to_utc_timestamp(day).map_err(crate::lifecycle::date_step_error)?;
-    let binding =
-        metadosis_cycle_allocation_binding(ctx.block.chain_id, ctx.block.block_number, day_ts);
-    crate::commit::commit_transition::<CycleLifecyclePurpose, _>(
-        ctx.storage.clone(),
-        binding,
-        |_| {
-            MetadosisContract::new(ctx.storage.clone()).emit(IMetadosis::MetadosisLimitSet {
-                emissionDay: day,
-                metadosisLimitMinor: amount,
-            })
-        },
-    )
-}
 
 /// The smaller of the nominal less the loads and the unused day limit plus the draw, or `None`
 /// when the loads exceed either of them or the sum overflows.
@@ -189,16 +165,16 @@ pub(crate) fn allocate_day_metadosis_limit(
     Ok(split)
 }
 
-/// Briefs Desis and returns the Desis Limit the auction holds. A limit that Desis
-/// returns goes back to the Promis Limit.
-pub(crate) fn apply_desis_limit(
+/// Starts Desis of the day with its Desis limit and returns the limit Desis holds. A limit that
+/// Desis returns goes back to the Promis Limit.
+pub(crate) fn start_desis_with_limit(
     storage: StorageHandle<'_>,
     emission_day: u32,
     split: &LimitSplit,
 ) -> Result<U256> {
     let is_active = !split.desis_limit_minor.is_zero();
     storage.with_checkpoint(|| {
-        let receipt = outbe_desis::api::set_desis_limit(
+        let receipt = outbe_desis::api::start_desis(
             storage.clone(),
             outbe_desis::api::DesisLimit {
                 emission_day: emission_day.into(),
@@ -225,6 +201,19 @@ pub(crate) fn apply_desis_limit(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A started record of `day`, as the Cycle leaves it before Metadosis runs.
+    fn record_started_day(storage: &StorageHandle<'_>, day: u32) {
+        let mut record = outbe_emission::EmissionDay::new(
+            day,
+            outbe_system_common::time::WorldwideDay::new(0),
+            outbe_emission::api::compute_metadosis_start(day).unwrap(),
+            0,
+            [0; 5],
+        );
+        record.state = outbe_emission::schema::emission_day_state::PROCESSING;
+        outbe_emission::api::put_emission_day(storage.clone(), &record).unwrap();
+    }
     use outbe_primitives::storage::hashmap::HashMapStorageProvider;
     use outbe_system_common::time::EmissionDate;
 
@@ -261,8 +250,9 @@ mod tests {
                     U256::from(remaining as u64)
                 );
                 let day = EmissionDate::new(20260101);
-                outbe_desis::api::schedule_auction(storage.clone(), day).unwrap();
-                apply_desis_limit(storage.clone(), day.value(), &split).unwrap();
+                record_started_day(&storage, day.value());
+                outbe_desis::test_support::take_day(storage.clone(), day).unwrap();
+                start_desis_with_limit(storage.clone(), day.value(), &split).unwrap();
                 let desis = outbe_desis::DesisContract::new(storage.clone());
                 assert_eq!(
                     desis.pending_desis_limit_minor.read(&day).unwrap(),
@@ -324,7 +314,7 @@ mod tests {
                 storage.with_checkpoint(|| {
                     let split =
                         allocate_day_metadosis_limit(storage.clone(), base, loads, nominal)?;
-                    apply_desis_limit(storage.clone(), 20260101, &split)
+                    start_desis_with_limit(storage.clone(), 20260101, &split)
                 })
             });
             assert!(result.is_err());
@@ -342,9 +332,10 @@ mod tests {
                 allocate_day_metadosis_limit(storage.clone(), base, U256::ONE, U256::MAX).unwrap();
             assert!(split.desis_limit_minor > U256::from(u128::MAX));
             let day = EmissionDate::new(20260101);
-            outbe_desis::api::schedule_auction(storage.clone(), day).unwrap();
+            record_started_day(&storage, day.value());
+            outbe_desis::test_support::take_day(storage.clone(), day).unwrap();
             assert_eq!(
-                apply_desis_limit(storage.clone(), day.value(), &split).unwrap(),
+                start_desis_with_limit(storage.clone(), day.value(), &split).unwrap(),
                 U256::ZERO
             );
             assert_eq!(

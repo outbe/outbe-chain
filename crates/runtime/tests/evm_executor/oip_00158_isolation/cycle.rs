@@ -3,14 +3,11 @@ use outbe_desis::{AuctionStage, DesisContract};
 use outbe_system_common::time::EmissionDate;
 
 #[test]
-fn cycle_worker_failure_is_a_success_receipt_but_corrupt_cleanup_rejects_block() {
+fn cycle_worker_runs_in_a_success_receipt_but_corrupt_cleanup_rejects_block() {
     let day = EmissionDate::new(20_231_113);
     for corrupt in [false, true] {
         let config = config(Failure::None);
         let mut state = seeded(|storage| {
-            let agent = outbe_agentreward::AgentRewardContract::new(storage.clone());
-            // A complete four-descriptor range with a missing head is reachable AccrualJobMissing.
-            agent.accrual_tail.write(4).unwrap();
             let desis = DesisContract::new(storage);
             if corrupt {
                 desis.cleanup_tail.write(20_240_101).unwrap();
@@ -68,10 +65,6 @@ fn cycle_worker_failure_is_a_success_receipt_but_corrupt_cleanup_rejects_block()
         }
         let mut provider = DirectStorageProvider::new(&mut state, read_ctx);
         StorageHandle::enter(&mut provider, |storage| {
-            let agent = outbe_agentreward::AgentRewardContract::new(storage.clone());
-            assert_eq!(agent.accrual_head.read().unwrap(), 0);
-            assert_eq!(agent.worker_height.read().unwrap(), 0);
-            assert!(!agent.worker_initialized.read().unwrap());
             let desis = DesisContract::new(storage);
             assert_eq!(desis.cleanup_head.read().unwrap(), 0);
             if corrupt {

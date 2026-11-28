@@ -4,7 +4,7 @@ use commonware_cryptography::bls12381::primitives::{
     ops::{self, sign_message},
     variant::MinSig,
 };
-use outbe_agentreward::AgentRewardContract;
+use outbe_agentreward::{schema::RewardPool, AgentRewardContract};
 use outbe_l2registry::L2RegistryContract;
 use outbe_primitives::storage::{CycleLifecyclePurpose, MutationPurposeTag};
 use outbe_system_common::time::{date_key_to_utc_timestamp, WorldwideDay};
@@ -17,6 +17,7 @@ const HOST_CHAIN_ID: u64 = outbe_primitives::chain::DEVNET_CHAIN_ID;
 const L2_CHAIN_ID: u64 = 0xdead;
 const CALLER: Address = Address::repeat_byte(0x77);
 const TARGET_WWD: WorldwideDay = WorldwideDay::new(20_260_802);
+/// The UTC day of the offer, and the emission day of the Nods of `TARGET_WWD`.
 const OFFER_DAY: u32 = 20_260_803;
 const REWARD_WALLET: Address = Address::repeat_byte(0x71);
 const REWARD_SRA: Address = Address::repeat_byte(0x72);
@@ -410,15 +411,14 @@ fn assert_real_zk_offer(proof: &[u8]) {
         let replay = issue_nod(&storage, make_offer()).unwrap_err();
         assert!(matches!(replay, PrecompileError::RevertBytes(_)));
         let rewards = AgentRewardContract::new(storage);
+        let weight = |pool, address| rewards.weight(pool, OFFER_DAY, address).unwrap();
+        assert_eq!(weight(RewardPool::Waa, REWARD_WALLET), U256::from(1));
+        assert_eq!(weight(RewardPool::Sra, REWARD_SRA), U256::from(1));
+        assert_eq!(rewards.waa_address_count.read(&OFFER_DAY).unwrap(), 1);
         assert_eq!(
-            rewards.get_all_waa_counts(OFFER_DAY.into()).unwrap(),
-            vec![(REWARD_WALLET, 1)]
+            rewards.waa_address_count.read(&TARGET_WWD.value()).unwrap(),
+            0
         );
-        assert_eq!(
-            rewards.get_all_sra_counts(OFFER_DAY.into()).unwrap(),
-            vec![(REWARD_SRA, 1)]
-        );
-        assert!(rewards.get_all_waa_counts(TARGET_WWD).unwrap().is_empty());
     });
 
     // A failure at the last write of the offer rolls the whole offer back.
@@ -436,12 +436,10 @@ fn assert_real_zk_offer(proof: &[u8]) {
     );
 
     // An SRA counter overflow after every other write rolls the offer back too.
-    let reward_day = WorldwideDay::new(OFFER_DAY);
+    let reward_day = OFFER_DAY;
     let count_key = AgentRewardContract::offer_count_key(reward_day, REWARD_SRA);
-    let index_key = AgentRewardContract::address_index_key(reward_day, 0);
     StorageHandle::enter(&mut provider, |storage| {
         let rewards = AgentRewardContract::new(storage);
-        rewards.sra_addresses.write(&index_key, REWARD_SRA).unwrap();
         rewards.sra_address_count.write(&reward_day, 1).unwrap();
         rewards
             .sra_offer_counts
@@ -1044,5 +1042,34 @@ fn an_offer_cannot_issue_a_nod_to_another_account() {
     assert_eq!(provider.get_ordered_events(), events);
     StorageHandle::enter(&mut provider, |storage| {
         issue_past_proof(&storage, &offer_of(victim, 840, ("100", "0")), None).unwrap();
+    });
+}
+
+#[test]
+fn offers_on_other_utc_days_weigh_in_the_emission_day_of_their_nods() {
+    let _enclave = outbe_nod::test_support::scope();
+    let mut provider = priced_world();
+    StorageHandle::enter(&mut provider, |storage| {
+        // 23:00 of the day before the emission day and 11:00 of the day after it.
+        for (hour, owner) in [
+            (13, Address::repeat_byte(0x41)),
+            (49, Address::repeat_byte(0x42)),
+        ] {
+            at_offer_hour(&storage, (hour, 0), Some(100));
+            issue_past_proof(&storage, &offer_of(owner, 840, ("100", "0")), None).unwrap();
+        }
+        let rewards = AgentRewardContract::new(storage);
+        for (pool, agent) in [
+            (RewardPool::Waa, REWARD_WALLET),
+            (RewardPool::Sra, REWARD_SRA),
+        ] {
+            assert_eq!(
+                rewards.weight(pool, OFFER_DAY, agent).unwrap(),
+                U256::from(2)
+            );
+            for utc_day in [OFFER_DAY - 1, OFFER_DAY + 1] {
+                assert_eq!(rewards.weight(pool, utc_day, agent).unwrap(), U256::ZERO);
+            }
+        }
     });
 }

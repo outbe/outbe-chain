@@ -6,7 +6,8 @@ address constant DESIS = 0x0000000000000000000000000000000000001016;
 
 /// @title IDesis
 /// @notice Inbound call surface for the Desis runtime precompile.
-///         The Desis runtime drives the auction schedule from a Metadosis brief.
+///         The Desis runtime starts the auction of each emission day by its date and takes
+///         the Desis limit of the day from Metadosis.
 ///         The ERC-7786 hub delivers the bids. Clearing runs from the Desis
 ///         begin-block gate.
 interface IDesis {

@@ -1,24 +1,18 @@
-use alloy_primitives::U256;
 use outbe_primitives::{block::BlockRuntimeContext, error::Result, storage::CycleLifecyclePurpose};
 use outbe_system_common::metadosis_bindings::metadosis_process_ready_binding;
 
 use crate::commit::commit_transition;
 
-/// Runs the Metadosis of emission day `day`, which the Cycle allocated in this run.
-pub fn process_emission_day(ctx: &BlockRuntimeContext<'_>, day: u32) -> Result<()> {
+/// Starts Metadosis of emission day `day` once the offering of the day ended.
+pub fn start_metadosis(ctx: &BlockRuntimeContext<'_>, day: u32) -> Result<()> {
     let binding = metadosis_process_ready_binding(
         ctx.block.chain_id,
         ctx.block.block_number,
         ctx.block.timestamp,
     );
     commit_transition::<CycleLifecyclePurpose, _>(ctx.storage.clone(), binding, |_| {
-        crate::runtime::process_emission_day(ctx, day)
+        crate::runtime::start_metadosis(ctx, day)
     })
-}
-
-/// Gives Metadosis of `day` its limit, before the Cycle marks the record of `day` Processing.
-pub fn set_metadosis_limit(ctx: &BlockRuntimeContext<'_>, day: u32, amount: U256) -> Result<()> {
-    crate::limits::set_metadosis_limit(ctx, day, amount)
 }
 
 /// Marks Metadosis of `day` as `Failed` (returning the part of its Metadosis limit that the

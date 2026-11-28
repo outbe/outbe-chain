@@ -221,10 +221,6 @@ fn late_protocol_exhaustion_rolls_back_calendar_and_allocation_then_retries_acro
         );
     });
     assert!(completed_tasks(&storage).is_empty());
-    assert!(storage
-        .get_events(CYCLE_ADDRESS)
-        .iter()
-        .all(|log| ICycle::DayEmissionLimitAllocationFailed::decode_log_data(log).is_err()));
 
     storage.set_block_number(3);
     storage.set_gas_limit(100_000_000);
@@ -416,4 +412,45 @@ fn non_isolated_task_panic_and_halt_are_not_swallowed() {
         });
         assert!(storage.get_events(CYCLE_ADDRESS).is_empty());
     }
+}
+
+#[test]
+fn an_emission_day_run_stays_within_its_measured_maximum() {
+    // A catch-up run seals two WWDs, opens three with their records, starts the day and, its
+    // offering being over, runs its 12:00 step too.
+    let fire_ts = GENESIS_TS + 3 * SECONDS_PER_DAY + 1;
+    let mut storage = calendar_storage();
+    storage.enter(|handle| {
+        let ctx = runtime_context(block_ctx(2, fire_ts), handle);
+        account_parent(&ctx, 2);
+        seed_daily_voters(
+            &ctx,
+            20_240_101,
+            &[(Address::repeat_byte(1), 1), (Address::repeat_byte(2), 3)],
+        );
+        let mut agent_reward = outbe_agentreward::AgentRewardContract::new(ctx.storage.clone());
+        for byte in 3..6u8 {
+            agent_reward
+                .increment_waa_offer(20_240_101, Address::repeat_byte(byte))
+                .unwrap();
+            agent_reward
+                .increment_sra_offer(20_240_101, Address::repeat_byte(byte + 10))
+                .unwrap();
+        }
+        let before = ctx.storage.gas_used().unwrap();
+        ctx.storage
+            .with_trigger_budget(50_000_000, || crate::handler::process_emission_day(&ctx))
+            .unwrap();
+        let gas = ctx.storage.gas_used().unwrap() - before;
+        let record = outbe_emission::api::get_emission_day(ctx.storage.clone(), 20_240_101)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            record.metadosis_state,
+            outbe_emission::schema::metadosis_state::COMPLETED
+        );
+        assert!(record.validators != 0 && record.waa != 0 && record.sra != 0);
+        // 645,800 measured, and up to 63 more record reads of the stalled-day scan.
+        assert!(gas <= 720_000, "measured {gas}");
+    });
 }
