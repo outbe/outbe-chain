@@ -60,9 +60,6 @@ interface IIntexAuctionTargetRouter {
         uint256 indexed idx, uint32 indexed emissionDay, uint32 pageIndex, uint256 amountMinor, bytes errorData
     );
 
-    /// @notice Emitted when an admin sets IntexAuction, the Intex contract and the escrow. Only the new values.
-    event IntexAuctionTargetRouterDependenciesSet(address intexAuction, address intexContract, address escrow);
-
     /// @notice Emitted when a call notice cannot be applied to its series here, and the notice waits.
     ///         `errorData` is empty when the call left no revert data, for example while the series has not
     ///         landed. The token reports the call once applied.
@@ -79,8 +76,8 @@ interface IIntexAuctionTargetRouter {
     error TooManyIntexAuctionBidsPages(uint32 emissionDay, uint16 totalPages);
     /// @notice An external caller invoked the self-call shim. Only `address(this)` is allowed.
     error NotSelf();
-    /// @notice `setDependencies` would move the venue off an escrow that still holds something to claim.
-    error EscrowHasLiveLocks();
+    /// @notice `caller` is not the Interchain Account of Outbe on this chain.
+    error UnauthorizedCaller(address caller);
     /// @notice `sendIntexAuctionBids` called for a day whose relay never started or has already finished.
     /// @param emissionDay Emission day (yyyymmdd).
     error NoIntexAuctionBidsToSend(uint32 emissionDay);
@@ -93,14 +90,7 @@ interface IIntexAuctionTargetRouter {
     /// @notice A day's proceeds are in a token the proceeds bridge does not move.
     error ProceedsTokenNotBridged(address dayToken, address bridgeToken);
 
-    // --- Admin ---
-    /// @notice Wire contract dependencies.
-    /// @param intexAuction Auction contract address.
-    /// @param intexContract IntexNFT1155 contract address.
-    /// @param escrow EscrowAdapter contract address.
-    function setDependencies(address intexAuction, address intexContract, address escrow) external;
-
     /// @notice A message of Desis or IntexFactory on Outbe, which the Interchain Account of Outbe on
-    ///         this chain calls. Only the holder of `OUTBE_ICA_ROLE` may call it.
+    ///         this chain calls. Only that account may call it.
     function receiveFromOutbe(bytes calldata message) external;
 }

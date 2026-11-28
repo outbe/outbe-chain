@@ -542,7 +542,7 @@ fn cycle_tick_gas_regression_exercises_dense_agentreward_state() {
     StorageHandle::enter(&mut provider, |storage| {
         assert_dense_agent_accrual_pending(storage.clone(), prev_day, DENSE_ADDRESS_COUNT)?;
         assert_dense_validator_settlement(storage.clone(), DENSE_VALIDATOR_COUNT)?;
-        let day_record = outbe_emission::api::get_emission_day_record(storage.clone(), prev_day)?
+        let day_record = outbe_emission::api::get_emission_day(storage.clone(), prev_day)?
             .expect("settled EmissionDay must exist");
         assert!(
             day_record.state == outbe_emission::schema::emission_day_state::PROCESSING

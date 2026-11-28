@@ -282,7 +282,7 @@ fn every_block_credits_a_queued_reward_slice_between_hourly_cycles() {
         let ctx = runtime_context(block_ctx(3, ANCHOR_TS + 20), handle.clone());
         run_cycle_tick(&ctx).unwrap();
         assert_eq!(claimable(recipients - 1), U256::from(1_000u64));
-        let settled = outbe_emission::api::get_emission_day_record(handle.clone(), day.value())
+        let settled = outbe_emission::api::get_emission_day(handle.clone(), day.value())
             .unwrap()
             .unwrap();
         assert_eq!(
@@ -425,7 +425,7 @@ fn zero_total_validator_participation_routes_the_pool_without_halting() {
 
         assert!(is_day_allocated(&ctx, 20_240_101));
         // No pool has a weight on the day, so each one goes to Metadosis.
-        let record = outbe_emission::api::get_emission_day_record(ctx.storage.clone(), 20_240_101)
+        let record = outbe_emission::api::get_emission_day(ctx.storage.clone(), 20_240_101)
             .unwrap()
             .unwrap();
         assert_eq!(
@@ -505,22 +505,17 @@ fn terminal_dispatch_after(
 
 /// Writes an unknown state into the record of `day`, so the allocation fallback fails too.
 fn corrupt_emission_day(ctx: &BlockRuntimeContext<'_>, day: u32) {
-    let emission = outbe_emission::schema::EmissionContract::new(ctx.storage.clone());
-    match emission.emission_days.get(day).unwrap() {
-        Some(mut record) => {
-            record.state = 7;
-            emission.emission_days.update(&record).unwrap();
-        }
-        None => {
-            let mut record = outbe_emission::schema::EmissionDay::new_pending(
+    let mut record = outbe_emission::api::get_emission_day(ctx.storage.clone(), day)
+        .unwrap()
+        .unwrap_or_else(|| {
+            outbe_emission::schema::EmissionDay::new_pending(
                 day,
                 outbe_system_common::time::WorldwideDay::new(0),
                 1,
-            );
-            record.state = 7;
-            emission.emission_days.create(&record).unwrap();
-        }
-    }
+            )
+        });
+    record.state = 7;
+    outbe_emission::api::put_emission_day(ctx.storage.clone(), &record).unwrap();
 }
 
 fn cycle_completed(storage: &HashMapStorageProvider, id: u32) -> bool {
@@ -561,7 +556,7 @@ fn failed_terminal_dispatch_takes_the_allocation_fallback() {
     storage.enter(|handle| {
         let fire = runtime_context(block_ctx(2, TOPUP_FIRE_TS), handle);
         assert!(is_day_allocated(&fire, 20_240_101));
-        let record = outbe_emission::api::get_emission_day_record(fire.storage.clone(), 20_240_101)
+        let record = outbe_emission::api::get_emission_day(fire.storage.clone(), 20_240_101)
             .unwrap()
             .unwrap();
         assert_eq!(
@@ -613,7 +608,7 @@ fn failed_terminal_dispatch_takes_the_allocation_fallback() {
 fn failed_terminal_dispatch_is_not_retried() {
     let mut storage = failed_terminal_dispatch();
     let settled = storage.enter(|handle| {
-        outbe_emission::api::get_emission_day_record(handle, 20_240_101)
+        outbe_emission::api::get_emission_day(handle, 20_240_101)
             .unwrap()
             .unwrap()
     });
@@ -628,7 +623,7 @@ fn failed_terminal_dispatch_is_not_retried() {
         account_parent(&retry, 3);
         run_due_tasks(&retry).unwrap();
         assert_eq!(
-            outbe_emission::api::get_emission_day_record(retry.storage.clone(), 20_240_101)
+            outbe_emission::api::get_emission_day(retry.storage.clone(), 20_240_101)
                 .unwrap()
                 .unwrap(),
             settled

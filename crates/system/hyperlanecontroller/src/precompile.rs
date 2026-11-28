@@ -13,7 +13,7 @@ use outbe_primitives::storage::StorageHandle;
 
 use crate::errors::HyperlaneControllerError;
 use crate::schema::{validator_domain_key, HyperlaneControllerContract};
-use crate::{ControllerBootstrap, SignedCheckpoint};
+use crate::{ControllerBootstrap, Report};
 
 /// No selector accepts native value. The owner holds the fee balance.
 pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];
@@ -65,15 +65,16 @@ pub fn dispatch(
                 applyApproved(c) => mutate_void(&storage, c, caller, |_, c| {
                     controller.apply_approved(c.proposalId, &c.payload)
                 }),
-                submitCheckpoint(c) => mutate_void(&storage, c, caller, |sender, c| {
-                    controller.submit_checkpoint(
+                submitReport(c) => mutate_void(&storage, c, caller, |sender, c| {
+                    controller.submit_report(
                         sender,
-                        &SignedCheckpoint {
-                            domain: c.domain,
-                            root: c.root,
-                            index: c.index,
-                            message_id: c.messageId,
-                            signature: &c.signature,
+                        c.domain,
+                        c.index,
+                        c.root,
+                        &Report {
+                            latest_index: c.latestIndex,
+                            not_serving: &c.notServing,
+                            not_delivered: &c.notDelivered,
                         },
                     )
                 }),
@@ -91,12 +92,19 @@ pub fn dispatch(
                         .read(&validator_domain_key(c.validator, c.domain))
                 }),
                 targetIndex(c) => view(c, |c| controller.target_index.read(&c.domain)),
+                deliveryIndex(c) => view(c, |c| controller.delivery_index.read(&c.domain)),
                 targetVote(c) => view(c, |c| {
                     let key = validator_domain_key(c.validator, c.domain);
                     Ok(IHyperlaneController::targetVoteReturn {
                         index: controller.vote_index.read(&key)?,
                         root: controller.vote_root.read(&key)?,
                     })
+                }),
+                livenessRound(c) => view(c, |_| controller.current_round()),
+                reportedRound(c) => view(c, |c| {
+                    controller
+                        .report_round
+                        .read(&validator_domain_key(c.validator, c.domain))
                 }),
                 missCount(c) => view(c, |c| controller.miss_count.read(&c.validator)),
                 getExchangeRateAndGasPrice(c) => view(c, |c| {

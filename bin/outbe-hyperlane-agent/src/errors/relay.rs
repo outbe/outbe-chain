@@ -1,0 +1,45 @@
+//! Errors of the relayer role.
+
+/// Errors that the relayer returns for a message that it cannot use.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum RelayError {
+    /// The `Dispatch` bytes are shorter than the message header.
+    #[error("the message has {0} bytes, the header needs 77")]
+    ShortMessage(usize),
+    /// The origin Mailbox has no `Dispatch` log for a stored leaf.
+    #[error("domain {domain} leaf {index}: no Dispatch log with this message id in block {block}")]
+    NoDispatch { domain: u32, index: u32, block: u64 },
+    /// An announced storage location is not an `s3+http(s)` location that
+    /// the relayer can read.
+    #[error("storage location {0} is not a readable s3+http(s) location")]
+    BadLocation(String),
+    /// The destination uses an ISM that the relayer cannot serve.
+    #[error("ISM {ism} has module type {module}: only the message-id multisig ISM is supported")]
+    UnsupportedIsm {
+        ism: alloy_primitives::Address,
+        module: u8,
+    },
+    /// The message uses a multisig ISM that the HyperlaneController does not
+    /// manage.
+    #[error("the message uses ISM {ism}, but the relayer delivers only for the controller ISM {trusted}")]
+    ForeignIsm {
+        ism: alloy_primitives::Address,
+        trusted: alloy_primitives::Address,
+    },
+    /// The multisig ISM returned a validator set that the relayer cannot use.
+    #[error("ISM {ism} has {validators} validators and threshold {threshold}: the set must have 1 to 50 validators and a threshold above 0")]
+    BadValidatorSet {
+        ism: alloy_primitives::Address,
+        validators: usize,
+        threshold: u8,
+    },
+    /// The delivery needs more gas than the relayer pays for one message.
+    #[error("the delivery needs {gas} gas, the relayer pays at most {limit}")]
+    GasAboveLimit { gas: u64, limit: u64 },
+    /// The `process` transaction is in a block but reverted.
+    #[error("process transaction {0} reverted")]
+    Reverted(alloy_primitives::B256),
+    /// The domain of a relayer task is not in the running domains.
+    #[error("domain {0} is not a running domain")]
+    NoChain(u32),
+}

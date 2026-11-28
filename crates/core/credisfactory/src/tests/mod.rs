@@ -630,7 +630,9 @@ pub fn paying<R>(
     pay: impl FnOnce(StorageHandle<'_>) -> R,
 ) -> R {
     let owed = StorageHandle::enter(provider, |storage| {
-        runtime::quote_settlement(&storage, credis_id).unwrap()
+        runtime::quote_settlement(&storage, credis_id)
+            .unwrap()
+            .payoff_minor
     });
     // A full settlement is not allowed in the issue block, so a payment comes a block later.
     let block = StorageHandle::enter(provider, |storage| storage.block_number().unwrap());

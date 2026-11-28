@@ -135,6 +135,15 @@ impl FullNodeNetworkConfig {
             },
         }
     }
+
+    fn reth_config(&self) -> String {
+        render_reth_config(
+            self.advertise_ip,
+            self.vm_reth_port
+                .unwrap_or(crate::vm_network::DEFAULT_RETH_PORT),
+            &self.bootnodes,
+        )
+    }
 }
 
 impl FullNodeConfig {
@@ -223,7 +232,11 @@ impl FullNodeConfig {
             extra,
             self.network.chain_id,
         );
-        write_private(&root.join("validator.env"), env.as_bytes())
+        write_private(&root.join("validator.env"), env.as_bytes())?;
+        write_private(
+            &root.join("reth.toml"),
+            self.network.reth_config().as_bytes(),
+        )
     }
 }
 
@@ -439,6 +452,14 @@ impl OperatorConfig {
                 self.network.ports.radicle,
             )
         };
+        let hyperlane_line = vm_role
+            .map(|_| {
+                format!(
+                    "OUTBE_HYPERLANE_FUNDING_WEI=\"{}\"\n",
+                    self.hyperlane.signer_funding_wei
+                )
+            })
+            .unwrap_or_default();
         let env = format!(
             concat!(
                 "{}",
@@ -450,6 +471,7 @@ impl OperatorConfig {
                 "OUTBE_BOOTNODES=\"{}\"\n",
                 "OUTBE_CONSENSUS_PEERS=\"{}\"\n",
                 "OUTBE_CONSENSUS_EXTRA_ARGS=\"{}\"\n",
+                "{}",
                 "OUTBE_CHAIN_ID=\"{}\"\n"
             ),
             role_line,
@@ -461,6 +483,7 @@ impl OperatorConfig {
             self.network.bootnodes.join(","),
             self.network.consensus_peers.join(","),
             extra,
+            hyperlane_line,
             self.network.chain_id,
         );
         write_private(&root.join("validator.env"), env.as_bytes())?;
@@ -468,9 +491,16 @@ impl OperatorConfig {
             &root.join("feeder-public.toml"),
             self.feeder.public_toml.as_bytes(),
         )?;
+        let health_bind_ip = vm_role.map_or(std::net::Ipv4Addr::LOCALHOST, |_| {
+            self.network.effective_rpc_bind_ip()
+        });
         write_private(
             &root.join("hyperlane-public.toml"),
-            self.hyperlane.public_toml()?.as_bytes(),
+            self.hyperlane.public_toml(health_bind_ip)?.as_bytes(),
+        )?;
+        write_private(
+            &root.join("reth.toml"),
+            self.network.reth_config().as_bytes(),
         )
     }
 
@@ -542,16 +572,16 @@ impl OperatorConfig {
 }
 
 impl HyperlaneConfig {
-    pub(crate) fn public_toml(&self) -> Result<String> {
+    pub(crate) fn public_toml(&self, health_bind_ip: std::net::Ipv4Addr) -> Result<String> {
         #[derive(Serialize)]
         struct HyperlaneSection {
             poll_interval_secs: u64,
             gasless: bool,
         }
         #[derive(Serialize)]
-        struct HealthSection<'a> {
+        struct HealthSection {
             enabled: bool,
-            bind_address: &'a str,
+            bind_address: String,
         }
         #[derive(Serialize)]
         struct StorageSection<'a> {
@@ -565,7 +595,7 @@ impl HyperlaneConfig {
         #[derive(Serialize)]
         struct PublicConfig<'a> {
             hyperlane: HyperlaneSection,
-            health: HealthSection<'a>,
+            health: HealthSection,
             storage: StorageSection<'a>,
             server: ServerSection<'a>,
             origin: &'a [HyperlaneOrigin],
@@ -577,7 +607,7 @@ impl HyperlaneConfig {
             },
             health: HealthSection {
                 enabled: true,
-                bind_address: "127.0.0.1:9003",
+                bind_address: format!("{health_bind_ip}:9003"),
             },
             storage: StorageSection {
                 db_path: "/opt/outbe-chain/state/hyperlane/db",
@@ -661,7 +691,8 @@ impl HyperlaneConfig {
                 );
             }
         }
-        self.public_toml()?.parse::<toml::Table>()?;
+        self.public_toml(std::net::Ipv4Addr::LOCALHOST)?
+            .parse::<toml::Table>()?;
         Ok(())
     }
 }
@@ -732,6 +763,23 @@ pub fn validate_hyperlane_public_toml(
 
     let parsed: PublicToml =
         toml::from_str(raw).wrap_err("invalid hyperlane-public.toml structure")?;
+    let health_bind = parsed
+        .health
+        .bind_address
+        .parse::<std::net::SocketAddrV4>()
+        .wrap_err("hyperlane health.bind_address must be an IPv4 socket address")?;
+    ensure!(
+        parsed.health.enabled,
+        "hyperlane health endpoint must be enabled"
+    );
+    ensure!(
+        health_bind.port() == 9003,
+        "hyperlane health.bind_address must use port 9003"
+    );
+    ensure!(
+        health_bind.ip().is_loopback() || health_bind.ip().is_private(),
+        "hyperlane health.bind_address must use a loopback or private IPv4 address"
+    );
     let cfg = HyperlaneConfig {
         public_url: parsed.server.public_url,
         poll_interval_secs: parsed.hyperlane.poll_interval_secs,
@@ -751,6 +799,22 @@ pub fn validate_hyperlane_public_toml(
             "hyperlane-public.toml must include local origin domain {local_domain}"
         );
     }
+    Ok(())
+}
+
+/// Validate the small operator-owned Reth config shared by all managed node roles.
+pub fn validate_reth_toml(raw: &str) -> Result<()> {
+    let table: toml::Table = raw.parse().wrap_err("reth.toml is not valid TOML")?;
+    let throttle = table
+        .get("peers")
+        .and_then(toml::Value::as_table)
+        .and_then(|peers| peers.get("incoming_ip_throttle_duration"))
+        .and_then(toml::Value::as_str)
+        .ok_or_else(|| eyre::eyre!("reth.toml must set peers.incoming_ip_throttle_duration"))?;
+    ensure!(
+        matches!(throttle, "1s" | "30s"),
+        "reth.toml peers.incoming_ip_throttle_duration must be 1s or 30s"
+    );
     Ok(())
 }
 
@@ -878,6 +942,27 @@ impl NetworkConfig {
         self.vm_rpc_port.unwrap_or(self.ports.rpc)
     }
 
+    fn effective_reth_port(&self) -> u16 {
+        self.vm_reth_port.unwrap_or(self.ports.reth_p2p)
+    }
+
+    /// Relax Reth's per-IP inbound throttle only when two configured peers can legitimately
+    /// arrive through one public address. The node's own bootnode entry is ignored.
+    fn reth_incoming_ip_throttle_duration(&self) -> &'static str {
+        reth_incoming_ip_throttle_duration(
+            self.advertise_ip,
+            self.effective_reth_port(),
+            &self.bootnodes,
+        )
+    }
+
+    fn reth_config(&self) -> String {
+        format!(
+            "[peers]\nincoming_ip_throttle_duration = \"{}\"\n",
+            self.reth_incoming_ip_throttle_duration()
+        )
+    }
+
     /// The RPC port is always set: `vm_rpc_port` overrides `ports.rpc`.
     fn vm_static_network(&self) -> VmStaticNetwork<'_> {
         VmStaticNetwork {
@@ -902,6 +987,40 @@ impl NetworkConfig {
             self.effective_rpc_port()
         )
     }
+}
+
+fn bootnode_ipv4_endpoint(value: &str) -> Option<(Ipv4Addr, u16)> {
+    let (_, address) = value.rsplit_once('@')?;
+    let (host, port) = address.rsplit_once(':')?;
+    Some((host.parse().ok()?, port.parse().ok()?))
+}
+
+fn reth_incoming_ip_throttle_duration(
+    advertise_ip: Ipv4Addr,
+    reth_port: u16,
+    bootnodes: &[String],
+) -> &'static str {
+    let self_endpoint = (advertise_ip, reth_port);
+    let mut peer_ips = BTreeSet::new();
+    for bootnode in bootnodes {
+        let Some(endpoint) = bootnode_ipv4_endpoint(bootnode) else {
+            continue;
+        };
+        if endpoint == self_endpoint {
+            continue;
+        }
+        if endpoint.0 == advertise_ip || !peer_ips.insert(endpoint.0) {
+            return "1s";
+        }
+    }
+    "30s"
+}
+
+fn render_reth_config(advertise_ip: Ipv4Addr, reth_port: u16, bootnodes: &[String]) -> String {
+    format!(
+        "[peers]\nincoming_ip_throttle_duration = \"{}\"\n",
+        reth_incoming_ip_throttle_duration(advertise_ip, reth_port, bootnodes)
+    )
 }
 
 const fn default_hyperlane_poll_interval() -> u64 {
@@ -1060,6 +1179,49 @@ hyperlane:
             !actual.contains("OUTBE_NODE_ROLE"),
             "bare-host validator.env must not include OUTBE_NODE_ROLE"
         );
+        assert_eq!(
+            fs::read_to_string(dir.path().join("reth.toml")).unwrap(),
+            "[peers]\nincoming_ip_throttle_duration = \"30s\"\n"
+        );
+    }
+
+    #[test]
+    fn reth_throttle_relaxes_only_for_shared_peer_ips() {
+        let mut network = NetworkConfig {
+            chain_id: 424_242,
+            certified_rpc: "https://rpc.example".to_owned(),
+            advertise_ip: Ipv4Addr::new(192, 0, 2, 10),
+            rpc_bind_ip: None,
+            ports: NetworkPorts::default(),
+            vm_ip: Some(Ipv4Addr::new(10, 77, 0, 10)),
+            vm_prefix: Some(24),
+            vm_gateway: Some(Ipv4Addr::new(10, 77, 0, 1)),
+            vm_dns: vec![Ipv4Addr::new(1, 1, 1, 1)],
+            vm_rpc_port: Some(8_545),
+            vm_consensus_port: Some(30_401),
+            vm_reth_port: Some(30_304),
+            vm_discv5_port: Some(31_304),
+            vm_radicle_port: Some(8_777),
+            bootnodes: vec![
+                "enode://self@192.0.2.10:30304".to_owned(),
+                "enode://peer@192.0.2.20:30303".to_owned(),
+            ],
+            consensus_peers: Vec::new(),
+            use_local_defaults: false,
+        };
+        assert_eq!(network.reth_incoming_ip_throttle_duration(), "30s");
+
+        network
+            .bootnodes
+            .push("enode://sibling@192.0.2.10:30303".to_owned());
+        assert_eq!(network.reth_incoming_ip_throttle_duration(), "1s");
+
+        network.advertise_ip = Ipv4Addr::new(192, 0, 2, 30);
+        network.bootnodes = vec![
+            "enode://peer-a@192.0.2.20:30303".to_owned(),
+            "enode://peer-b@192.0.2.20:30304".to_owned(),
+        ];
+        assert_eq!(network.reth_incoming_ip_throttle_duration(), "1s");
     }
 
     #[test]

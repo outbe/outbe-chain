@@ -6,7 +6,6 @@ const COMMON_POLICY: &[&str] = &[
     "RestartSec=5",
     "RestartSteps=5",
     "RestartMaxDelaySec=60",
-    "TimeoutStartSec=150",
     "TimeoutStopSec=90",
     "KillMode=mixed",
     "KillSignal=SIGTERM",
@@ -28,7 +27,7 @@ fn joining_and_founding_share_service_policy() {
         "outbe-radicle.service",
         "outbe-validator.service",
         "outbe-feeder.service",
-        "outbe-hyperlane-validator.service",
+        "outbe-hyperlane-agent.service",
     ] {
         let joining = unit(&joining, name);
         let founding = unit(&founding, name);
@@ -36,6 +35,19 @@ fn joining_and_founding_share_service_policy() {
             assert!(joining.contains(directive), "{name}: {directive}");
             assert!(founding.contains(directive), "{name}: {directive}");
         }
+        let expected_timeout = if name == "outbe-validator.service" {
+            "TimeoutStartSec=0"
+        } else {
+            "TimeoutStartSec=150"
+        };
+        assert!(
+            joining.contains(expected_timeout),
+            "{name}: {expected_timeout}"
+        );
+        assert!(
+            founding.contains(expected_timeout),
+            "{name}: {expected_timeout}"
+        );
     }
 }
 
@@ -83,8 +95,8 @@ fn units_are_concrete_and_flow_specific_only_where_required() {
     assert!(unit(&founding, "outbe-validator.service")
         .contains("/opt/outbe-chain/validator-2/run-node.sh"));
 
-    let joining_hyperlane = unit(&joining, "outbe-hyperlane-validator.service");
-    let founding_hyperlane = unit(&founding, "outbe-hyperlane-validator.service");
+    let joining_hyperlane = unit(&joining, "outbe-hyperlane-agent.service");
+    let founding_hyperlane = unit(&founding, "outbe-hyperlane-agent.service");
     assert!(joining_hyperlane.contains("OUTBE_HYPERLANE_WAIT_FOR_ACTIVE=1"));
     assert!(!founding_hyperlane.contains("OUTBE_HYPERLANE_WAIT_FOR_ACTIVE"));
     for hyperlane in [joining_hyperlane, founding_hyperlane] {
@@ -151,7 +163,7 @@ fn joining_units_match_pinned_output() {
             ),
         ),
         (
-            "outbe-hyperlane-validator.service",
+            "outbe-hyperlane-agent.service",
             concat!(
                 "[Unit]\n",
                 "Description=Outbe Hyperlane validator\n",
@@ -165,7 +177,7 @@ fn joining_units_match_pinned_output() {
                 "User=outbe\n",
                 "Group=outbe\n",
                 "EnvironmentFile=/opt/outbe-chain/validator.env\n",
-                "RuntimeDirectory=outbe-hyperlane-validator\n",
+                "RuntimeDirectory=outbe-hyperlane-agent\n",
                 "RuntimeDirectoryMode=0700\n",
                 "Environment=STATE_DIRECTORY=/opt/outbe-chain/state/hyperlane\n",
                 "Environment=OUTBE_HYPERLANE_WAIT_FOR_ACTIVE=1\n",
@@ -257,6 +269,7 @@ fn joining_units_match_pinned_output() {
                 "Environment=RUST_MIN_STACK=16777216\n",
                 "ExecStartPre=/usr/local/bin/outbe-up internal wait-validator-dependencies\n",
                 "ExecStart=/opt/outbe-chain/outbe-chain node \\\n",
+                "  --config /opt/outbe-chain/reth.toml \\\n",
                 "  --chain /opt/outbe-chain/genesis.json \\\n",
                 "  --datadir /opt/outbe-chain/validator-0/data \\\n",
                 "  --engine.persistence-threshold 0 \\\n",
@@ -288,13 +301,13 @@ fn joining_units_match_pinned_output() {
                 "  --upstream ${OUTBE_CERTIFIED_RPC} \\\n",
                 "  --radicle.control-socket /opt/outbe-chain/keys/radicle/node/outbe-control.sock \\\n",
                 "  --radicle.status-address 127.0.0.1:8876\n",
-                "ExecStartPost=/usr/local/bin/outbe-up internal wait-rpc\n",
+                "ExecStartPost=/usr/local/bin/outbe-up internal wait-rpc --timeout 0\n",
                 "Restart=always\n",
                 "RestartMode=direct\n",
                 "RestartSec=5\n",
                 "RestartSteps=5\n",
                 "RestartMaxDelaySec=60\n",
-                "TimeoutStartSec=150\n",
+                "TimeoutStartSec=0\n",
                 "TimeoutStopSec=90\n",
                 "KillMode=mixed\n",
                 "KillSignal=SIGTERM\n",
@@ -319,10 +332,10 @@ fn joining_units_match_pinned_output() {
                 "Wants=outbe-radicle.service\n",
                 "Wants=outbe-validator.service\n",
                 "Wants=outbe-feeder.service\n",
-                "Wants=outbe-hyperlane-validator.service\n",
+                "Wants=outbe-hyperlane-agent.service\n",
                 "After=outbe-radicle.service\n",
                 "After=outbe-validator.service outbe-feeder.service\n",
-                "After=outbe-hyperlane-validator.service\n",
+                "After=outbe-hyperlane-agent.service\n",
                 "\n",
                 "[Install]\n",
                 "WantedBy=multi-user.target\n",
@@ -346,7 +359,7 @@ fn vm_units_share_service_policy_and_target() {
         vec![
             "outbe-feeder.service",
             "outbe-full-node.service",
-            "outbe-hyperlane-validator.service",
+            "outbe-hyperlane-agent.service",
             "outbe-joining-validator.service",
             "outbe-radicle.service",
             "outbe-validator.service",
@@ -361,7 +374,7 @@ fn vm_units_share_service_policy_and_target() {
         "outbe-joining-validator.service",
         "outbe-full-node.service",
         "outbe-feeder.service",
-        "outbe-hyperlane-validator.service",
+        "outbe-hyperlane-agent.service",
     ] {
         let content = unit(&vm, name);
         for directive in COMMON_POLICY {
@@ -418,11 +431,31 @@ fn vm_units_share_service_policy_and_target() {
     );
     assert!(!boot.contains("EnvironmentFile="));
 
-    let hyperlane = unit(&vm, "outbe-hyperlane-validator.service");
+    let hyperlane = unit(&vm, "outbe-hyperlane-agent.service");
     assert!(!hyperlane.contains("OUTBE_HYPERLANE_WAIT_FOR_ACTIVE"));
     assert!(!hyperlane.contains("Wants=outbe-validator.service"));
     let feeder = unit(&vm, "outbe-feeder.service");
     assert!(!feeder.contains("Wants=outbe-validator.service"));
+
+    for name in [
+        "outbe-validator.service",
+        "outbe-joining-validator.service",
+        "outbe-full-node.service",
+    ] {
+        let node = unit(&vm, name);
+        assert!(node.contains("TimeoutStartSec=0\n"), "{name}");
+        assert!(
+            node.contains("ExecStartPost=/usr/local/bin/outbe-vm-agent wait-rpc --timeout 0\n"),
+            "{name}"
+        );
+    }
+    for name in [
+        "outbe-radicle.service",
+        "outbe-feeder.service",
+        "outbe-hyperlane-agent.service",
+    ] {
+        assert!(unit(&vm, name).contains("TimeoutStartSec=150\n"), "{name}");
+    }
 
     let target = unit(&vm, "outbe-validator.target");
     assert!(target.contains("Requires=outbe-vm-boot.service"));
@@ -499,7 +532,7 @@ fn vm_units_execute_only_image_binaries_and_write_only_under_data_root() {
     );
     assert!(unit(&vm, "outbe-feeder.service")
         .contains("ExecStart=/usr/local/bin/outbe-vm-agent feeder --bin-dir /usr/local/bin"));
-    assert!(unit(&vm, "outbe-hyperlane-validator.service")
+    assert!(unit(&vm, "outbe-hyperlane-agent.service")
         .contains("ExecStart=/usr/local/bin/outbe-vm-agent hyperlane --bin-dir /usr/local/bin"));
 }
 
@@ -518,6 +551,7 @@ fn vm_validator_args_match_pinned_founding_flags() {
     // Founding node_script flags in bin/outbe-genesis-cli/src/launch_bundle/scripts.rs.
     let expected_founding_flags: BTreeSet<&str> = [
         "--validator",
+        "--config",
         "--chain",
         "--datadir",
         "--engine.persistence-threshold",
@@ -583,6 +617,7 @@ fn vm_units_use_explicit_env_ports_for_listen_and_advertise_and_keep_fixed_ports
     };
 
     let validator = expand(unit(&vm, "outbe-validator.service"));
+    assert!(validator.contains("--config /opt/outbe-chain/reth.toml"));
     assert!(validator.contains("--consensus.listen-addr 0.0.0.0:30401"));
     assert!(validator.contains("--port 30304"));
     assert!(validator.contains("--discovery.port 30304"));
@@ -601,6 +636,7 @@ fn vm_units_use_explicit_env_ports_for_listen_and_advertise_and_keep_fixed_ports
     assert!(radicle.contains("--status-listen 127.0.0.1:8876"));
 
     let joining = expand(unit(&vm, "outbe-joining-validator.service"));
+    assert!(joining.contains("--config /opt/outbe-chain/reth.toml"));
     assert!(joining.contains("--http.port 8546"));
     assert!(joining.contains("--consensus.listen-addr 0.0.0.0:30401"));
     assert!(joining.contains("--port 30304"));
@@ -611,6 +647,7 @@ fn vm_units_use_explicit_env_ports_for_listen_and_advertise_and_keep_fixed_ports
     assert!(joining.contains("--upstream ${OUTBE_CERTIFIED_RPC}"));
 
     let full_node = expand(unit(&vm, "outbe-full-node.service"));
+    assert!(full_node.contains("--config /opt/outbe-chain/reth.toml"));
     assert!(full_node.contains("--port 30304"));
     assert!(full_node.contains("--discovery.port 30304"));
     assert!(full_node.contains("--discovery.v5.port 31304"));
@@ -664,7 +701,9 @@ fn vm_joining_validator_args_match_bare_host_joining_flags_and_full_node_is_keyl
     assert!(!full_content.contains("outbe-radicle.service"));
     assert!(!full_content.contains("wait-validator-dependencies"));
     assert!(full_content.contains("ReadWritePaths=/opt/outbe-chain/validator-0\n"));
-    assert!(full_content.contains("ExecStartPost=/usr/local/bin/outbe-vm-agent wait-rpc\n"));
+    assert!(
+        full_content.contains("ExecStartPost=/usr/local/bin/outbe-vm-agent wait-rpc --timeout 0\n")
+    );
 }
 
 #[test]
@@ -746,7 +785,7 @@ fn vm_console_dropins_print_each_service_to_the_console_one_time() {
             "dstack-guest-agent.service.d/10-outbe-console.conf",
             "outbe-feeder.service.d/10-outbe-console.conf",
             "outbe-full-node.service.d/10-outbe-console.conf",
-            "outbe-hyperlane-validator.service.d/10-outbe-console.conf",
+            "outbe-hyperlane-agent.service.d/10-outbe-console.conf",
             "outbe-joining-validator.service.d/10-outbe-console.conf",
             "outbe-radicle.service.d/10-outbe-console.conf",
             "outbe-validator.service.d/10-outbe-console.conf",

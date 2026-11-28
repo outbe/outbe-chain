@@ -53,14 +53,8 @@ pub enum IntexFactoryError {
     #[error("marked-up price overflow")]
     MarkedUpPriceOverflow,
 
-    #[error("owner units exceed u32")]
-    OwnerUnitsExceedU32,
-
     #[error("settled units exceed u32")]
     SettledUnitsExceedU32,
-
-    #[error("NFT balance exceeds u32")]
-    NftBalanceExceedsU32,
 
     #[error("NFT balanceOf undecodable")]
     NftBalanceOfUndecodable,
@@ -73,8 +67,8 @@ pub enum IntexFactoryError {
 
     #[error("mined units exceed the series")]
     MinedUnitsExceedSeries,
-    #[error("series is not Issued")]
-    SeriesNotIssued,
+    #[error("intex is not Issued")]
+    IntexNotIssued,
     #[error("date step kind {kind} from date key {date_key}")]
     DateStep { kind: u8, date_key: u32 },
 }
@@ -147,16 +141,14 @@ impl From<IntexFactoryError> for PrecompileError {
             }
             IntexFactoryError::PriceExceedsWireType => revert_with(I::PriceExceedsWireType {}),
             IntexFactoryError::MarkedUpPriceOverflow => revert_with(I::MarkedUpPriceOverflow {}),
-            IntexFactoryError::OwnerUnitsExceedU32 => revert_with(I::OwnerUnitsExceedU32 {}),
             IntexFactoryError::SettledUnitsExceedU32 => revert_with(I::SettledUnitsExceedU32 {}),
-            IntexFactoryError::NftBalanceExceedsU32 => revert_with(I::NftBalanceExceedsU32 {}),
             IntexFactoryError::NftBalanceOfUndecodable => {
                 revert_with(I::NftBalanceOfUndecodable {})
             }
             IntexFactoryError::PromisOverflow => revert_with(I::PromisOverflow {}),
             IntexFactoryError::MiningSequenceOverflow => revert_with(I::MiningSequenceOverflow {}),
             IntexFactoryError::MinedUnitsExceedSeries => revert_with(I::MinedUnitsExceedSeries {}),
-            IntexFactoryError::SeriesNotIssued => revert_with(I::SeriesNotIssued {}),
+            IntexFactoryError::IntexNotIssued => revert_with(I::IntexNotIssued {}),
             IntexFactoryError::DateStep { kind, date_key } => revert_with(I::DateStep {
                 kind,
                 dateKey: date_key,

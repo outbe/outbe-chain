@@ -8254,7 +8254,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "outbe-hyperlane-validator"
+name = "outbe-hyperlane-agent"
 version = "0.1.0"
 dependencies = [
  "alloy-eips",
@@ -8735,6 +8735,7 @@ dependencies = [
  "outbe-stablecoinfactory",
  "outbe-system-common",
  "outbe-vaultrouter",
+ "outbe-worldwideday",
  "serde",
  "serde_json",
  "tempfile",

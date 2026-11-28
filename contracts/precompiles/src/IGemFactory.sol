@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.30;
 
+/// @dev The GemFactory precompile. Matches `GEM_FACTORY_ADDRESS` in crates/system/common/src/addresses.rs.
+address constant GEM_FACTORY = 0x0000000000000000000000000000000000002013;
+
 interface IGemFactory {
     error GemNotFound();
     error GemAlreadySettled();
@@ -112,7 +115,7 @@ interface IGemFactory {
 
     /// @notice Read the call progress of `gemId`. Reverts `GemNotFound`, or
     ///         `GemNotIssued` once it is Called, Settled or Forfeited.
-    function callState(uint256 gemId) external view returns (CallState memory);
+    function getCallState(uint256 gemId) external view returns (CallState memory);
 
     /// @notice A merchant's Intex in the Gem Factory: the pool Merchant gems are drawn from.
     struct GemFactoryPositionData {

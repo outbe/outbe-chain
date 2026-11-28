@@ -331,7 +331,8 @@ genesis:
     let fw = test_manifest["firewall_mappings"]
         .as_array()
         .expect("mixed-host manifest must include firewall_mappings");
-    assert_eq!(fw.len(), 20);
+    // Six mappings for each of the four founders. The Hyperlane port is the sixth.
+    assert_eq!(fw.len(), 24);
     assert_eq!(fw[0]["member"], "validator-0");
     assert_eq!(fw[0]["host"], "198.51.100.10");
     assert_eq!(fw[0]["public_ip"], "198.51.100.10");

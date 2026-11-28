@@ -27,4 +27,10 @@ impl WorldwideDay {
             .forming_start()?
             .saturating_add(outbe_chain_constants::get_metadosis_forming_period_seconds()))
     }
+
+    /// Returns true when `timestamp` is in the offering window `[offering_start, offering_end)`.
+    #[must_use]
+    pub const fn is_offering_at(&self, timestamp: u64) -> bool {
+        timestamp >= self.offering_start && timestamp < self.offering_end
+    }
 }

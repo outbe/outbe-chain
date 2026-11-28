@@ -192,7 +192,7 @@ fn insert_core_genesis_fields(
         ("feeder_binary", json!("/opt/outbe-chain/outbe-feeder")),
         (
             "hyperlane_binary",
-            json!("/opt/outbe-chain/outbe-hyperlane-validator"),
+            json!("/opt/outbe-chain/outbe-hyperlane-agent"),
         ),
         (
             "hyperlane_poll_interval_secs",

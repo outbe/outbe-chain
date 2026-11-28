@@ -55,7 +55,7 @@ pub const DEFAULT_REREGISTRATION_COOLDOWN_BLOCKS: u64 = 151_200;
 /// Must equal the node default `outbe_simplex::config::DEFAULT_EPOCH_LENGTH_BLOCKS`.
 pub const DEFAULT_EPOCH_LENGTH_BLOCKS: u64 = 3_600;
 
-pub const INTEX_PROFILE_SLOT: u64 = 17;
+pub const INTEX_PROFILE_SLOT: u64 = 15;
 pub const GEM_PROFILE_SLOT: u64 = 31;
 pub const NOD_PROFILE_SLOT: u64 = 24;
 pub const CREDIS_PROFILE_SLOT: u64 = 39;

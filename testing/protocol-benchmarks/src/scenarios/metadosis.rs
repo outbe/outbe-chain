@@ -72,12 +72,12 @@ impl BenchmarkScenario for MetadosisScenario {
             runtime_gas,
             "metadosis",
         )?;
-        let projection = StorageHandle::enter(&mut provider, |storage| {
-            outbe_metadosis::api::worldwide_day(storage, TARGET_WWD)
+        let record = StorageHandle::enter(&mut provider, |storage| {
+            outbe_worldwideday::api::get_worldwide_day(storage, TARGET_WWD)
                 .map_err(|error| error.to_string())
         })?
         .ok_or_else(|| "created Metadosis WWD is not readable".to_owned())?;
-        if projection.day == 0 {
+        if record.emission_day == 0 {
             return Err("created Metadosis WWD has zero EmissionDay link".to_owned());
         }
 

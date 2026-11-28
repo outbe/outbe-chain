@@ -620,33 +620,20 @@ mod sync {
 mod liveness {
     use super::*;
     use crate::schema::validator_domain_key;
-    use crate::{checkpoint_digest, GRACE_BLOCKS, MAX_MISSES};
-    use alloy_primitives::{b256, hex};
-    use outbe_primitives::tee_signatures::recover_signer;
+    use crate::{Report, MAX_MISSES};
+    use alloy_primitives::b256;
 
-    /// Real checkpoints signed on outbetestnet by validator 0x4fe927… for the
-    /// (since redeployed) MerkleTreeHook 0x6543cef9…, taken from its S3 bucket.
     const FIXTURE_HOOK: Address = address!("0x6543cef9bbe42d66b5b36ccaf9374de2b55f9cbc");
     const FIXTURE_VALIDATOR: Address = address!("0x4fe927ab711793954b3a29969ecd4a60d6d265d0");
     struct Checkpoint {
         root: B256,
         index: u32,
-        message_id: B256,
-        signature: [u8; 65],
-    }
-
-    fn signature(hex_str: &str) -> [u8; 65] {
-        hex::decode(hex_str).unwrap().try_into().unwrap()
     }
 
     fn checkpoint_0() -> Checkpoint {
         Checkpoint {
             root: b256!("0xb8f3591fc1f80eaecba71902c5a172bb89783f96eb34dacf4fec14ef5d8e4765"),
             index: 0,
-            message_id: b256!("0x6cf30153c1583380a6bab73348f2f33f7aa36a249f3ffe3868d4d0a8694c8c1f"),
-            signature: signature(
-                "1d728977b83ac16088ea0db249f9c4eac6b58818b42676964b238ac37228e48520858022b5e514ea711b3b2bd55be4381efeb8d7bb907c75525bd760decad2781b",
-            ),
         }
     }
 
@@ -654,20 +641,17 @@ mod liveness {
         Checkpoint {
             root: b256!("0x5cd1ceeff6f033960677157f13b472fcfb1617638dbdfb0ab0cde36cd94bf050"),
             index: 2,
-            message_id: b256!("0x3eae2775d2a39169fd82693c9883351a72761c9cdf4cddedaf95bf62e454250e"),
-            signature: signature(
-                "82079df9c6de4d2ab039216e3275cf803d245819150512e50dde105e2802f98976b8041d134256ef7df29fa8a8613a5c042af46c3468ab011410e19e6e1cb4931c",
-            ),
         }
     }
 
     fn submit_call(domain: u32, checkpoint: &Checkpoint, index: u32) -> Bytes {
-        IHyperlaneController::submitCheckpointCall {
+        IHyperlaneController::submitReportCall {
             domain,
-            root: checkpoint.root,
             index,
-            messageId: checkpoint.message_id,
-            signature: Bytes::copy_from_slice(&checkpoint.signature),
+            root: checkpoint.root,
+            latestIndex: 0,
+            notServing: Vec::new(),
+            notDelivered: Vec::new(),
         }
         .abi_encode()
         .into()
@@ -707,24 +691,7 @@ mod liveness {
     }
 
     #[test]
-    fn digest_recovers_the_agent_key_from_real_checkpoints() {
-        for checkpoint in [checkpoint_0(), checkpoint_2()] {
-            let digest = checkpoint_digest(
-                LOCAL,
-                FIXTURE_HOOK,
-                checkpoint.root,
-                checkpoint.index,
-                checkpoint.message_id,
-            );
-            assert_eq!(
-                recover_signer(&digest, &checkpoint.signature).unwrap(),
-                FIXTURE_VALIDATOR
-            );
-        }
-    }
-
-    #[test]
-    fn submit_accepts_own_signature_and_rejects_the_rest() {
+    fn submit_accepts_an_active_validator_and_rejects_the_rest() {
         let mut p = liveness_provider();
         p.set_block_number(100);
         p.clear_events(HYPERLANE_CONTROLLER_ADDRESS);
@@ -771,18 +738,6 @@ mod liveness {
             assert_eq!(
                 revert_selector(no_hook),
                 IHyperlaneController::UnknownHook::SELECTOR
-            );
-
-            let tampered = dispatch(
-                storage.clone(),
-                &submit_call(LOCAL, &two, 3),
-                FIXTURE_VALIDATOR,
-                U256::ZERO,
-            )
-            .unwrap_err();
-            assert_eq!(
-                revert_selector(tampered),
-                IHyperlaneController::SignerMismatch::SELECTOR
             );
 
             let older = dispatch(
@@ -839,7 +794,7 @@ mod liveness {
                     dispatch(storage.clone(), &checkpoint, hyperlane, U256::ZERO).unwrap_err()
                 ),
                 IHyperlaneController::NotActiveValidator::SELECTOR,
-                "checkpoint signer binding does not authorize a transaction sender"
+                "the checkpoint signer is not a transaction sender"
             );
 
             validators
@@ -859,20 +814,6 @@ mod liveness {
                     );
                 }
             }
-            assert_eq!(
-                revert_selector(
-                    dispatch(storage.clone(), &checkpoint, hyperlane, U256::ZERO).unwrap_err()
-                ),
-                IHyperlaneController::SignerMismatch::SELECTOR,
-                "an authorized sender still needs the registered checkpoint signature"
-            );
-
-            let reset_signer: Bytes = IHyperlaneController::setHyperlaneSignerCall {
-                signer: Address::ZERO,
-            }
-            .abi_encode()
-            .into();
-            dispatch(storage.clone(), &reset_signer, hyperlane, U256::ZERO).unwrap();
             dispatch(storage.clone(), &checkpoint, hyperlane, U256::ZERO).unwrap();
             let controller = HyperlaneControllerContract::new(storage);
             assert_eq!(
@@ -924,32 +865,20 @@ mod liveness {
                 .into();
             assert!(dispatch(storage.clone(), &set, stranger(), U256::ZERO).is_err());
             dispatch(storage.clone(), &set, FIXTURE_VALIDATOR, U256::ZERO).unwrap();
-            // The fixture is signed by the validator key, not v(9): rejected now.
-            let err = dispatch(
-                storage.clone(),
-                &submit_call(LOCAL, &checkpoint_2(), 2),
-                FIXTURE_VALIDATOR,
-                U256::ZERO,
-            )
-            .unwrap_err();
-            assert_eq!(
-                revert_selector(err),
-                IHyperlaneController::SignerMismatch::SELECTOR
-            );
-            // Reset to the validator address.
+            let signer = |storage: &StorageHandle| {
+                HyperlaneControllerContract::new(storage.clone())
+                    .hyperlane_signer(FIXTURE_VALIDATOR)
+                    .unwrap()
+            };
+            assert_eq!(signer(&storage), v(9));
+            // Zero resets to the validator address.
             let reset: Bytes = IHyperlaneController::setHyperlaneSignerCall {
                 signer: Address::ZERO,
             }
             .abi_encode()
             .into();
             dispatch(storage.clone(), &reset, FIXTURE_VALIDATOR, U256::ZERO).unwrap();
-            dispatch(
-                storage,
-                &submit_call(LOCAL, &checkpoint_2(), 2),
-                FIXTURE_VALIDATOR,
-                U256::ZERO,
-            )
-            .unwrap();
+            assert_eq!(signer(&storage), FIXTURE_VALIDATOR);
         });
     }
 
@@ -976,8 +905,134 @@ mod liveness {
         }
     }
 
+    /// Makes `block` the first block of an epoch.
+    fn start_epoch(storage: StorageHandle<'_>, block: u64) {
+        outbe_validatorset::hooks::advance_epoch(storage, 1_700_000_000, block).unwrap();
+    }
+
+    fn module_ctx(
+        block: u64,
+        storage: StorageHandle<'_>,
+    ) -> outbe_primitives::block::BlockRuntimeContext<'_> {
+        outbe_primitives::block::BlockRuntimeContext::new(
+            outbe_primitives::block::BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
+                block_number: block,
+                timestamp: 1_700_000_000,
+                chain_id: CHAIN_ID,
+                genesis_hash: B256::ZERO,
+                genesis_timestamp: 1_700_000_000,
+                proposer: Address::ZERO,
+                validators: Vec::new(),
+            },
+            storage,
+        )
+    }
+
     fn four() -> [Address; 4] {
         [FIXTURE_VALIDATOR, v(2), v(3), v(4)]
+    }
+
+    #[test]
+    fn the_first_call_of_a_round_gives_the_report_and_the_latest_index() {
+        use crate::schema::{complaints_key, Fault};
+        use crate::MAX_REPORT_ADDRESSES;
+
+        let mut p = liveness_provider();
+        p.set_block_number(100);
+        StorageHandle::enter(&mut p, |storage| {
+            four_validators(storage.clone());
+            let mut c = HyperlaneControllerContract::new(storage.clone());
+            let key = validator_domain_key(FIXTURE_VALIDATOR, LOCAL);
+            let serving = complaints_key(v(3), LOCAL, Fault::NotServing);
+            let delivered = complaints_key(v(4), LOCAL, Fault::NotDelivered);
+            c.target_index.write(&LOCAL, 2).unwrap();
+            assert_eq!(c.current_round().unwrap(), 1);
+
+            // The vote carries the report. A validator named two times in one
+            // list counts one time. The latest index of the report is above
+            // the signed index.
+            let report = Report {
+                latest_index: 7,
+                not_serving: &[v(3), v(3)],
+                not_delivered: &[v(4)],
+            };
+            c.record_submission(FIXTURE_VALIDATOR, LOCAL, 2, ROOT_A, &report)
+                .unwrap();
+            assert_eq!(c.report_round.read(&key).unwrap(), 1);
+            assert_eq!(c.submitted_index.read(&key).unwrap(), 7);
+            assert_eq!(c.vote_root.read(&key).unwrap(), ROOT_A);
+            assert_eq!(c.complaints_at(&serving, 1).unwrap(), 1);
+            assert_eq!(c.complaints_at(&delivered, 1).unwrap(), 1);
+
+            // A second validator adds its vote.
+            c.record_submission(v(2), LOCAL, 2, ROOT_A, &report)
+                .unwrap();
+            assert_eq!(c.complaints_at(&serving, 1).unwrap(), 2);
+
+            // A later call of the same round changes the vote, not the report.
+            let other = Report {
+                latest_index: 0,
+                not_serving: &[v(4)],
+                not_delivered: &[v(3)],
+            };
+            c.record_submission(FIXTURE_VALIDATOR, LOCAL, 2, ROOT_B, &other)
+                .unwrap();
+            assert_eq!(c.vote_root.read(&key).unwrap(), ROOT_B);
+            assert_eq!(
+                c.complaints_at(&complaints_key(v(4), LOCAL, Fault::NotServing), 1)
+                    .unwrap(),
+                0
+            );
+
+            // The views.
+            let round: Bytes = IHyperlaneController::livenessRoundCall {}
+                .abi_encode()
+                .into();
+            let ret = dispatch(storage.clone(), &round, stranger(), U256::ZERO).unwrap();
+            assert_eq!(
+                IHyperlaneController::livenessRoundCall::abi_decode_returns(&ret).unwrap(),
+                1
+            );
+            let reported: Bytes = IHyperlaneController::reportedRoundCall {
+                validator: FIXTURE_VALIDATOR,
+                domain: LOCAL,
+            }
+            .abi_encode()
+            .into();
+            let ret = dispatch(storage, &reported, stranger(), U256::ZERO).unwrap();
+            assert_eq!(
+                IHyperlaneController::reportedRoundCall::abi_decode_returns(&ret).unwrap(),
+                1
+            );
+
+            // The verdict starts the next round. The votes of round 1 do not
+            // count in round 2, and the validator can report again.
+            c.check_liveness().unwrap();
+            assert_eq!(c.current_round().unwrap(), 2);
+            assert_eq!(c.complaints_at(&serving, 2).unwrap(), 0);
+            c.record_submission(FIXTURE_VALIDATOR, LOCAL, 2, ROOT_A, &report)
+                .unwrap();
+            assert_eq!(c.report_round.read(&key).unwrap(), 2);
+            assert_eq!(c.complaints_at(&serving, 2).unwrap(), 1);
+
+            // The two lists hold 32 addresses at most.
+            let many = vec![v(9); MAX_REPORT_ADDRESSES + 1];
+            let signed = checkpoint_2();
+            let long = Report {
+                latest_index: 0,
+                not_serving: &many,
+                not_delivered: &[],
+            };
+            let error = c
+                .submit_report(FIXTURE_VALIDATOR, LOCAL, signed.index, signed.root, &long)
+                .unwrap_err();
+            assert_eq!(
+                revert_selector(error),
+                IHyperlaneController::ReportTooLong::SELECTOR
+            );
+        });
     }
 
     #[test]
@@ -1016,16 +1071,16 @@ mod liveness {
 
             // Another root at the target replaces the vote. An index that is
             // not the target and not newer is stale.
-            c.record_submission(FIXTURE_VALIDATOR, LOCAL, 2, ROOT_B)
+            c.record_submission(FIXTURE_VALIDATOR, LOCAL, 2, ROOT_B, &Report::default())
                 .unwrap();
             assert_eq!(c.vote_root.read(&key).unwrap(), ROOT_B);
             assert!(c
-                .record_submission(FIXTURE_VALIDATOR, LOCAL, 1, ROOT_B)
+                .record_submission(FIXTURE_VALIDATOR, LOCAL, 1, ROOT_B, &Report::default())
                 .is_err());
 
             // A newer index at the target is the vote and the latest index.
             c.target_index.write(&LOCAL, 9).unwrap();
-            c.record_submission(FIXTURE_VALIDATOR, LOCAL, 9, ROOT_A)
+            c.record_submission(FIXTURE_VALIDATOR, LOCAL, 9, ROOT_A, &Report::default())
                 .unwrap();
             assert_eq!(c.submitted_index.read(&key).unwrap(), 9);
             assert_eq!(c.vote_index.read(&key).unwrap(), 9);
@@ -1033,7 +1088,7 @@ mod liveness {
         });
     }
 
-    /// Four validators. The target is the third-highest settled index, so one
+    /// Four validators. The target is the third-highest latest index, so one
     /// inflated submission cannot move it. A validator is on time only when
     /// its root at the target equals the root of the quorum.
     #[test]
@@ -1042,14 +1097,15 @@ mod liveness {
         StorageHandle::enter(&mut p, |storage| {
             four_validators(storage.clone());
             let c = HyperlaneControllerContract::new(storage);
-            let old = 1_000 - GRACE_BLOCKS;
+            // A submission of the block before the verdict counts.
+            let old = 999;
             write_submission(&c, validator_domain_key(FIXTURE_VALIDATOR, LOCAL), 500, old).unwrap();
             write_submission(&c, validator_domain_key(v(2), LOCAL), 498, old).unwrap();
             write_submission(&c, validator_domain_key(v(3), LOCAL), 120, old).unwrap();
             write_submission(&c, validator_domain_key(v(4), LOCAL), 999_999, old).unwrap();
-            // SEPOLIA: fresh submissions do not make a target.
-            for addr in four() {
-                write_submission(&c, validator_domain_key(addr, SEPOLIA), 10, 999).unwrap();
+            // SEPOLIA: two submissions are fewer than the threshold.
+            for addr in [FIXTURE_VALIDATOR, v(2)] {
+                write_submission(&c, validator_domain_key(addr, SEPOLIA), 10, old).unwrap();
             }
         });
         p.set_block_number(1_000);
@@ -1211,7 +1267,6 @@ mod liveness {
 
     #[test]
     fn liveness_jail_waits_for_the_epoch_boundary_to_rotate() {
-        use crate::LIVENESS_WINDOW_BLOCKS;
         use outbe_primitives::block::{BlockContext, BlockRuntimeContext, ProtocolModule};
 
         let mut p = liveness_provider();
@@ -1232,10 +1287,20 @@ mod liveness {
             }
         });
         let start = p.sub_call_inputs().len();
-        for window in 1..=u64::from(MAX_MISSES) {
-            let block = LIVENESS_WINDOW_BLOCKS * window;
+        for epoch in 1..=u64::from(MAX_MISSES) {
+            let block = 300 * epoch;
             p.set_block_number(block);
             StorageHandle::enter(&mut p, |storage| {
+                // A block that is not the first block of an epoch: no verdict.
+                let c = HyperlaneControllerContract::new(storage.clone());
+                let round = c.current_round().unwrap();
+                <crate::HyperlaneModule as ProtocolModule>::begin_block(&module_ctx(
+                    block,
+                    storage.clone(),
+                ))
+                .unwrap();
+                assert_eq!(c.current_round().unwrap(), round);
+                start_epoch(storage.clone(), block);
                 let ctx = BlockRuntimeContext::new(
                     BlockContext {
                         block_gas_limit: 0,
@@ -1266,6 +1331,146 @@ mod liveness {
         }));
     }
 
+    /// Four validators, quorum 3. Every validator has the anchor root on
+    /// LOCAL, so only the reports can give a miss.
+    fn voted_at_the_target(c: &HyperlaneControllerContract<'_>) {
+        c.target_index.write(&LOCAL, 500).unwrap();
+        for addr in four() {
+            let key = validator_domain_key(addr, LOCAL);
+            write_submission(c, key, 500, 100).unwrap();
+            write_vote(c, key, 500, ROOT_A).unwrap();
+            write_submission(c, validator_domain_key(addr, SEPOLIA), 5, 100).unwrap();
+        }
+    }
+
+    fn miss_events(p: &HashMapStorageProvider) -> Vec<(Address, u8)> {
+        p.get_events(HYPERLANE_CONTROLLER_ADDRESS)
+            .iter()
+            .filter_map(|log| IHyperlaneController::LivenessMiss::decode_log_data(log).ok())
+            .map(|miss| (miss.validator, miss.reasons))
+            .collect()
+    }
+
+    #[test]
+    fn a_quorum_of_complaints_is_a_miss_and_a_silent_reporter_gets_one_too() {
+        use crate::miss_reason::{NOT_DELIVERED, NOT_SERVING, NO_COMPLAINT};
+
+        let mut p = liveness_provider();
+        p.set_block_number(1_000);
+        StorageHandle::enter(&mut p, |storage| {
+            four_validators(storage.clone());
+            let mut c = HyperlaneControllerContract::new(storage);
+            voted_at_the_target(&c);
+            // v(3) does not serve: the three others name it. v(4) did not
+            // deliver: only two validators name it, this is no quorum.
+            let full = Report {
+                latest_index: 0,
+                not_serving: &[v(3)],
+                not_delivered: &[v(4)],
+            };
+            let serving_only = Report {
+                latest_index: 0,
+                not_serving: &[v(3)],
+                not_delivered: &[],
+            };
+            c.record_submission(FIXTURE_VALIDATOR, LOCAL, 500, ROOT_B, &full)
+                .unwrap();
+            c.record_submission(v(2), LOCAL, 500, ROOT_B, &full)
+                .unwrap();
+            c.record_submission(v(4), LOCAL, 500, ROOT_B, &serving_only)
+                .unwrap();
+            // Its own report is empty: v(3) did not name itself.
+            c.record_submission(v(3), LOCAL, 500, ROOT_B, &Report::default())
+                .unwrap();
+            assert!(c.check_liveness().unwrap().is_empty());
+            assert_eq!(c.miss_count.read(&v(3)).unwrap(), 1);
+            for addr in [FIXTURE_VALIDATOR, v(2), v(4)] {
+                assert_eq!(c.miss_count.read(&addr).unwrap(), 0, "{addr}");
+            }
+        });
+        // The accused validator gets one miss with one reason: it is not a
+        // silent reporter about itself.
+        assert_eq!(miss_events(&p), [(v(3), NOT_SERVING)]);
+
+        // Round 2: a quorum names v(4) in notDelivered. v(3) gave a report
+        // and did not name it: no miss, because honest agents can get
+        // different results in the delivery check.
+        StorageHandle::enter(&mut p, |storage| {
+            let mut c = HyperlaneControllerContract::new(storage);
+            let delivered = Report {
+                latest_index: 0,
+                not_serving: &[],
+                not_delivered: &[v(4)],
+            };
+            for addr in [FIXTURE_VALIDATOR, v(2), v(4)] {
+                c.record_submission(addr, LOCAL, 500, ROOT_A, &delivered)
+                    .unwrap();
+            }
+            c.record_submission(v(3), LOCAL, 500, ROOT_A, &Report::default())
+                .unwrap();
+            c.check_liveness().unwrap();
+            assert_eq!(c.miss_count.read(&v(4)).unwrap(), 1);
+            assert_eq!(c.miss_count.read(&v(3)).unwrap(), 0);
+        });
+        assert_eq!(miss_events(&p)[1..], [(v(4), NOT_DELIVERED)]);
+
+        // Round 3: a quorum names v(4) in notServing. v(3) gave a report and
+        // did not name it: v(3) did not do the check.
+        StorageHandle::enter(&mut p, |storage| {
+            let mut c = HyperlaneControllerContract::new(storage);
+            let serving = Report {
+                latest_index: 0,
+                not_serving: &[v(4)],
+                not_delivered: &[],
+            };
+            for addr in [FIXTURE_VALIDATOR, v(2), v(4)] {
+                c.record_submission(addr, LOCAL, 500, ROOT_B, &serving)
+                    .unwrap();
+            }
+            c.record_submission(v(3), LOCAL, 500, ROOT_B, &Report::default())
+                .unwrap();
+            c.check_liveness().unwrap();
+            assert_eq!(c.miss_count.read(&v(4)).unwrap(), 2);
+            assert_eq!(c.miss_count.read(&v(3)).unwrap(), 1);
+        });
+        assert_eq!(
+            miss_events(&p)[2..],
+            [(v(3), NO_COMPLAINT), (v(4), NOT_SERVING)]
+        );
+    }
+
+    #[test]
+    fn the_delivery_index_is_in_the_indexes_that_the_target_moved_over() {
+        let mut p = liveness_provider();
+        p.set_block_number(1_000);
+        StorageHandle::enter(&mut p, |storage| {
+            four_validators(storage.clone());
+            let mut c = HyperlaneControllerContract::new(storage.clone());
+            voted_at_the_target(&c);
+            assert_eq!(c.delivery_index.read(&LOCAL).unwrap(), 0);
+            // The quorum is at 600: the target moves from 500 to 600.
+            for addr in [FIXTURE_VALIDATOR, v(2), v(3)] {
+                write_submission(&c, validator_domain_key(addr, LOCAL), 600, 100).unwrap();
+            }
+            c.check_liveness().unwrap();
+            assert_eq!(c.target_index.read(&LOCAL).unwrap(), 600);
+            let delivery = c.delivery_index.read(&LOCAL).unwrap();
+            assert!((501..=600).contains(&delivery), "{delivery}");
+            let view: Bytes = IHyperlaneController::deliveryIndexCall { domain: LOCAL }
+                .abi_encode()
+                .into();
+            let ret = dispatch(storage, &view, stranger(), U256::ZERO).unwrap();
+            assert_eq!(
+                IHyperlaneController::deliveryIndexCall::abi_decode_returns(&ret).unwrap(),
+                delivery
+            );
+            // The target does not move in the next round: no delivery check.
+            c.check_liveness().unwrap();
+            assert_eq!(c.target_index.read(&LOCAL).unwrap(), 600);
+            assert_eq!(c.delivery_index.read(&LOCAL).unwrap(), 0);
+        });
+    }
+
     #[test]
     fn removing_a_domain_clears_its_liveness_state() {
         let mut p = liveness_provider();
@@ -1286,18 +1491,19 @@ mod liveness {
 
     #[test]
     fn hyperlane_module_begin_block_runs_liveness_window() {
-        use crate::LIVENESS_WINDOW_BLOCKS;
         use outbe_primitives::block::{BlockContext, BlockRuntimeContext, ProtocolModule};
+        const EPOCH_START: u64 = 300;
 
         let mut provider = liveness_provider();
-        provider.set_block_number(LIVENESS_WINDOW_BLOCKS);
+        provider.set_block_number(EPOCH_START);
+        StorageHandle::enter(&mut provider, |storage| start_epoch(storage, EPOCH_START));
         provider.fail_mutation_at(0);
         let err = StorageHandle::enter(&mut provider, |storage| {
             let ctx = BlockRuntimeContext::new(
                 BlockContext {
                     block_gas_limit: 0,
                     user_gas_used: 0,
-                    block_number: LIVENESS_WINDOW_BLOCKS,
+                    block_number: EPOCH_START,
                     timestamp: 1_700_000_000,
                     chain_id: CHAIN_ID,
                     genesis_hash: alloy_primitives::B256::ZERO,
@@ -1321,7 +1527,7 @@ mod liveness {
                 BlockContext {
                     block_gas_limit: 0,
                     user_gas_used: 0,
-                    block_number: LIVENESS_WINDOW_BLOCKS,
+                    block_number: EPOCH_START,
                     timestamp: 1_700_000_000,
                     chain_id: CHAIN_ID,
                     genesis_hash: alloy_primitives::B256::ZERO,

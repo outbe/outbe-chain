@@ -67,6 +67,11 @@ pub(crate) struct VmMemberStatus {
     pub(crate) feeder_healthy: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) feeder_error: Option<String>,
+    pub(crate) hyperlane_healthy: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) hyperlane_controller: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) hyperlane_active: Option<bool>,
     #[serde(skip_serializing)]
     pub(crate) consensus: Option<ConsensusStatus>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -296,7 +301,12 @@ fn validator_unhealthy_reason(status: &VmMemberStatus, required_peers: usize) ->
     if status.consensus.is_none() {
         return Some(format!("{}: missing outbe_consensusStatus", status.name));
     }
-    if status.consensus_peers.unwrap_or(0) < required_peers as u64 {
+    if status.role != MemberRole::FullNode && status.hyperlane_healthy != Some(true) {
+        return Some(format!("{}: Hyperlane unavailable/unhealthy", status.name));
+    }
+    if status.role != MemberRole::FullNode
+        && status.consensus_peers.unwrap_or(0) < required_peers as u64
+    {
         return Some(format!(
             "{}: consensus connectedPeers={} (expected >= n-1={required_peers})",
             status.name,
@@ -449,6 +459,15 @@ pub(super) fn build_member_status(
     let tee_ready = (!effective_no_tee)
         .then(|| rpc.consensus.as_ref().map(ConsensusStatus::resident_ready))
         .flatten();
+    let hyperlane = if vm.running
+        && query_rpc
+        && kind == VmClassKind::Ours
+        && member.role != MemberRole::FullNode
+    {
+        super::query_hyperlane_health(exec, &member.vmm_host, &member.name, service_ip).ok()
+    } else {
+        None
+    };
 
     VmMemberStatus {
         name: member.name,
@@ -475,6 +494,9 @@ pub(super) fn build_member_status(
         tee_ready,
         feeder_healthy,
         feeder_error,
+        hyperlane_healthy: hyperlane.as_ref().map(|status| status.healthy),
+        hyperlane_controller: hyperlane.as_ref().map(|status| status.controller.clone()),
+        hyperlane_active: hyperlane.and_then(|status| status.active),
         consensus: rpc.consensus,
         boot_warning,
         error,
@@ -522,6 +544,9 @@ fn absent_member_status(
         tee_ready: None,
         feeder_healthy: None,
         feeder_error: None,
+        hyperlane_healthy: None,
+        hyperlane_controller: None,
+        hyperlane_active: None,
         consensus: None,
         boot_warning: None,
         error: Some("VM not created on host".to_owned()),

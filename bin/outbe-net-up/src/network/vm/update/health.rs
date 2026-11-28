@@ -234,6 +234,9 @@ fn unready_member_reason(s: &VmMemberStatus, required_peers: usize) -> String {
             .unwrap_or("feeder /health did not return ok")
             .to_owned();
     }
+    if s.hyperlane_healthy != Some(true) {
+        return "Hyperlane unavailable/unhealthy".to_owned();
+    }
     match s.consensus.as_ref() {
         None => "missing `outbe_consensusStatus` (fail-closed peer check)".to_owned(),
         Some(c) if c.connected_peers < required_peers as u64 => format!(

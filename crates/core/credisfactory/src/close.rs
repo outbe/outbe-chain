@@ -72,7 +72,7 @@ impl DeadlineHandler<B256> for CredisClose<'_> {
                 &self.credis.storage,
                 &ICredisFactory::CredisSeriesClosed {
                     seriesId: sub.series_id.into(),
-                    subSeries: sub.sub_series,
+                    subSeriesId: u16::from(sub.sub_series),
                     issuanceCurrency: sub.issuance_currency,
                     referenceCurrency: reference_currency,
                     forfeitedCount: sub.unsettled_count,

@@ -62,24 +62,8 @@ pub fn dispatch(
             | setApprovalForAll(_) => Err(CredisError::NonTransferable.into()),
             getApproved(c) => view(c, |_| Ok(Address::ZERO)),
             isApprovedForAll(c) => view(c, |_| Ok(false)),
-            credisExists(c) => view(c, |c| contract.credis_exists(c.credisId)),
             balanceOf(c) => view(c, |c| Ok(U256::from(contract.credis_count_of(c.owner)?))),
             tokensByOwner(c) => view(c, |c| contract.tokens_by_owner(c.owner)),
-            accruedFeeMinor(c) => view(c, |c| {
-                let record = contract.get_credis(c.credisId)?;
-                let timestamp = contract.storage.now_secs()?;
-                CredisContract::accrued_fee(&record, timestamp)
-            }),
-            settledFeeMinor(c) => view(c, |c| {
-                Ok(contract.get_credis(c.credisId)?.settled_fee_minor)
-            }),
-            credisAmountAndOutstandingOf(c) => view(c, |c| {
-                let (amount, outstanding) = contract.amount_and_outstanding_of(c.owner)?;
-                Ok(ICredis::credisAmountAndOutstandingOfReturn {
-                    amountMinor: amount,
-                    outstandingAmountMinor: outstanding,
-                })
-            }),
             supportsInterface(c) => {
                 view(c, |c| Ok(SUPPORTED_INTERFACES.contains(&c.interfaceId.0)))
             }

@@ -351,6 +351,7 @@ pub fn prepare_joining_validator_tree_cancellable(
         "validator.env",
         "feeder-public.toml",
         "hyperlane-public.toml",
+        "reth.toml",
     ] {
         fs::set_permissions(tree.join(name), fs::Permissions::from_mode(0o640))?;
     }
@@ -419,6 +420,7 @@ pub fn prepare_full_node_tree_cancellable(
         tree.join("validator.env"),
         fs::Permissions::from_mode(0o640),
     )?;
+    fs::set_permissions(tree.join("reth.toml"), fs::Permissions::from_mode(0o640))?;
 
     ensure_not_canceled(cancel, "full-node verification")?;
     vm_boot::verify_static_tree_for_role_cancellable(&tree, NodeRole::FullNode, None, cancel)?;

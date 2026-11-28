@@ -1,0 +1,79 @@
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.28;
+
+import {ReferenceCurrencyPriceLib} from "./utils/ReferenceCurrencyPriceLib.sol";
+import {Test} from "forge-std/Test.sol";
+import {IntexAuction} from "@contracts/target/IntexAuction.sol";
+import {DeployProxy} from "./utils/DeployProxy.sol";
+import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
+import {MockAuctionEscrow} from "@test-mocks/MockAuctionEscrow.sol";
+
+/// @dev Schedule snap on the bridge clearing signal: an early signal pulls `revealEnd`
+///      forward. A late signal leaves the schedule untouched.
+contract IntexAuctionScheduleSnapTest is Test {
+    IntexAuction auction;
+    MockAuctionEscrow escrow;
+
+    address admin = address(1);
+    address bridger = address(2);
+
+    uint32 constant COMMIT_OFFSET = 100;
+    uint32 constant REVEAL_OFFSET = 200;
+    uint32 constant ISSUANCE_OFFSET = 300;
+
+    function setUp() public {
+        escrow = new MockAuctionEscrow();
+        auction = DeployProxy.intexAuction(admin, bridger, address(escrow), address(0x1E7E));
+    }
+
+    function _start(uint32 emissionDay) internal {
+        IIntexAuction.AuctionSchedule memory s = IIntexAuction.AuctionSchedule({
+            commitEnd: uint32(block.timestamp + COMMIT_OFFSET),
+            revealEnd: uint32(block.timestamp + REVEAL_OFFSET),
+            issuanceEnd: uint32(block.timestamp + ISSUANCE_OFFSET)
+        });
+        IIntexAuction.AuctionParams memory p = IIntexAuction.AuctionParams({
+            promisLoadMinor: 1000,
+            minBidRate: 10,
+            prices: ReferenceCurrencyPriceLib.onePriced(840, 100, 100),
+            callTrigger: IIntexAuction.IntexCallTrigger({callWindow: 0, callThreshold: 0, callNoticePeriod: 0}),
+            minBidQuantity: 1,
+            bidBondMinor: 0
+        });
+        vm.prank(bridger);
+        auction.startAuction(emissionDay, s, p);
+    }
+
+    function test_ClearingSignal_Early_SnapsRevealEnd() public {
+        uint32 emissionDay = 20250201;
+        _start(emissionDay);
+        IIntexAuction.AuctionData memory b = auction.getAuctionInfo(emissionDay);
+        vm.warp(b.schedule.commitEnd + 1);
+
+        uint32 signalTs = b.schedule.commitEnd + 20;
+        vm.warp(signalTs);
+        vm.prank(bridger);
+        auction.startAuctionClearing(emissionDay);
+
+        IIntexAuction.AuctionData memory a = auction.getAuctionInfo(emissionDay);
+        assertEq(a.schedule.revealEnd, signalTs);
+        assertLt(a.schedule.revealEnd, b.schedule.revealEnd);
+        assertEq(a.schedule.issuanceEnd, b.schedule.issuanceEnd);
+        assertEq(uint8(auction.auctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.AwaitingResult));
+    }
+
+    function test_ClearingSignal_Late_LeavesRevealEnd() public {
+        uint32 emissionDay = 20250202;
+        _start(emissionDay);
+        IIntexAuction.AuctionData memory b = auction.getAuctionInfo(emissionDay);
+
+        vm.warp(b.schedule.revealEnd + 5);
+        vm.prank(bridger);
+        auction.startAuctionClearing(emissionDay);
+
+        IIntexAuction.AuctionData memory a = auction.getAuctionInfo(emissionDay);
+        assertEq(a.schedule.revealEnd, b.schedule.revealEnd);
+        assertEq(a.schedule.issuanceEnd, b.schedule.issuanceEnd);
+        assertEq(uint8(auction.auctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.AwaitingResult));
+    }
+}

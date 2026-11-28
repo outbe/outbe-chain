@@ -120,7 +120,7 @@ fn a_second_gem_in_the_same_series_and_block_reverts() {
             error,
             outbe_primitives::error::PrecompileError::RevertBytes(bytes)
                 if bytes.as_ref() == alloy_sol_types::SolError::abi_encode(
-                    &IGem::AlreadyExists {}
+                    &IGem::GemAlreadyExists {}
                 ).as_slice()
         ));
         assert_eq!(api::balance_of(storage, ALICE).unwrap(), 1);
@@ -139,7 +139,7 @@ fn a_duplicate_id_is_rejected_and_rolls_back() {
             error,
             outbe_primitives::error::PrecompileError::RevertBytes(bytes)
                 if bytes.as_ref() == alloy_sol_types::SolError::abi_encode(
-                    &IGem::AlreadyExists {}
+                    &IGem::GemAlreadyExists {}
                 ).as_slice()
         ));
         assert_eq!(api::balance_of(storage, ALICE).unwrap(), 1);

@@ -172,9 +172,10 @@ impl FounderPublishedPorts {
         ]
     }
 
-    /// Return the 5 P2P/Radicle 1:1 DNAT port tuples `(public_port, vm_port, proto, purpose)`
-    /// verified by `outbe-up host check` and recorded in `network-manifest.json`.
-    pub fn dnat_ports(self) -> [(u16, u16, &'static str, &'static str); 5] {
+    /// Return the P2P/Radicle 1:1 mappings and the fixed guest Hyperlane mapping as
+    /// `(public_port, vm_port, proto, purpose)` tuples verified by `outbe-up host check` and
+    /// recorded in `network-manifest.json`.
+    pub fn dnat_ports(self) -> [(u16, u16, &'static str, &'static str); 6] {
         [
             (self.reth_p2p_tcp, self.reth_p2p_tcp, "tcp", "reth-p2p"),
             (self.reth_p2p_udp, self.reth_p2p_udp, "udp", "reth-p2p"),
@@ -191,12 +192,12 @@ impl FounderPublishedPorts {
                 "reth-discovery",
             ),
             (self.radicle_tcp, self.radicle_tcp, "tcp", "radicle"),
+            (self.hyperlane_tcp, BASE_HYPERLANE_PORT, "tcp", "hyperlane"),
         ]
     }
 
     /// Return `outbe-up host check|publish --port` specs for 1:1 P2P/Radicle DNAT
     /// (`host_port == guest_port == base + offset`) plus Hyperlane (`9000 -> 9000 + offset`).
-    #[allow(dead_code)]
     pub fn publish_port_specs(self) -> Vec<String> {
         let hyperlane = if self.hyperlane_tcp == BASE_HYPERLANE_PORT {
             format!("{BASE_HYPERLANE_PORT}/tcp")
@@ -724,7 +725,7 @@ impl NetworkConfig {
         )
     }
 
-    fn resolve_hyperlane_for_endpoint(
+    pub(crate) fn resolve_hyperlane_for_endpoint(
         &self,
         public_url: String,
         local_rpc_ip: Ipv4Addr,
@@ -791,7 +792,15 @@ impl NetworkConfig {
                     .any(|origin| origin.domain == local_domain),
                 "VM hyperlane.origins must include local domain {local_domain} (or omit origins to auto-generate local origins)"
             );
-            self.hyperlane.origins.clone()
+            let mut configured = self.hyperlane.origins.clone();
+            let local = configured
+                .iter_mut()
+                .find(|origin| origin.domain == local_domain)
+                .expect("local Hyperlane origin presence checked above");
+            local.rpc_urls = vec![format!("http://{local_rpc_ip}:{local_rpc_port}")];
+            local.rpc_consensus = RpcConsensus::Single;
+            local.ws_url = None;
+            configured
         };
 
         let cfg = HyperlaneConfig {
@@ -1450,6 +1459,19 @@ genesis:
         let hl = vm.resolve_hyperlane_config(&vm.founders[0]).unwrap();
         assert_eq!(hl.origins[0].rpc_urls, vec!["http://10.77.0.10:18545"]);
 
+        let joiner_hl = vm
+            .resolve_hyperlane_for_endpoint(
+                "http://198.51.100.10:9007".to_owned(),
+                Ipv4Addr::new(10, 77, 0, 99),
+                18_599,
+            )
+            .unwrap();
+        assert_eq!(joiner_hl.public_url, "http://198.51.100.10:9007");
+        assert_eq!(
+            joiner_hl.origins[0].rpc_urls,
+            vec!["http://10.77.0.99:18599"]
+        );
+
         // Bare-host custom rpc_port is accepted.
         let mut bare = config_with(4);
         bare.founders[0].rpc_port = Some(18_545);
@@ -1536,5 +1558,38 @@ api_keys:
             .api_keys
             .insert("pyth".into(), "REPLACE_WITH_PYTH_API_KEY".into());
         assert!(bad_key.validate().is_err());
+    }
+
+    #[test]
+    fn vm_explicit_local_origin_uses_each_guests_rpc_endpoint() {
+        let mut vm = vm_config("devnet", Network::Devnet.chain_id());
+        vm.hyperlane.origins.push(HyperlaneOrigin {
+            domain: 31_337,
+            rpc_urls: vec!["https://external.example.invalid".to_owned()],
+            rpc_consensus: RpcConsensus::Quorum,
+            reorg_period: ReorgPeriod::Blocks(12),
+            interval_secs: 17,
+            ws_url: Some("wss://external.example.invalid".to_owned()),
+            index_from: Some(42),
+        });
+        vm.validate().unwrap();
+
+        let first = vm.resolve_hyperlane_config(&vm.founders[0]).unwrap();
+        let second = vm.resolve_hyperlane_config(&vm.founders[1]).unwrap();
+        assert_eq!(first.origins[0].rpc_urls, vec!["http://10.77.0.10:8545"]);
+        assert_eq!(second.origins[0].rpc_urls, vec!["http://10.77.0.11:8545"]);
+        assert!(matches!(
+            first.origins[0].rpc_consensus,
+            RpcConsensus::Single
+        ));
+        assert_eq!(first.origins[0].ws_url, None);
+
+        assert_eq!(first.origins[1].rpc_urls, vm.hyperlane.origins[1].rpc_urls);
+        assert!(matches!(
+            first.origins[1].rpc_consensus,
+            RpcConsensus::Quorum
+        ));
+        assert_eq!(first.origins[1].ws_url, vm.hyperlane.origins[1].ws_url);
+        assert_eq!(first.origins[1].index_from, Some(42));
     }
 }

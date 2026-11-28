@@ -72,8 +72,8 @@ impl<'storage> CredisContract<'storage> {
         )))
     }
 
-    /// Records a new Credis, lists it, counts it in its owner's sums, puts it in its
-    /// sub-series and group, and emits the ERC-721 mint `Transfer`. A group it opens seals
+    /// Records a new Credis, lists it, puts it in its sub-series and group, and emits the
+    /// ERC-721 mint `Transfer`. A group it opens seals
     /// `terms`. Returns `true` when this Credis opens its sub-series.
     pub fn create_credis_record(
         &mut self,
@@ -82,12 +82,6 @@ impl<'storage> CredisContract<'storage> {
         call_start_day: u32,
     ) -> Result<bool> {
         create_indexed(&self.records, record, self.record_indexes(record.owner))?;
-        add_to(&self.owner_amount_minor, record.owner, record.amount_minor)?;
-        add_to(
-            &self.owner_outstanding_minor,
-            record.owner,
-            record.outstanding_amount_minor,
-        )?;
         let newly_opened = self.join_group(record, terms, call_start_day)?;
         self.emit(ICredis::Transfer {
             from: Address::ZERO,
@@ -104,19 +98,13 @@ impl<'storage> CredisContract<'storage> {
         })
     }
 
-    /// Deletes a Credis, unlists it, takes it out of its owner's sums and emits the ERC-721 burn
+    /// Deletes a Credis, unlists it and emits the ERC-721 burn
     /// `Transfer`. Its group membership is handled by the caller.
     pub fn delete_credis_record(&mut self, credis_id: U256) -> Result<()> {
         let record = self
             .records
             .get(credis_id)?
             .ok_or(CredisError::CredisNotFound)?;
-        take_from(&self.owner_amount_minor, record.owner, record.amount_minor)?;
-        take_from(
-            &self.owner_outstanding_minor,
-            record.owner,
-            record.outstanding_amount_minor,
-        )?;
         delete_indexed(&self.records, credis_id, |record: &Credis| {
             self.record_indexes(record.owner)
         })?;
@@ -125,11 +113,6 @@ impl<'storage> CredisContract<'storage> {
             to: Address::ZERO,
             tokenId: credis_id,
         })
-    }
-
-    /// Takes repaid amount out of its owner's outstanding sum.
-    pub fn take_owner_outstanding(&mut self, owner: Address, repaid: U256) -> Result<()> {
-        take_from(&self.owner_outstanding_minor, owner, repaid)
     }
 
     pub fn take_outstanding_amount(&mut self, record: &Credis, amount: U256) -> Result<()> {

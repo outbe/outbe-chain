@@ -1,9 +1,4 @@
-use std::{
-    fs,
-    future::Future,
-    path::{Path, PathBuf},
-    time::{Duration, Instant},
-};
+use std::{fs, future::Future, path::Path, time::Instant};
 
 use alloy_consensus::{SignableTransaction as _, TxLegacy};
 use alloy_eips::eip2718::Encodable2718 as _;
@@ -26,6 +21,9 @@ use crate::{
 };
 
 const HYPERLANE_DELEGATE_ROLE: u8 = 2;
+
+mod service_runner;
+pub use service_runner::run_service;
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -493,71 +491,6 @@ fn load_signing_key(path: &Path) -> Result<SigningKey> {
     )
     .wrap_err("EVM key is not 32-byte hex")?;
     SigningKey::from_slice(key.as_ref()).wrap_err("invalid EVM signing key")
-}
-
-/// Joining validators become active only after the background DKG activation.
-/// Keep the service alive, register `H` at that boundary, then replace this
-/// process with the actual daemon.
-pub async fn run_service(bin_dir: Option<&Path>) -> Result<()> {
-    let wait_for_active = std::env::var_os("OUTBE_HYPERLANE_WAIT_FOR_ACTIVE").is_some()
-        || std::env::var("OUTBE_NODE_ROLE").as_deref()
-            == Ok(crate::NodeRole::JoiningValidator.as_str());
-    if !wait_for_active {
-        return super::service::hyperlane(bin_dir);
-    }
-    let rpc_url = super::service::local_rpc_url()?;
-    let rpc = RpcClient::new(&rpc_url)?;
-    let validator = required_env("OUTBE_VALIDATOR_ADDRESS")?.parse()?;
-    let hyperlane_key = std::env::var_os("OUTBE_HYPERLANE_KEY_PATH")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| Path::new(process::ROOT).join("keys/hyperlane-key.hex"));
-    ensure!(
-        hyperlane_key.is_file(),
-        "Hyperlane key does not name a file: {}",
-        hyperlane_key.display()
-    );
-    let signer = validator_address(&hyperlane_key)?;
-    let mut progress = Progress::new();
-
-    loop {
-        if rpc.validator(validator).await?.status == 2 {
-            break;
-        }
-        progress.update("waiting for validator activation before Hyperlane registration");
-        tokio::time::sleep(Duration::from_secs(5)).await;
-    }
-
-    if rpc.hyperlane_signer(validator).await? != signer {
-        progress.stage("registering the Hyperlane checkpoint signer");
-        let state_path = std::env::var_os("STATE_DIRECTORY")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from(HYPERLANE_STATE_ROOT))
-            .join("setup.json");
-        let mut state: SetupState = if state_path.is_file() {
-            serde_json::from_slice(&fs::read(&state_path)?)?
-        } else {
-            SetupState::default()
-        };
-        let (hash, submitted) = CliTransaction {
-            key: &hyperlane_key,
-            rpc_url: &rpc_url,
-            args: &["validator", "set-hyperlane-signer", &format!("{signer:#x}")],
-            drop_privileges: false,
-            bin_dir,
-        }
-        .submit_once(state.signer_transaction.as_deref())?;
-        if submitted {
-            state.signer_transaction = Some(hash.clone());
-            save_state(&state_path, &state)?;
-        }
-        wait_transaction_finalized(&rpc, &hash, &mut progress).await?;
-        ensure!(
-            rpc.hyperlane_signer(validator).await? == signer,
-            "Hyperlane signer registration is not visible after finality"
-        );
-    }
-    progress.done("Hyperlane signer is registered");
-    super::service::hyperlane(bin_dir)
 }
 
 pub async fn setup_founder() -> Result<()> {

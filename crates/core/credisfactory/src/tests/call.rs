@@ -1608,7 +1608,7 @@ fn credis_call_runs_on_call_groups() {
 
     let called = factory_events::<CredisSeriesCalled>(&provider);
     assert_eq!(
-        called.iter().map(|ev| ev.subSeries).collect::<Vec<_>>(),
+        called.iter().map(|ev| ev.subSeriesId).collect::<Vec<_>>(),
         vec![3, 9]
     );
     for ev in &called {
@@ -1675,7 +1675,7 @@ fn sub_series_with_the_same_call_terms_are_in_one_call_group() {
     assert_eq!(
         called
             .iter()
-            .map(|ev| (ev.seriesId, ev.subSeries, ev.issuanceCurrency))
+            .map(|ev| (ev.seriesId, ev.subSeriesId, ev.issuanceCurrency))
             .collect::<Vec<_>>(),
         vec![
             (usd_series.into(), 3, ISSUANCE_ISO),
@@ -1743,7 +1743,7 @@ fn sub_series_that_was_not_called_does_not_forfeit() {
 
     let called = factory_events::<CredisSeriesCalled>(&provider);
     assert_eq!(
-        called.iter().map(|ev| ev.subSeries).collect::<Vec<_>>(),
+        called.iter().map(|ev| ev.subSeriesId).collect::<Vec<_>>(),
         vec![1]
     );
     let closed = factory_events::<CredisSeriesClosed>(&provider);
@@ -1752,7 +1752,7 @@ fn sub_series_that_was_not_called_does_not_forfeit() {
         closed[0].seriesId,
         alloy_primitives::FixedBytes::from(series)
     );
-    assert_eq!(closed[0].subSeries, 1);
+    assert_eq!(closed[0].subSeriesId, 1);
     assert_eq!(closed[0].forfeitedCount, 1);
     assert_eq!(closed[0].forfeitedAmountMinor, half);
     teardown();

@@ -20,20 +20,19 @@ use crate::{
 const DEFAULT_VM_BIN_DIR: &str = "/usr/local/bin";
 
 /// Exact systemd service units started by `vm-boot` for each VM node role.
-///
-/// `outbe-hyperlane-validator.service` is intentionally excluded for all VM roles until S9
-/// (Hyperlane delegation/funding/registration for VM networks).
 pub fn vm_role_services(role: NodeRole) -> &'static [&'static str] {
     match role {
         NodeRole::Founder => &[
             "outbe-radicle.service",
             "outbe-validator.service",
             "outbe-feeder.service",
+            "outbe-hyperlane-agent.service",
         ],
         NodeRole::JoiningValidator => &[
             "outbe-radicle.service",
             "outbe-joining-validator.service",
             "outbe-feeder.service",
+            "outbe-hyperlane-agent.service",
         ],
         NodeRole::FullNode => &["outbe-full-node.service"],
     }
@@ -43,7 +42,9 @@ const CONFIG_FILES: &[&str] = &[
     "validator.env",
     "feeder-public.toml",
     "hyperlane-public.toml",
+    "reth.toml",
 ];
+const RETH_CONFIG: &str = "reth.toml";
 
 struct BootOptions<'a> {
     bin_dir: Option<&'a Path>,
@@ -236,6 +237,9 @@ fn boot_root(root: &Path, mountinfo: &str, options: &BootOptions<'_>) -> Result<
             let hyperlane_public = fs::read_to_string(root.join("hyperlane-public.toml"))
                 .wrap_err("failed to read hyperlane-public.toml")?;
             crate::config::validate_hyperlane_public_toml(&hyperlane_public, chain_id, true)?;
+            let reth =
+                fs::read_to_string(root.join(RETH_CONFIG)).wrap_err("failed to read reth.toml")?;
+            crate::config::validate_reth_toml(&reth)?;
             install::required_file(&root.join(".bb-crs/bn254_g1.dat"))?;
 
             verify_secrets(root, options.bin_dir, options.cancel)?;
@@ -258,6 +262,10 @@ fn boot_root(root: &Path, mountinfo: &str, options: &BootOptions<'_>) -> Result<
             install::required_file(&root.join("genesis.json"))?;
             install::validate_genesis(root, &environment["OUTBE_CHAIN_ID"])?;
             install::required_file(&root.join(".bb-crs/bn254_g1.dat"))?;
+            verify_config_file(&root.join(RETH_CONFIG), options.require_root_owner)?;
+            let reth =
+                fs::read_to_string(root.join(RETH_CONFIG)).wrap_err("failed to read reth.toml")?;
+            crate::config::validate_reth_toml(&reth)?;
             environment
         }
     };

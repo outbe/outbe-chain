@@ -5,6 +5,7 @@ use std::{collections::BTreeMap, net::Ipv4Addr, path::Path};
 use eyre::{bail, ensure, Context, Result};
 use outbe_operator_node_role::{progress::Progress, rpc::ConsensusStatus};
 use outbe_operator_remote::{shell_quote, HostExec, Ssh};
+use serde::Deserialize;
 use serde_json::{json, Value};
 
 use super::ensure_vm_deployment;
@@ -27,6 +28,32 @@ pub(crate) struct BatchedRpcResult {
     pub(crate) finalized_hash: Option<String>,
     pub(crate) execution_peers: Option<u64>,
     pub(crate) consensus: Option<ConsensusStatus>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) struct HyperlaneHealthStatus {
+    pub(crate) healthy: bool,
+    pub(crate) controller: String,
+    pub(crate) active: Option<bool>,
+}
+
+/// Query the Hyperlane validator health endpoint over the VMM host bridge. Port 9003 is never
+/// published externally; VM runtime config binds it only to the private service IP.
+pub(crate) fn query_hyperlane_health(
+    exec: &dyn HostExec,
+    ssh: &Ssh,
+    label: &str,
+    service_ip: Ipv4Addr,
+) -> Result<HyperlaneHealthStatus> {
+    let url = format!("http://{service_ip}:9003/status");
+    let cmd = format!(
+        "curl -fsS --connect-timeout 2 --max-time 5 {}",
+        shell_quote(&url)
+    );
+    let raw = exec
+        .capture_raw(ssh, label, &cmd)
+        .wrap_err_with(|| format!("query Hyperlane status from {url}"))?;
+    serde_json::from_str(&raw).wrap_err_with(|| format!("parse Hyperlane status from {url}"))
 }
 
 pub(crate) fn ensure_vm_rpc_reachable_for_orchestration(build: &NetworkArtifacts) -> Result<()> {

@@ -1,6 +1,8 @@
 //! The read-only precompile.
 
 use super::*;
+use alloy_sol_types::SolError;
+use outbe_primitives::error::PrecompileError;
 use outbe_system_common::time::SECONDS_PER_DAY_U32;
 
 #[test]
@@ -18,7 +20,7 @@ fn precompile_series_data_round_trip() {
         assert_eq!(data.seriesId, alloy_primitives::FixedBytes::from(sid(7)));
         assert_eq!(data.promisLoadMinor, U256::from(PROMIS_LOAD_MINOR));
         assert_eq!(data.entryPriceMinor, U256::from(ENTRY_PRICE_MINOR));
-        assert_eq!(data.issuedUnits, 100);
+        assert_eq!(data.totalUnits, 100);
         assert_eq!(data.callWindow, 30 * SECONDS_PER_DAY_U32);
         assert_eq!(data.callThreshold, 5 * SECONDS_PER_DAY_U32);
         assert_eq!(data.callPriceMinor, U256::from(CALL_PRICE_MINOR));
@@ -40,23 +42,37 @@ fn precompile_series_data_missing_reverts() {
 }
 
 #[test]
-fn precompile_series_exists() {
+fn get_intex_series_reads_the_record_of_get_intex() {
     with_registry(|s| {
         api::create_series(&s, sample_params(7)).unwrap();
 
-        let yes = IIntex::seriesExistsCall {
+        let by_id = IIntex::getIntexCall {
             intexId: crate::schema::intex_id(sid(7)),
         }
         .abi_encode();
-        let out = dispatch(s.clone(), &yes, Address::ZERO, U256::ZERO).unwrap();
-        assert!(IIntex::seriesExistsCall::abi_decode_returns(&out).unwrap());
+        let out = dispatch(s.clone(), &by_id, Address::ZERO, U256::ZERO).unwrap();
+        let expected = IIntex::getIntexCall::abi_decode_returns(&out).unwrap();
 
-        let no = IIntex::seriesExistsCall {
-            intexId: crate::schema::intex_id(sid(8)),
+        let by_series = IIntex::getIntexSeriesCall {
+            seriesId: sid(7).into(),
         }
         .abi_encode();
-        let out = dispatch(s.clone(), &no, Address::ZERO, U256::ZERO).unwrap();
-        assert!(!IIntex::seriesExistsCall::abi_decode_returns(&out).unwrap());
+        let out = dispatch(s.clone(), &by_series, Address::ZERO, U256::ZERO).unwrap();
+        assert_eq!(
+            IIntex::getIntexSeriesCall::abi_decode_returns(&out).unwrap(),
+            expected
+        );
+
+        let unknown = IIntex::getIntexSeriesCall {
+            seriesId: sid(8).into(),
+        }
+        .abi_encode();
+        match dispatch(s.clone(), &unknown, Address::ZERO, U256::ZERO) {
+            Err(PrecompileError::RevertBytes(reason)) => {
+                assert_eq!(reason, IIntex::IntexNotFound {}.abi_encode())
+            }
+            other => panic!("expected IntexNotFound, got {other:?}"),
+        }
     });
 }
 

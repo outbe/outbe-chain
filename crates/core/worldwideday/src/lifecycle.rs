@@ -46,20 +46,20 @@ pub fn compute_wwd_schedule(wwd: WorldwideDay) -> Result<(NewWwdSchedule, u64)> 
     let forming_end = forming_start
         .checked_add(outbe_chain_constants::get_metadosis_forming_period_seconds())
         .ok_or(WwdCallerError::FormingWindowOverflow)?;
-    let offerings_start = forming_start
+    let offering_start = forming_start
         .checked_add(outbe_chain_constants::OFFERING_START_AFTER_FORMING_START_SECONDS)
         .ok_or(WwdCallerError::OfferingWindowOverflow)?;
-    let offering_end = offerings_start
+    let offering_end = offering_start
         .checked_add(outbe_chain_constants::get_metadosis_offering_period_seconds())
         .ok_or(WwdCallerError::OfferingWindowOverflow)?;
-    let day = next_date_key(wwd.value()).map_err(super::errors::date_step_error)?;
-    let metadosis_start = outbe_emission::api::compute_metadosis_start(day)?;
+    let emission_day = next_date_key(wwd.value()).map_err(super::errors::date_step_error)?;
+    let metadosis_start = outbe_emission::api::compute_metadosis_start(emission_day)?;
     Ok((
         NewWwdSchedule {
-            day,
+            emission_day,
             forming_start,
             forming_end,
-            offerings_start,
+            offering_start,
             offering_end,
         },
         metadosis_start,
@@ -68,7 +68,7 @@ pub fn compute_wwd_schedule(wwd: WorldwideDay) -> Result<(NewWwdSchedule, u64)> 
 
 pub fn open_worldwide_day_for_date(ctx: &BlockRuntimeContext<'_>, wwd: WorldwideDay) -> Result<()> {
     let (schedule, _) = compute_wwd_schedule(wwd)?;
-    outbe_emission::api::link_wwd(ctx.storage.clone(), schedule.day, wwd)?;
+    outbe_emission::api::link_wwd(ctx.storage.clone(), schedule.emission_day, wwd)?;
     let mut factory = WorldwideDayContract::new(ctx.storage.clone());
     open_worldwide_day(&mut factory, wwd, schedule)?;
     Ok(())
@@ -99,10 +99,10 @@ pub fn advance_worldwide_days(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
     // 1. Seal every pipeline WWD whose offering window ended at or before 00:00 UTC of day X.
     let aggregate = ValidatedWwdAggregate::load_and_validate(ctx.storage.clone())?;
     for current in aggregate.active_records() {
-        verify_emission_day_link(&ctx.storage, current.day, current.worldwide_day)?;
+        verify_emission_day_link(&ctx.storage, current.emission_day, current.wwd)?;
         if current.offering_end <= cutoff_ts {
             let mut factory_mut = WorldwideDayContract::new(ctx.storage.clone());
-            close_worldwide_day(&mut factory_mut, current.worldwide_day)?;
+            close_worldwide_day(&mut factory_mut, current.wwd)?;
         }
     }
 
@@ -208,8 +208,7 @@ fn verify_emission_day_link(
     day: u32,
     expected_wwd: WorldwideDay,
 ) -> Result<()> {
-    if let Some(emission_day) = outbe_emission::api::get_emission_day_record(storage.clone(), day)?
-    {
+    if let Some(emission_day) = outbe_emission::api::get_emission_day(storage.clone(), day)? {
         if emission_day.wwd != expected_wwd {
             return Err(WwdStorageCorruptionError::EmissionDayWwdLinkMismatch {
                 day,

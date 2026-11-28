@@ -1,55 +1,57 @@
 //! Liveness: validators prove that their Hyperlane agent keeps signing.
 
-use alloy_primitives::{eip191_hash_message, keccak256, Address, B256};
+use alloy_primitives::{Address, B256};
 use outbe_primitives::error::Result;
-use outbe_primitives::tee_signatures::recover_signer;
 use outbe_validatorset::contract::ValidatorSet;
 
 use crate::errors::HyperlaneControllerError;
 use crate::precompile::IHyperlaneController;
 use crate::runtime::consensus_threshold;
-use crate::schema::{validator_domain_key, HyperlaneControllerContract};
+use crate::schema::{validator_domain_key, Fault, HyperlaneControllerContract};
 
-/// Submissions younger than this many blocks do not count towards the next
-/// per-domain target index. This way, the target is an index that most
-/// validators already signed when the window starts.
-pub const GRACE_BLOCKS: u64 = 30;
-/// The liveness verdict runs when the block number is a multiple of this
-/// value. The oracle slash window is a separate genesis parameter.
-/// Both checks run in the begin zone. They do not share this cadence.
-pub const LIVENESS_WINDOW_BLOCKS: u64 = 150;
-/// Consecutive window misses before a validator is jailed.
+/// Consecutive liveness misses before a validator is jailed.
 pub const MAX_MISSES: u32 = 3;
 
-/// A Hyperlane checkpoint and the validator signature over it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SignedCheckpoint<'a> {
-    /// Origin domain of the checkpoint.
-    pub domain: u32,
-    /// Merkle root of the origin mailbox tree.
-    pub root: B256,
-    /// Index of the latest message in the tree.
-    pub index: u32,
-    /// Identifier of the latest message.
-    pub message_id: B256,
-    /// Signature over [`checkpoint_digest`]. It must be 65 bytes.
-    pub signature: &'a [u8],
+/// Why a validator gets a liveness miss. The `reasons` field of the
+/// `LivenessMiss` event is the sum of these values.
+pub mod miss_reason {
+    /// No vote at the target index, or a root that is not the quorum root.
+    pub const ROOT: u8 = 1;
+    /// A quorum named the validator in `notServing`.
+    pub const NOT_SERVING: u8 = 2;
+    /// A quorum named the validator in `notDelivered`.
+    pub const NOT_DELIVERED: u8 = 4;
+    /// The report of the validator did not name a validator that a quorum
+    /// named in `notServing`.
+    pub const NO_COMPLAINT: u8 = 8;
 }
 
-/// Reference index of one domain in a liveness window. It is `None` when too
-/// few settled submissions exist for that domain.
-type DomainReference = (u32, Option<u32>);
+/// The most addresses that the two lists of one report can hold together.
+pub const MAX_REPORT_ADDRESSES: usize = 32;
 
-/// Target of one domain in a liveness window: the domain, its target index,
+/// What a validator saw for one domain in the current liveness round. The
+/// controller does not verify these values. It uses a value only when a
+/// quorum of the active validators gives it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Report<'a> {
+    /// The latest checkpoint index that the validator signed. Zero = none.
+    pub latest_index: u32,
+    /// Validators that do not serve their signed checkpoint at the target.
+    pub not_serving: &'a [Address],
+    /// Validators that did not deliver their message in their turn.
+    pub not_delivered: &'a [Address],
+}
+
+/// Target of one domain in a liveness round: the domain, its target index,
 /// and the anchor root. The anchor is the root that at least `threshold`
 /// active validators signed at the target index. It is `None` when no root
 /// has that many votes.
 type DomainAnchor = (u32, u32, Option<B256>);
 
-/// Standing of one active validator in a liveness window.
+/// Standing of one active validator in a liveness round.
 enum WindowStanding {
-    /// At least one domain had no submission. The window stamps that domain
-    /// and evaluates the validator from the next window.
+    /// At least one domain had no submission. The verdict stamps that domain
+    /// and evaluates the validator from the next round.
     Newcomer,
     /// The vote of the validator equals the anchor root on every domain
     /// that has an anchor.
@@ -60,68 +62,64 @@ enum WindowStanding {
 }
 
 impl HyperlaneControllerContract<'_> {
-    /// Liveness proof for one domain. The validator or its Hyperlane delegate
-    /// submits a signed checkpoint.
-    /// The controller verifies the signature against the validator's
-    /// Hyperlane signer. Then it does one or both of these:
+    /// The report of a validator for one domain. The validator or its
+    /// Hyperlane delegate sends it. The controller does not verify `root`: a
+    /// root counts only when a quorum gives it. The call does one or both of
+    /// these:
     /// - The index equals the target index of the domain: the root becomes
     ///   the vote of the validator. A different root replaces an earlier vote.
-    /// - The index is strictly newer than the stored index: it becomes the
-    ///   latest index of the validator.
+    /// - The index, or the latest index of the report, is strictly newer
+    ///   than the stored index: the higher value becomes the latest index of
+    ///   the validator.
     ///
-    /// When neither applies, the call fails with `StaleIndex`. The
+    /// When neither applies, the call fails with `StaleIndex`. The first
+    /// accepted call of the validator for the domain in a round also gives
+    /// its lists: each name is one complaint about that validator. The
     /// controller never accepts index 0: zero means "no target" and "no
     /// submission".
-    pub fn submit_checkpoint(
+    pub fn submit_report(
         &mut self,
         caller: Address,
-        checkpoint: &SignedCheckpoint<'_>,
+        domain: u32,
+        index: u32,
+        root: B256,
+        report: &Report<'_>,
     ) -> Result<()> {
         self.require_initialized()?;
         let validator = self.validator_of_sender(caller)?;
-        let domain = checkpoint.domain;
-        let hook = self.hook_by_domain.read(&domain)?;
-        if hook == Address::ZERO {
+        if self.hook_by_domain.read(&domain)? == Address::ZERO {
             return Err(HyperlaneControllerError::UnknownHook { domain }.into());
         }
-        let signature: &[u8; 65] = checkpoint.signature.try_into().map_err(|_| {
-            HyperlaneControllerError::InvalidSignatureLength {
-                length: checkpoint.signature.len(),
-            }
-        })?;
-        let digest = checkpoint_digest(
-            domain,
-            hook,
-            checkpoint.root,
-            checkpoint.index,
-            checkpoint.message_id,
-        );
-        let recovered = recover_signer(&digest, signature)?;
-        let expected = self.hyperlane_signer(validator)?;
-        if recovered != expected {
-            return Err(HyperlaneControllerError::SignerMismatch {
-                validator,
-                expected,
-                recovered,
-            }
-            .into());
+        let named = report.not_serving.len() + report.not_delivered.len();
+        if named > MAX_REPORT_ADDRESSES {
+            return Err(HyperlaneControllerError::ReportTooLong { length: named }.into());
         }
-        self.record_submission(validator, domain, checkpoint.index, checkpoint.root)
+        self.record_submission(validator, domain, index, root, report)
     }
 
-    /// Records a verified submission as a vote, as the latest index, or as
-    /// both. See [`Self::submit_checkpoint`].
+    /// The current liveness round. It starts at 1.
+    pub fn current_round(&self) -> Result<u64> {
+        Ok(self.liveness_round.read()?.saturating_add(1))
+    }
+
+    /// Records a submission as a vote, as the latest index, or as
+    /// both. The first one of a round also records the report. See
+    /// [`Self::submit_report`].
     pub(crate) fn record_submission(
         &mut self,
         validator: Address,
         domain: u32,
         index: u32,
         root: B256,
+        report: &Report<'_>,
     ) -> Result<()> {
         let key = validator_domain_key(validator, domain);
         let submitted = self.submitted_index.read(&key)?;
         let target = self.target_index.read(&domain)?;
-        let is_latest = index > submitted;
+        let round = self.current_round()?;
+        let is_report = self.report_round.read(&key)? != round;
+        let latest = index.max(report.latest_index);
+        let is_latest = latest > submitted;
         // A repeat of the stored vote changes nothing, so it is not a vote.
         let is_vote = target != 0
             && index == target
@@ -143,13 +141,30 @@ impl HyperlaneControllerContract<'_> {
                 })?;
             }
             if is_latest {
-                self.submitted_index.write(&key, index)?;
+                self.submitted_index.write(&key, latest)?;
                 self.submitted_block.write(&key, block)?;
                 self.emit(IHyperlaneController::CheckpointSubmitted {
                     validator,
                     domain,
-                    index,
+                    index: latest,
                 })?;
+            }
+            if is_report {
+                self.report_round.write(&key, round)?;
+                self.record_complaints(
+                    validator,
+                    domain,
+                    Fault::NotServing,
+                    report.not_serving,
+                    round,
+                )?;
+                self.record_complaints(
+                    validator,
+                    domain,
+                    Fault::NotDelivered,
+                    report.not_delivered,
+                    round,
+                )?;
             }
             Ok(())
         })
@@ -165,20 +180,32 @@ impl HyperlaneControllerContract<'_> {
         Ok(Some(self.vote_root.read(&key)?))
     }
 
-    /// Liveness-window verdict (every [`LIVENESS_WINDOW_BLOCKS`]).
+    /// Liveness verdict. It runs in the first block of each epoch.
     ///
-    /// Each domain has a target index. In the window, every validator signs
+    /// Each domain has a target index. In the round, every validator signs
     /// the checkpoint at that index. The anchor is the root that at least
-    /// `threshold` active validators signed. A validator with no vote at the
-    /// target, or with a root that is not the anchor, gets a miss.
-    /// [`MAX_MISSES`] consecutive misses jail it (no slash). A domain with no
-    /// target or no anchor gives no miss. A validator with no submission yet
-    /// gets a stamp, and the verdict evaluates it from the next window.
+    /// `threshold` active validators signed. A validator gets a miss for each
+    /// of these reasons (see [`miss_reason`]):
+    /// - It has no vote at the target, or its root is not the anchor.
+    /// - At least `threshold` active validators named it in `notServing` or
+    ///   in `notDelivered` of one domain.
+    /// - It gave a report for a domain and did not name a validator that at
+    ///   least `threshold` validators named in `notServing` of that domain.
+    ///   `notDelivered` has no such rule: the delivery check uses values of
+    ///   the agent configuration, so two honest agents can get different
+    ///   results.
     ///
-    /// Then the verdict sets the target of the next window: the
-    /// `threshold`-th highest latest index among active validators. Only
-    /// submissions older than [`GRACE_BLOCKS`] count. This way, one validator
-    /// cannot inflate the target. The target never decreases.
+    /// A validator gets one miss in a round at most. [`MAX_MISSES`]
+    /// consecutive misses jail it (no slash). A domain with no target or no
+    /// anchor gives no root miss. A validator with no submission yet gets a
+    /// stamp, and the verdict evaluates it from the next round.
+    ///
+    /// Then the verdict sets the target of the next round: the
+    /// `threshold`-th highest latest index among active validators. This way,
+    /// one validator cannot inflate the target, and a quorum already signed
+    /// the target when the round starts. The target never decreases. The verdict
+    /// also selects the delivery index of each domain from the indexes that
+    /// the target moved over.
     /// Returns the validators jailed.
     pub fn check_liveness(&mut self) -> Result<Vec<Address>> {
         if !self.is_initialized()? {
@@ -196,18 +223,25 @@ impl HyperlaneControllerContract<'_> {
         }
         let threshold = usize::from(consensus_threshold(active.len())?);
         let anchors = self.anchors(&active, threshold)?;
-        let references = self.reference_indexes(&active, threshold, now)?;
+        let references = self.reference_indexes(&active, threshold)?;
+        let complaints = self.complaint_reasons(&active, threshold)?;
 
         let mut jailed = Vec::new();
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
-            for validator in &active {
-                let standing = self.window_standing(*validator, &anchors, now)?;
-                if self.apply_standing(&mut validator_set, *validator, standing)? {
+            for (validator, complained) in active.iter().zip(&complaints) {
+                let reasons = match self.window_standing(*validator, &anchors, now)? {
+                    WindowStanding::Newcomer => continue,
+                    WindowStanding::OnTime => *complained,
+                    WindowStanding::Behind => miss_reason::ROOT | *complained,
+                };
+                if self.apply_reasons(&mut validator_set, *validator, reasons)? {
                     jailed.push(*validator);
                 }
             }
-            self.advance_targets(&references)
+            self.advance_targets(&references)?;
+            self.liveness_round
+                .write(self.liveness_round.read()?.saturating_add(1))
         })?;
         Ok(jailed)
     }
@@ -235,25 +269,11 @@ impl HyperlaneControllerContract<'_> {
         Ok(anchors)
     }
 
-    /// Moves the target of each domain up to its reference index.
-    fn advance_targets(&mut self, references: &[DomainReference]) -> Result<()> {
-        for (domain, reference) in references {
-            let Some(index) = *reference else { continue };
-            if index > self.target_index.read(domain)? {
-                self.target_index.write(domain, index)?;
-                self.emit(IHyperlaneController::TargetIndexSet {
-                    domain: *domain,
-                    index,
-                })?;
-            }
-        }
-        Ok(())
-    }
-
     /// Clears the liveness state of `domain`: the target, and the votes and
     /// submissions of the active validators.
     pub(crate) fn clear_liveness(&mut self, domain: u32) -> Result<()> {
         self.target_index.clear(&domain)?;
+        self.delivery_index.clear(&domain)?;
         let validator_set = ValidatorSet::new(self.storage.clone());
         for record in validator_set.get_active_validators()? {
             let key = validator_domain_key(record.validator_address, domain);
@@ -261,39 +281,9 @@ impl HyperlaneControllerContract<'_> {
             self.submitted_block.clear(&key)?;
             self.vote_index.clear(&key)?;
             self.vote_root.clear(&key)?;
+            self.report_round.clear(&key)?;
         }
         Ok(())
-    }
-
-    /// The reference index of every domain: the `threshold`-th highest
-    /// settled submission among `active`.
-    fn reference_indexes(
-        &self,
-        active: &[Address],
-        threshold: usize,
-        now: u64,
-    ) -> Result<Vec<DomainReference>> {
-        let domains = self.domains.read_all()?;
-        let mut references = Vec::with_capacity(domains.len());
-        for domain in domains {
-            let mut settled = self.settled_indexes(active, domain, now)?;
-            settled.sort_unstable_by(|a, b| b.cmp(a));
-            references.push((domain, settled.get(threshold - 1).copied()));
-        }
-        Ok(references)
-    }
-
-    /// Submitted indexes on `domain` that are at least [`GRACE_BLOCKS`] old.
-    fn settled_indexes(&self, active: &[Address], domain: u32, now: u64) -> Result<Vec<u32>> {
-        let mut settled = Vec::with_capacity(active.len());
-        for validator in active {
-            let key = validator_domain_key(*validator, domain);
-            let block = self.submitted_block.read(&key)?;
-            if block != 0 && block.saturating_add(GRACE_BLOCKS) <= now {
-                settled.push(self.submitted_index.read(&key)?);
-            }
-        }
-        Ok(settled)
     }
 
     /// Compares the vote of `validator` with every domain anchor. A domain
@@ -326,24 +316,22 @@ impl HyperlaneControllerContract<'_> {
         })
     }
 
-    /// Updates the miss count of `validator`. Returns `true` when the
-    /// validator reached [`MAX_MISSES`] and was jailed.
-    fn apply_standing(
+    /// Updates the miss count of `validator`: no reason clears it, a reason
+    /// adds one miss. Returns `true` when the validator reached
+    /// [`MAX_MISSES`] and was jailed.
+    fn apply_reasons(
         &mut self,
         validator_set: &mut ValidatorSet<'_>,
         validator: Address,
-        standing: WindowStanding,
+        reasons: u8,
     ) -> Result<bool> {
-        match standing {
-            WindowStanding::Newcomer => Ok(false),
-            WindowStanding::OnTime => {
-                if self.miss_count.read(&validator)? != 0 {
-                    self.miss_count.write(&validator, 0)?;
-                }
-                Ok(false)
-            }
-            WindowStanding::Behind => self.record_miss(validator_set, validator),
+        if reasons != 0 {
+            return self.record_miss(validator_set, validator, reasons);
         }
+        if self.miss_count.read(&validator)? != 0 {
+            self.miss_count.write(&validator, 0)?;
+        }
+        Ok(false)
     }
 
     /// Adds one miss. At [`MAX_MISSES`] the validator is jailed and its miss
@@ -352,9 +340,14 @@ impl HyperlaneControllerContract<'_> {
         &mut self,
         validator_set: &mut ValidatorSet<'_>,
         validator: Address,
+        reasons: u8,
     ) -> Result<bool> {
         let misses = self.miss_count.read(&validator)?.saturating_add(1);
-        self.emit(IHyperlaneController::LivenessMiss { validator, misses })?;
+        self.emit(IHyperlaneController::LivenessMiss {
+            validator,
+            misses,
+            reasons,
+        })?;
         if misses < MAX_MISSES {
             self.miss_count.write(&validator, misses)?;
             return Ok(false);
@@ -364,30 +357,4 @@ impl HyperlaneControllerContract<'_> {
         self.emit(IHyperlaneController::LivenessJailed { validator })?;
         Ok(true)
     }
-}
-
-/// The EIP-191 digest a Hyperlane validator signs for a checkpoint
-/// (`hyperlane-core`'s `CheckpointWithMessageId::signing_hash`):
-/// `domain_hash = keccak(domain_be32 || hook_bytes32 || "HYPERLANE")`,
-/// `signing_hash = keccak(domain_hash || root || index_be32 || message_id)`,
-/// then `personal_sign` over the 32-byte signing hash.
-pub fn checkpoint_digest(
-    domain: u32,
-    hook: Address,
-    root: B256,
-    index: u32,
-    message_id: B256,
-) -> B256 {
-    let mut domain_input = Vec::with_capacity(4 + 32 + 9);
-    domain_input.extend_from_slice(&domain.to_be_bytes());
-    domain_input.extend_from_slice(hook.into_word().as_slice());
-    domain_input.extend_from_slice(b"HYPERLANE");
-    let domain_hash = keccak256(&domain_input);
-
-    let mut signing_input = Vec::with_capacity(32 + 32 + 4 + 32);
-    signing_input.extend_from_slice(domain_hash.as_slice());
-    signing_input.extend_from_slice(root.as_slice());
-    signing_input.extend_from_slice(&index.to_be_bytes());
-    signing_input.extend_from_slice(message_id.as_slice());
-    eip191_hash_message(keccak256(&signing_input))
 }

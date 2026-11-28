@@ -131,16 +131,6 @@ impl CredisContract<'_> {
         self.load_credis(credis_id)
     }
 
-    /// Sum of `amount_minor` and of `outstanding_amount_minor` across the live Credis
-    /// of `account`, kept as they change. A lapsed Credis counts until the forfeit pass deletes
-    /// it.
-    pub fn amount_and_outstanding_of(&self, account: Address) -> Result<(U256, U256)> {
-        Ok((
-            self.owner_amount_minor.read(&account)?,
-            self.owner_outstanding_minor.read(&account)?,
-        ))
-    }
-
     /// How many live Credis `account` holds.
     pub fn credis_count_of(&self, account: Address) -> Result<u32> {
         self.owner_credis_count(account)

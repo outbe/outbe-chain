@@ -258,7 +258,7 @@ fn clear_inner(
         )?;
     }
 
-    // A skipped chain's bidders reclaim through the escrow timeout path instead.
+    // A skipped chain's bidders reclaim their locks once the day stays unfinalized for 48 h.
     for &chain_id in included {
         if !result.bidder_chains.contains(&chain_id) {
             continue;
@@ -387,7 +387,7 @@ pub(crate) fn issuance_groups(
                     )
                     .map_err(outbe_intex::IntexError::from)?,
                     emission_day,
-                    issued_units: 0,
+                    total_units: 0,
                     promis_load_minor: config.promis_load_minor,
                     entry_price_minor: row.entry_price_minor,
                     call_price_minor: row.call_price_minor,
@@ -400,7 +400,7 @@ pub(crate) fn issuance_groups(
             }
         };
 
-        groups[at].issued_units += result.winner_quantities[i].saturating_to::<u32>();
+        groups[at].total_units += result.winner_quantities[i].saturating_to::<u32>();
     }
     Ok(groups)
 }

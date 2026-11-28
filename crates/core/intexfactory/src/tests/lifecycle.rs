@@ -142,7 +142,7 @@ fn try_call_excludes_pre_issuance_days() {
             outbe_intex::CreateSeriesParams {
                 series_id: sid(8),
                 emission_day: 8.into(),
-                issued_units: 100,
+                total_units: 100,
                 promis_load_minor: PROMIS_LOAD_MINOR,
                 entry_price_minor: U256::from(ENTRY_PRICE),
                 call_price_minor: U256::from(EXPECTED_TRIGGER),

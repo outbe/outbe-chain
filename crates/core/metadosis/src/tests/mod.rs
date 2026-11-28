@@ -4,7 +4,6 @@ use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::{MutationPurposeTag, StorageHandle};
 
 use crate::precompile::IMetadosis;
-use crate::schema::MetadosisContract;
 use outbe_emission::schema::metadosis_state;
 use outbe_worldwideday::{
     precompile::{dispatch as worldwide_day_dispatch, IWorldwideDay},

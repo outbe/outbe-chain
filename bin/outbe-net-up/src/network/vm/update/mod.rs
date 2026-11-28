@@ -325,10 +325,10 @@ fn load_update_state(
     state.ensure_matches_network(build)?;
     ensure!(
         state.env_schema >= CURRENT_ENV_SCHEMA,
-        "refusing rolling update: existing network disks use validator.env schema v{} \
-         (missing OUTBE_VM_IP / OUTBE_RPC_PORT / OUTBE_RETH_P2P_PORT), but this outbe-net-up \
+        "refusing rolling update: existing network disks use runtime schema v{} \
+         (missing required static network fields or reth.toml), but this outbe-net-up \
          requires schema v{CURRENT_ENV_SCHEMA}; images built from this revision only boot freshly prepared v{CURRENT_ENV_SCHEMA} \
-         disks (or migrate validator.env on member disks before updating)",
+         disks (or migrate the member disks before updating)",
         state.env_schema,
     );
     Ok(state)

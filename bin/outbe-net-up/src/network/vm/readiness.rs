@@ -49,7 +49,8 @@ fn validator_consensus_ready(status: &VmMemberStatus, required_peers: usize) -> 
         && consensus.connected_peers >= required_peers as u64;
     let tee_ok = status.no_tee || consensus.resident_ready();
     let feeder_ok = status.feeder_healthy == Some(true);
-    exec_ok && core_ready && tee_ok && feeder_ok
+    let hyperlane_ok = status.hyperlane_healthy == Some(true);
+    exec_ok && core_ready && tee_ok && feeder_ok && hyperlane_ok
 }
 
 /// Compute readiness baseline `B = max(finalized)` from the first sample where every member
@@ -160,8 +161,18 @@ pub(crate) fn render_vm_status(
         build.config.name, build.config.chain_id
     ));
     lines.push(format!(
-        "{:<14} {:<10} {:<16} {:<10} {:<10} {:<8} {:<6} {:<6} {:<12} {:<10} DETAIL",
-        "MEMBER", "CLASS", "SERVICE_IP", "VMM", "MODE", "FINAL", "LAG", "VRF", "TEE", "FEEDER"
+        "{:<14} {:<10} {:<16} {:<10} {:<10} {:<8} {:<6} {:<6} {:<12} {:<10} {:<12} DETAIL",
+        "MEMBER",
+        "CLASS",
+        "SERVICE_IP",
+        "VMM",
+        "MODE",
+        "FINAL",
+        "LAG",
+        "VRF",
+        "TEE",
+        "FEEDER",
+        "HYPERLANE"
     ));
     for (s, a) in statuses.iter().zip(&assessments) {
         lines.push(render_member_status_row(s, a));
@@ -195,10 +206,21 @@ fn render_member_status_row(s: &VmMemberStatus, a: &MemberLagAssessment) -> Stri
     };
     let tee = format_member_tee(s);
     let feeder = format_member_feeder(s);
+    let hyperlane = format_member_hyperlane(s);
     let detail = format_member_detail(s, a);
     format!(
-        "{:<14} {:<10} {:<16} {:<10} {:<10} {:<8} {:<6} {:<6} {:<12} {:<10} {detail}",
-        s.name, class_str, s.service_ip, s.vmm_status, mode, finalized, lag, vrf, tee, feeder
+        "{:<14} {:<10} {:<16} {:<10} {:<10} {:<8} {:<6} {:<6} {:<12} {:<10} {:<12} {detail}",
+        s.name,
+        class_str,
+        s.service_ip,
+        s.vmm_status,
+        mode,
+        finalized,
+        lag,
+        vrf,
+        tee,
+        feeder,
+        hyperlane
     )
 }
 
@@ -226,6 +248,19 @@ fn format_member_feeder(s: &VmMemberStatus) -> &'static str {
         Some(true) => "ok",
         Some(false) => "unhealthy",
         None => "-",
+    }
+}
+
+fn format_member_hyperlane(s: &VmMemberStatus) -> String {
+    if s.role == MemberRole::FullNode {
+        return "n/a".to_owned();
+    }
+    match (s.hyperlane_healthy, s.hyperlane_controller.as_deref()) {
+        (Some(true), Some(controller)) => format!("ok/{controller}"),
+        (Some(false), Some(controller)) => format!("bad/{controller}"),
+        (Some(true), None) => "ok".to_owned(),
+        (Some(false), None) => "bad".to_owned(),
+        (None, _) => "-".to_owned(),
     }
 }
 
